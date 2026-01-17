@@ -233,7 +233,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay
                 var index = GetAbilityIndex(spot);
                 return index switch
                 {
-                    1 => "DMG",
                     _ => string.Empty,
                 };
             }

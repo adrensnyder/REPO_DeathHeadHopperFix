@@ -19,6 +19,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay
         private static readonly Dictionary<string, GameObject> PendingPool = new(StringComparer.OrdinalIgnoreCase);
         private static AssetBundle? _dhhBundle;
         private static ManualLogSource? _log;
+        private static readonly HashSet<string> _knownPrefabKeys = new(StringComparer.OrdinalIgnoreCase);
 
         internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
         {
@@ -430,7 +431,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay
                 return false;
             }
 
-            if (FeatureFlags.DebugLogging)
+            if (FeatureFlags.DebugLogging && IsKnownModPrefab(prefabId, normalizedId))
                 _log?.LogWarning($"[Fix] DefaultPool missing cached prefab '{prefabId}' (normalized '{normalizedId}')");
             return true;
         }
@@ -465,6 +466,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay
                 PendingPool[normalized] = actualPrefab;
 
             _log?.LogInfo($"[Fix] Cached prefab '{actualKey}' as normalized '{normalized}'");
+            AddKnownPrefabKey(actualKey);
+            AddKnownPrefabKey(normalized);
+        }
+
+        private static void AddKnownPrefabKey(string? key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+                return;
+
+            _knownPrefabKeys.Add(key!);
+        }
+
+        private static bool ContainsKnownPrefabKey(string? key)
+        {
+            return !string.IsNullOrEmpty(key) && _knownPrefabKeys.Contains(key!);
+        }
+
+        private static bool IsKnownModPrefab(string? prefabId, string normalizedId)
+        {
+            return ContainsKnownPrefabKey(prefabId) || ContainsKnownPrefabKey(normalizedId);
         }
 
         private static bool TryLoadPrefabFromBundle(string prefabId, out GameObject? prefab)

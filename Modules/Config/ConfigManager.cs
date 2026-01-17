@@ -65,7 +65,7 @@ namespace DeathHeadHopperFix.Modules.Config
             BindFloat(config, SectionRechargeBattery, "BatteryJumpMinimumEnergy", FeatureFlags.BatteryJumpMinimumEnergy,
                 DescriptionBatteryJumpMinimumEnergy,
                 value => FeatureFlags.BatteryJumpMinimumEnergy = value,
-                minValue: 0.1f, maxValue: 1f);
+                minValue: 0.01f, maxValue: 1f);
 
             BindFloat(config, SectionRechargeBattery, "JumpBlockDuration", FeatureFlags.JumpBlockDuration,
                 DescriptionJumpBlockDuration,
