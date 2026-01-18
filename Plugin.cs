@@ -39,12 +39,9 @@ namespace DeathHeadHopperFix
         private static bool _guardMissingLocalCameraPosition;
         private static FieldInfo? _jumpHandlerJumpBufferField;
         private static FieldInfo? s_playerAvatarDeadSetField = AccessTools.Field(typeof(PlayerAvatar), "deadSet");
-        private static Type? s_abilityEnergyHandlerType = AccessTools.TypeByName("DeathHeadHopper.DeathHead.Handlers.AbilityEnergyHandler");
-        private static FieldInfo? s_abilityEnergyHandlerControllerField = s_abilityEnergyHandlerType?.GetField("controller", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        private static Type? s_deathHeadControllerType = AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController");
-        private static FieldInfo? s_deathHeadControllerDeathHeadField = s_deathHeadControllerType?.GetField("deathHead", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        private static Type? s_playerDeathHeadType = AccessTools.TypeByName("PlayerDeathHead");
-        private static FieldInfo? s_playerDeathHeadAvatarField = s_playerDeathHeadType?.GetField("playerAvatar", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        private static FieldInfo? s_abilityEnergyHandlerControllerField;
+        private static FieldInfo? s_deathHeadControllerDeathHeadField;
+        private static FieldInfo? s_playerDeathHeadAvatarField;
         private static FieldInfo? s_playerAvatarIsDisabledField = AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
         private static MethodInfo? s_hopHandlerPowerLevelGetter;
         private static MethodInfo? s_jumpHandlerPowerLevelGetter;
@@ -183,6 +180,19 @@ namespace DeathHeadHopperFix
             var tAbilityEnergyHandler = asm.GetType("DeathHeadHopper.DeathHead.Handlers.AbilityEnergyHandler", throwOnError: false);
             if (tAbilityEnergyHandler == null)
                 return;
+            s_abilityEnergyHandlerControllerField ??= tAbilityEnergyHandler.GetField("controller", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+
+            var deathHeadControllerType = asm.GetType("DeathHeadHopper.DeathHead.DeathHeadController", throwOnError: false);
+            if (deathHeadControllerType != null)
+            {
+                s_deathHeadControllerDeathHeadField ??= deathHeadControllerType.GetField("deathHead", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            }
+
+            var playerDeathHeadType = asm.GetType("PlayerDeathHead", throwOnError: false);
+            if (playerDeathHeadType != null)
+            {
+                s_playerDeathHeadAvatarField ??= playerDeathHeadType.GetField("playerAvatar", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            }
 
             var mPlayRechargeSound = AccessTools.Method(tAbilityEnergyHandler, "PlayRechargeSound", Type.EmptyTypes);
             if (mPlayRechargeSound == null)

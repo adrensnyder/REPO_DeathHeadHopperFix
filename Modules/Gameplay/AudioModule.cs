@@ -8,6 +8,7 @@ using HarmonyLib;
 using BepInEx.Logging;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Utilities;
+using DeathHeadHopperFix.Modules.Config;
 
 namespace DeathHeadHopperFix.Modules.Gameplay
 {
@@ -107,7 +108,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay
                 return false;
 
             AudioInitDone.Add(id);
-            _log?.LogInfo("[Fix] AudioHandler initialized safely (deferred).");
+
+            if (FeatureFlags.DebugLogging)
+                _log?.LogInfo("[Fix] AudioHandler initialized safely (deferred).");
             return true;
         }
 
