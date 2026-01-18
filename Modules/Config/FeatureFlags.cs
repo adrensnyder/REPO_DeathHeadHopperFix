@@ -51,26 +51,26 @@ namespace DeathHeadHopperFix.Modules.Config
         // Jump (DHH)
         // Default values mirror vanilla HopHandler.JumpForce:
         //   DHHFunc.StatWithDiminishingReturns(3f, jumpIncrease(0.11f), PowerLevel+1, 5, 0.9f)
-        // Base slot value that determines the vertical boost for hop upgrades.
-        public static int DHHHopJumpBaseValue = 3;
-        // Additional boost added for each hop upgrade level before the threshold.
-        public static float DHHHopJumpIncreasePerLevel = 0.11f;
-        // Level after which hop upgrades start diminishing in effectiveness.
+        // Base slot value that determines the vertical boost for hop upgrades (vanilla=3).
+        public static int DHHHopJumpBaseValue = 2;
+        // Additional boost added for each hop upgrade level before the threshold (vanilla=0.11).
+        public static float DHHHopJumpIncreasePerLevel = 0.3f;
+        // Level after which hop upgrades start diminishing in effectiveness (vanilla=5).
         public static int DHHHopJumpThresholdLevel = 2;
         // Curve factor that controls how quickly extra hop levels taper off.
-        public static float DHHHopJumpDiminishingFactor = 0.75f;
+        public static float DHHHopJumpDiminishingFactor = 0.9f;
 
         // Jump (DHH)
         // Default values mirror DeathHeadHopper JumpHandler:
         //   DHHFunc.StatWithDiminishingReturns(2.8f, forceIncrease(0.4f), PowerLevel+1, 5, 0.9f)
-        // Base jump force the death head uses when leaping off the ground.
-        public static float DHHJumpForceBaseValue = 0.2f;
-        // Force increment applied for each power level before the threshold.
-        public static float DHHJumpForceIncreasePerLevel = 0.4f;
-        // Threshold level where jump force increases start to diminish.
+        // Base jump force the death head uses when leaping off the ground (vanilla base=2.8).
+        public static float DHHJumpForceBaseValue = 0.5f;
+        // Force increment applied for each power level before the threshold (vanilla inc=0.4).
+        public static float DHHJumpForceIncreasePerLevel = 0.3f;
+        // Threshold level where jump force increases start to diminish (vanilla=5).
         public static int DHHJumpForceThresholdLevel = 2;
         // Diminishing factor that cuts additional force beyond the threshold.
-        public static float DHHJumpForceDiminishingFactor = 0.75f;
+        public static float DHHJumpForceDiminishingFactor = 0.9f;
 
         // DeathHeadHopper shop tunables.
         // Maximum number of DeathHeadHopper items that can spawn in a shop run (-1 = unlimited).

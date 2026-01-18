@@ -141,12 +141,12 @@ namespace DeathHeadHopperFix.Modules.Config
             BindFloat(config, SectionJump, "DHHJumpForceBaseValue", FeatureFlags.DHHJumpForceBaseValue,
                 DescriptionDHHJumpForceBaseValue,
                 value => FeatureFlags.DHHJumpForceBaseValue = value,
-                minValue: 0.1f, maxValue: 1f);
+                minValue: 0.1f, maxValue: 5f);
 
             BindFloat(config, SectionJump, "DHHJumpForceIncreasePerLevel", FeatureFlags.DHHJumpForceIncreasePerLevel,
                 DescriptionDHHJumpForceIncreasePerLevel,
                 value => FeatureFlags.DHHJumpForceIncreasePerLevel = value,
-                minValue: 0.1f, maxValue: 1f);
+                minValue: 0.1f, maxValue: 2f);
 
             BindInt(config, SectionJump, "DHHHopJumpThresholdLevel", FeatureFlags.DHHHopJumpThresholdLevel,
                 DescriptionDHHHopJumpThresholdLevel,

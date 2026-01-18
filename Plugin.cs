@@ -26,12 +26,13 @@ namespace DeathHeadHopperFix
     }
 
 
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.2")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.6")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
         private const string HopForceLogKey = "Fix:Hop.JumpForce";
         private const string JumpForceLogKey = "Fix:Jump.HeadJumpForce";
+        private const string ChargeStrengthLogKey = "Fix:Charge.Strength";
 
         private Harmony? _harmony;
         private bool _patched;
@@ -507,15 +508,15 @@ namespace DeathHeadHopperFix
             var levelObj = s_jumpHandlerPowerLevelGetter.Invoke(__instance, null);
             var level = levelObj is int value ? value : 0;
             var appliedLevel = level + 1;
-
-            __result = StatWithDiminishingReturns(
+            var stat = EvaluateStatWithDiminishingReturns(
                 FeatureFlags.DHHJumpForceBaseValue,
                 FeatureFlags.DHHJumpForceIncreasePerLevel,
                 appliedLevel,
                 FeatureFlags.DHHJumpForceThresholdLevel,
                 FeatureFlags.DHHJumpForceDiminishingFactor);
 
-            LogJumpForce(__instance, level, appliedLevel, __result);
+            __result = stat.FinalValue;
+            LogJumpForce(__instance, level, appliedLevel, stat);
             return false;
         }
 
@@ -591,14 +592,15 @@ namespace DeathHeadHopperFix
             var levelObj = s_chargeHandlerAbilityLevelGetter.Invoke(__instance, null);
             var level = levelObj is int value ? value : 0;
 
-            var strength = StatWithDiminishingReturns(
+            var stat = EvaluateStatWithDiminishingReturns(
                 FeatureFlags.DHHChargeStrengthBaseValue,
                 FeatureFlags.DHHChargeStrengthIncreasePerLevel,
                 level,
                 FeatureFlags.DHHChargeStrengthThresholdLevel,
                 FeatureFlags.DHHChargeStrengthDiminishingFactor);
 
-            s_chargeHandlerChargeStrengthField.SetValue(__instance, strength);
+            s_chargeHandlerChargeStrengthField.SetValue(__instance, stat.FinalValue);
+            LogChargeStrength(__instance, stat);
         }
 
         private static void PatchHopHandlerJumpForceIfPossible(Harmony harmony, Assembly asm)
@@ -630,30 +632,81 @@ namespace DeathHeadHopperFix
             var levelObj = s_hopHandlerPowerLevelGetter.Invoke(__instance, null);
             var level = levelObj is int value ? value : 0;
             var appliedLevel = level + 1;
-
-            __result = StatWithDiminishingReturns(
+            var stat = EvaluateStatWithDiminishingReturns(
                 FeatureFlags.DHHHopJumpBaseValue,
                 FeatureFlags.DHHHopJumpIncreasePerLevel,
                 appliedLevel,
                 FeatureFlags.DHHHopJumpThresholdLevel,
                 FeatureFlags.DHHHopJumpDiminishingFactor);
 
-            LogHopJumpForce(__instance, level, appliedLevel, __result);
+            __result = stat.FinalValue;
+            LogHopJumpForce(__instance, level, appliedLevel, stat);
 
             return false; // skip original getter
         }
 
         private static float StatWithDiminishingReturns(float baseValue, float increasePerLevel, int currentLevel, int thresholdLevel, float diminishingFactor)
         {
-            currentLevel--;
-            thresholdLevel--;
-            var linearComponent = Mathf.Min(currentLevel, thresholdLevel);
-            var extraLevels = Mathf.Max(0, currentLevel - thresholdLevel);
-            var diminishingComponent = extraLevels * Mathf.Pow(diminishingFactor, extraLevels);
-            return baseValue + increasePerLevel * (linearComponent + diminishingComponent);
+            return EvaluateStatWithDiminishingReturns(baseValue, increasePerLevel, currentLevel, thresholdLevel, diminishingFactor).FinalValue;
         }
 
-        private static void LogHopJumpForce(object hopHandler, int powerLevel, int appliedLevel, float jumpForce)
+        private static DiminishingReturnsResult EvaluateStatWithDiminishingReturns(float baseValue, float increasePerLevel, int currentLevel, int thresholdLevel, float diminishingFactor)
+        {
+            var appliedLevel = currentLevel;
+            var normalizedLevel = Math.Max(0, appliedLevel - 1);
+            var normalizedThreshold = Math.Max(0, thresholdLevel - 1);
+            var linearLevels = Mathf.Min(normalizedLevel, normalizedThreshold);
+            var extraLevels = Mathf.Max(0, normalizedLevel - normalizedThreshold);
+            var diminishingComponent = extraLevels * Mathf.Pow(diminishingFactor, extraLevels);
+            var linearContribution = increasePerLevel * linearLevels;
+            var diminishingContribution = increasePerLevel * diminishingComponent;
+            var finalValue = baseValue + linearContribution + diminishingContribution;
+
+            return new DiminishingReturnsResult(
+                baseValue,
+                increasePerLevel,
+                appliedLevel,
+                thresholdLevel,
+                diminishingFactor,
+                linearLevels,
+                extraLevels,
+                linearContribution,
+                diminishingContribution,
+                diminishingComponent,
+                finalValue);
+        }
+
+        private readonly struct DiminishingReturnsResult
+        {
+            public DiminishingReturnsResult(float baseValue, float increasePerLevel, int appliedLevel, int thresholdLevel, float diminishingFactor,
+                int linearLevels, int extraLevels, float linearContribution, float diminishingContribution, float diminishingComponent, float finalValue)
+            {
+                BaseValue = baseValue;
+                IncreasePerLevel = increasePerLevel;
+                AppliedLevel = appliedLevel;
+                ThresholdLevel = thresholdLevel;
+                DiminishingFactor = diminishingFactor;
+                LinearLevels = linearLevels;
+                ExtraLevels = extraLevels;
+                LinearContribution = linearContribution;
+                DiminishingContribution = diminishingContribution;
+                DiminishingComponent = diminishingComponent;
+                FinalValue = finalValue;
+            }
+
+            public float BaseValue { get; }
+            public float IncreasePerLevel { get; }
+            public int AppliedLevel { get; }
+            public int ThresholdLevel { get; }
+            public float DiminishingFactor { get; }
+            public int LinearLevels { get; }
+            public int ExtraLevels { get; }
+            public float LinearContribution { get; }
+            public float DiminishingContribution { get; }
+            public float DiminishingComponent { get; }
+            public float FinalValue { get; }
+        }
+        private static void LogHopJumpForce(object hopHandler, int powerLevel, int appliedLevel, DiminishingReturnsResult stat)
         {
             if (!FeatureFlags.DebugLogging)
                 return;
@@ -662,12 +715,12 @@ namespace DeathHeadHopperFix
                 return;
 
             var label = GetHandlerLabel(hopHandler, "HopHandler");
-            var message = $"[Fix:Hop] {label} JumpForce={jumpForce:F3} powerLevel={powerLevel} appliedLevel={appliedLevel} base={FeatureFlags.DHHHopJumpBaseValue:F3} inc={FeatureFlags.DHHHopJumpIncreasePerLevel:F3} thresh={FeatureFlags.DHHHopJumpThresholdLevel} dim={FeatureFlags.DHHHopJumpDiminishingFactor:F3}";
+            var message = $"[Fix:Hop] {label} JumpForce={stat.FinalValue:F3} powerLevel={powerLevel} appliedLevel={appliedLevel} base={stat.BaseValue:F3} inc={stat.IncreasePerLevel:F3} fullUpgrades={stat.LinearLevels} dimUpgrades={stat.ExtraLevels} linearDelta={stat.LinearContribution:F3} dimDelta={stat.DiminishingContribution:F3} thresh={stat.ThresholdLevel} dimFactor={stat.DiminishingFactor:F3}";
             _log?.LogInfo(message);
             Debug.Log(message);
         }
 
-        private static void LogJumpForce(object jumpHandler, int powerLevel, int appliedLevel, float jumpForce)
+        private static void LogJumpForce(object jumpHandler, int powerLevel, int appliedLevel, DiminishingReturnsResult stat)
         {
             if (!FeatureFlags.DebugLogging)
                 return;
@@ -676,7 +729,7 @@ namespace DeathHeadHopperFix
                 return;
 
             var label = GetHandlerLabel(jumpHandler, "JumpHandler");
-            var message = $"[Fix:Jump] {label} JumpForce={jumpForce:F3} powerLevel={powerLevel} appliedLevel={appliedLevel} base={FeatureFlags.DHHJumpForceBaseValue:F3} inc={FeatureFlags.DHHJumpForceIncreasePerLevel:F3} thresh={FeatureFlags.DHHJumpForceThresholdLevel} dim={FeatureFlags.DHHJumpForceDiminishingFactor:F3}";
+            var message = $"[Fix:Jump] {label} JumpForce={stat.FinalValue:F3} powerLevel={powerLevel} appliedLevel={appliedLevel} base={stat.BaseValue:F3} inc={stat.IncreasePerLevel:F3} fullUpgrades={stat.LinearLevels} dimUpgrades={stat.ExtraLevels} linearDelta={stat.LinearContribution:F3} dimDelta={stat.DiminishingContribution:F3} thresh={stat.ThresholdLevel} dimFactor={stat.DiminishingFactor:F3}";
             _log?.LogInfo(message);
             Debug.Log(message);
         }
@@ -689,6 +742,20 @@ namespace DeathHeadHopperFix
             }
 
             return handler?.GetType().Name ?? fallback;
+        }
+
+        private static void LogChargeStrength(object chargeHandler, DiminishingReturnsResult stat)
+        {
+            if (!FeatureFlags.DebugLogging)
+                return;
+
+            if (!LogLimiter.ShouldLog(ChargeStrengthLogKey, 60))
+                return;
+
+            var label = GetHandlerLabel(chargeHandler, "ChargeHandler");
+            var message = $"[Fix:Charge] {label} Strength={stat.FinalValue:F3} base={stat.BaseValue:F3} inc={stat.IncreasePerLevel:F3} level={stat.AppliedLevel} fullUpgrades={stat.LinearLevels} dimUpgrades={stat.ExtraLevels} linearDelta={stat.LinearContribution:F3} dimDelta={stat.DiminishingContribution:F3} thresh={stat.ThresholdLevel} dimFactor={stat.DiminishingFactor:F3}";
+            _log?.LogInfo(message);
+            Debug.Log(message);
         }
 
 
