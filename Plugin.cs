@@ -26,7 +26,7 @@ namespace DeathHeadHopperFix
     }
 
 
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.6")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.7")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
@@ -49,6 +49,9 @@ namespace DeathHeadHopperFix
         private static FieldInfo? s_chargeHandlerChargeStrengthField;
         private static MethodInfo? s_chargeHandlerAbilityLevelGetter;
         private static FieldInfo? s_chargeHandlerImpactDetectorField;
+        private static FieldInfo? s_chargeHandlerControllerField;
+        private static FieldInfo? s_deathHeadControllerAudioHandlerField;
+        private static MethodInfo? s_audioHandlerStopWindupMethod;
         private static FieldInfo? s_impactDetectorPhysGrabObjectField;
         private static FieldInfo? s_cachedPhysGrabObjectGrabbedField;
 
@@ -473,9 +476,17 @@ namespace DeathHeadHopperFix
             {
                 s_chargeHandlerAbilityLevelGetter = AccessTools.PropertyGetter(chargeHandlerType, "AbilityLevel");
             }
+            if (s_chargeHandlerControllerField == null)
+            {
+                s_chargeHandlerControllerField = AccessTools.Field(chargeHandlerType, "controller");
+            }
             var resetPostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_ResetState_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             if (mReset != null && resetPostfix != null)
                 harmony.Patch(mReset, postfix: new HarmonyMethod(resetPostfix));
+            var mEndCharge = AccessTools.Method(chargeHandlerType, "EndCharge", Type.EmptyTypes);
+            var endChargePostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_EndCharge_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mEndCharge != null && endChargePostfix != null)
+                harmony.Patch(mEndCharge, postfix: new HarmonyMethod(endChargePostfix));
         }
 
         private static void PatchJumpHandlerJumpForceIfPossible(Harmony harmony, Assembly asm)
@@ -586,6 +597,7 @@ namespace DeathHeadHopperFix
 
         private static void ChargeHandler_ResetState_Postfix(object __instance)
         {
+            StopChargeWindupLoop(__instance);
             if (__instance == null || s_chargeHandlerChargeStrengthField == null || s_chargeHandlerAbilityLevelGetter == null)
                 return;
 
@@ -601,6 +613,43 @@ namespace DeathHeadHopperFix
 
             s_chargeHandlerChargeStrengthField.SetValue(__instance, stat.FinalValue);
             LogChargeStrength(__instance, stat);
+        }
+
+        private static void ChargeHandler_EndCharge_Postfix(object __instance)
+        {
+            StopChargeWindupLoop(__instance);
+        }
+
+        private static void StopChargeWindupLoop(object? chargeHandler)
+        {
+            if (chargeHandler == null)
+                return;
+
+            try
+            {
+                var controllerField = s_chargeHandlerControllerField ??= AccessTools.Field(chargeHandler.GetType(), "controller");
+                if (controllerField == null)
+                    return;
+
+                var controller = controllerField.GetValue(chargeHandler);
+                if (controller == null)
+                    return;
+
+                var audioField = s_deathHeadControllerAudioHandlerField ??= AccessTools.Field(controller.GetType(), "audioHandler");
+                if (audioField == null)
+                    return;
+
+                var audioHandler = audioField.GetValue(controller);
+                if (audioHandler == null)
+                    return;
+
+                var stopMethod = s_audioHandlerStopWindupMethod ??= AccessTools.Method(audioHandler.GetType(), "StopWindupSound", Type.EmptyTypes);
+                stopMethod?.Invoke(audioHandler, null);
+            }
+            catch
+            {
+                // best effort
+            }
         }
 
         private static void PatchHopHandlerJumpForceIfPossible(Harmony harmony, Assembly asm)

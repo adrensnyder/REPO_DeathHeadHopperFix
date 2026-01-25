@@ -291,6 +291,9 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private void OnHeadJump()
         {
+            if (!_isOwner)
+                return;
+
             var spectate = SpectateCamera.instance;
             if (spectate == null)
                 return;
