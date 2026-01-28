@@ -26,7 +26,7 @@ namespace DeathHeadHopperFix
     }
 
 
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.7")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.8")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
@@ -406,9 +406,14 @@ namespace DeathHeadHopperFix
                 return;
 
             var go = mono.gameObject;
-            if (FeatureFlags.BatteryJumpEnabled && !FeatureFlags.DisableBatteryModule && go.GetComponent<BatteryModule>() == null)
+            if (!FeatureFlags.DisableBatteryModule && go.GetComponent<BatteryJumpModule>() == null)
             {
-                go.AddComponent<BatteryModule>();
+                go.AddComponent<BatteryJumpModule>();
+            }
+
+            if (FeatureFlags.RechargeWithStamina && go.GetComponent<BatteryRechargeModule>() == null)
+            {
+                go.AddComponent<BatteryRechargeModule>();
             }
         }
 
@@ -434,26 +439,27 @@ namespace DeathHeadHopperFix
             harmony.Patch(mUpdate, prefix: new HarmonyMethod(prefix));
         }
 
-        private static void JumpHandler_Update_Prefix(MonoBehaviour __instance)
+        private static bool JumpHandler_Update_Prefix(MonoBehaviour __instance)
         {
             if (!FeatureFlags.BatteryJumpEnabled)
-                return;
+                return true;
             if (__instance == null || _jumpHandlerJumpBufferField == null)
-                return;
+                return true;
 
             if (_jumpHandlerJumpBufferField.GetValue(__instance) is not float buffer || buffer <= 0f)
-                return;
+                return true;
 
-            var module = __instance.gameObject.GetComponent<BatteryModule>();
+            var module = __instance.gameObject.GetComponent<BatteryJumpModule>();
             if (module == null)
-                return;
+                return true;
 
             var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
             if (allowance.allowed)
-                return;
+                return true;
 
             _jumpHandlerJumpBufferField.SetValue(__instance, 0f);
             module.NotifyJumpBlocked(allowance.currentEnergy, allowance.reference, allowance.readyFlag);
+            return false;
         }
 
         private static void PatchChargeHandlerDamageModeIfPossible(Harmony harmony, Assembly asm)

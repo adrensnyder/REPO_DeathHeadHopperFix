@@ -2,6 +2,7 @@ using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Battery;
+using DeathHeadHopperFix.Modules.Config;
 
 namespace DeathHeadHopperFix.Modules.Patches
 {
@@ -65,9 +66,12 @@ namespace DeathHeadHopperFix.Modules.Patches
             dir += Vector3.up;
             dir = dir.normalized * 4.8f;
 
-            var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
-            if (!allowance.allowed)
-                return;
+            if (FeatureFlags.BatteryJumpEnabled)
+            {
+                var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
+                if (!allowance.allowed)
+                    return;
+            }
 
             var grabber = avatar.physGrabber;
             if (grabber == null || avatar.photonView == null)

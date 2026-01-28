@@ -12,13 +12,10 @@ using DeathHeadHopperFix.Modules.Utilities;
 
 namespace DeathHeadHopperFix.Modules.Battery
 {
-    internal sealed class BatteryModule : MonoBehaviour
+    internal sealed class BatteryJumpModule : MonoBehaviour
     {
         private const float JumpBlockDuration = 0.5f;
-        private const float HeadStationaryVelocitySqrThreshold = 0.04f;
-        private const float RechargeTickInterval = 0.5f;
         private const float EnergyWarningCheckInterval = 0.5f;
-        // Guard keeps overrideSpectated from forcing headEnergy=1f permanently (seen in the DHH bug).
         private static readonly FieldInfo? s_spectateCurrentStateField = AccessTools.Field(typeof(SpectateCamera), "currentState");
         private static readonly FieldInfo? s_overrideSpectatedField = AccessTools.Field(typeof(PlayerDeathHead), "overrideSpectated");
         private static readonly MethodInfo? s_overrideSpectatedResetMethod = AccessTools.Method(typeof(PlayerDeathHead), "OverrideSpectatedReset");
@@ -42,18 +39,11 @@ namespace DeathHeadHopperFix.Modules.Battery
         private float _jumpBlockedTimer;
         private float _lastBlockedLogTime;
         private bool _jumpBlocked;
-        private float _rechargeAccumulator;
         private bool _overrideSpectatedCleared;
         private float _energyWarningAccumulator;
 
         private void Awake()
         {
-            if (!FeatureFlags.BatteryJumpEnabled)
-            {
-                Destroy(this);
-                return;
-            }
-
             if (s_headJumpEventField == null)
             {
                 enabled = false;
@@ -81,7 +71,6 @@ namespace DeathHeadHopperFix.Modules.Battery
             _isOwner = _photonView == null || _photonView.IsMine;
 
             SetupEyeWarningCondition();
-            _rb = GetComponent<Rigidbody>();
         }
 
         private void OnDestroy()
@@ -99,18 +88,10 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (!_isOwner)
                 return;
 
-            if (FeatureFlags.RechargeWithStamina)
+            if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
             {
-                _rechargeAccumulator += Time.deltaTime;
-                if (_rechargeAccumulator >= RechargeTickInterval)
-                {
-                    var canRechargeByMovement = !FeatureFlags.RechargeStaminaOnlyStationary || IsHeadStationary();
-                    if (canRechargeByMovement || _jumpBlocked)
-                    {
-                        DHHBatteryHelper.RechargeDhhAbilityEnergy(_controllerInstance, _rechargeAccumulator);
-                    }
-                    _rechargeAccumulator = 0f;
-                }
+                ResetBlockedState();
+                return;
             }
 
             if (_jumpBlocked && _jumpBlockedTimer > 0f)
@@ -129,18 +110,6 @@ namespace DeathHeadHopperFix.Modules.Battery
                 UpdateEnergyWarningState();
                 _energyWarningAccumulator %= EnergyWarningCheckInterval;
             }
-        }
-
-        private Rigidbody? _rb;
-
-        private bool IsHeadStationary()
-        {
-            if (_rb == null)
-                return true;
-
-            // Minimum threshold prevents recharging while the head is bouncing or moving.
-            // The game does not expose an isStationary flag for the head, so this is a best-effort approximation.
-            return _rb.velocity.sqrMagnitude < HeadStationaryVelocitySqrThreshold;
         }
 
         private void UpdateEnergyWarningState()
@@ -178,16 +147,32 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
             DHHBatteryHelper.SetEnergyEnough(spectate, false);
         }
+
+        private void ResetBlockedState()
+        {
+            if (_jumpBlocked)
+            {
+                _jumpBlocked = false;
+                TrySyncEyeWarningState(false);
+            }
+
+            var spectate = SpectateCamera.instance;
+            if (spectate != null)
+            {
+                DHHBatteryHelper.SetEnergyEnough(spectate, true);
+            }
+
+            _energyWarningAccumulator = EnergyWarningCheckInterval;
+        }
+
         private void TryClearStuckOverrideSpectated(SpectateCamera spectate)
         {
             if (spectate == null || s_spectateCurrentStateField == null || s_overrideSpectatedField == null || s_overrideSpectatedResetMethod == null)
                 return;
 
-            // This guard does not need to run every frame, so we throttle the check.
             if (!LogLimiter.ShouldLog("DHHBattery.TryClearOverrideSpectated", 30))
                 return;
 
-            // Reset the flag whenever we leave the "Head" state.
             var stateObj = s_spectateCurrentStateField.GetValue(spectate);
             if (stateObj == null || !string.Equals(stateObj.ToString(), "Head", StringComparison.Ordinal))
             {
@@ -206,8 +191,6 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (!isOverride)
                 return;
 
-            // If someone is physically grabbing the head, the override is likely intentional, so leave it alone.
-            // Some builds do not expose physGrabObject on PlayerDeathHead, so resolve it via best-effort reflection.
             if (IsHeadGrabbedBestEffort(head))
                 return;
 
@@ -225,11 +208,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
         }
 
-
         private static readonly Type? s_physGrabObjectType = AccessTools.TypeByName("PhysGrabObject");
-
-        // Avoid AccessTools.Property for "grabbed" because HarmonyX warns when the property is missing.
-        // In this build, "grabbed" is also a field, so rely on the field directly.
         private static readonly FieldInfo? s_physGrabObjectGrabbedField =
             s_physGrabObjectType != null ? AccessTools.Field(s_physGrabObjectType, "grabbed") : null;
 
@@ -250,9 +229,7 @@ namespace DeathHeadHopperFix.Modules.Battery
                 if (s_physGrabObjectGrabbedField != null && s_physGrabObjectGrabbedField.FieldType == typeof(bool))
                     return (bool)(s_physGrabObjectGrabbedField.GetValue(comp) ?? false);
 
-                // Assume the head is not grabbed when the grabbed flag is missing in this build.
                 return false;
-
             }
             catch
             {
@@ -261,7 +238,6 @@ namespace DeathHeadHopperFix.Modules.Battery
 
             return false;
         }
-
 
         private void TrySyncEyeWarningState(bool blocked)
         {
@@ -294,6 +270,16 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (!_isOwner)
                 return;
 
+            if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
+                return;
+
+            var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
+            if (!allowance.allowed)
+            {
+                NotifyJumpBlocked(allowance.currentEnergy, allowance.reference, allowance.readyFlag);
+                return;
+            }
+
             var spectate = SpectateCamera.instance;
             if (spectate == null)
                 return;
@@ -312,6 +298,9 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         internal void NotifyJumpBlocked(float currentEnergy, float reference, bool? readyFlag)
         {
+            if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
+                return;
+
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.JumpBlocked", 120))
             {
                 var timeSinceLog = Time.time - _lastBlockedLogTime;
@@ -360,245 +349,6 @@ namespace DeathHeadHopperFix.Modules.Battery
             _eyeNegativeConditions.Remove(_eyeCondition);
             _eyeNegativeConditions = null;
             _eyeCondition = null;
-        }
-    }
-
-    internal static class DHHBatteryHelper
-    {
-        private static readonly FieldInfo? s_headEnergyField = typeof(SpectateCamera).GetField("headEnergy", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        private static readonly FieldInfo? s_headEnergyEnoughField = typeof(SpectateCamera).GetField("headEnergyEnough", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        private static readonly FieldInfo? s_playerSprintRechargeAmountField = typeof(PlayerController).GetField("sprintRechargeAmount", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-
-        // The DHH mod tracks its own dedicated ability energy pool instead of SpectateCamera.headEnergy.
-        private static readonly FieldInfo? s_dhhAbilityEnergyHandlerField = AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController")
-            ?.GetField("abilityEnergyHandler", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-        private static readonly Type? s_dhhAbilityEnergyHandlerType = AccessTools.TypeByName("DeathHeadHopper.DeathHead.Handlers.AbilityEnergyHandler");
-        private static readonly System.Reflection.PropertyInfo? s_dhhAbilityEnergyProp = s_dhhAbilityEnergyHandlerType
-            ?.GetProperty("Energy", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        private static readonly System.Reflection.PropertyInfo? s_dhhAbilityEnergyMaxProp = s_dhhAbilityEnergyHandlerType
-            ?.GetProperty("EnergyMax", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        private static readonly MethodInfo? s_dhhIncreaseEnergyMethod = s_dhhAbilityEnergyHandlerType
-            ?.GetMethod("IncreaseEnergy", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(float) }, null);
-
-        internal static float GetHeadEnergy(SpectateCamera? spectate)
-        {
-            if (spectate == null || s_headEnergyField == null)
-                return 0f;
-
-            return (float)(s_headEnergyField.GetValue(spectate) ?? 0f);
-        }
-
-        internal static void SetHeadEnergy(SpectateCamera spectate, float value)
-        {
-            if (s_headEnergyField != null)
-            {
-                s_headEnergyField.SetValue(spectate, value);
-            }
-        }
-
-        internal static void SetEnergyEnough(SpectateCamera spectate, bool value)
-        {
-            if (s_headEnergyEnoughField != null)
-            {
-                s_headEnergyEnoughField.SetValue(spectate, value);
-            }
-        }
-
-        internal static float GetJumpThreshold()
-        {
-            return FeatureFlags.BatteryJumpMinimumEnergy;
-        }
-
-        internal static (bool allowed, bool? readyFlag, float reference, float currentEnergy) EvaluateJumpAllowance()
-        {
-            var spectate = SpectateCamera.instance;
-            var currentEnergy = GetHeadEnergy(spectate);
-            var reference = GetJumpThreshold();
-            bool? readyFlag = null;
-
-            if (spectate != null && s_headEnergyEnoughField != null)
-            {
-                readyFlag = s_headEnergyEnoughField.GetValue(spectate) as bool?;
-            }
-
-            var allowed = currentEnergy >= reference;
-            LogAllowance(currentEnergy, reference, allowed, readyFlag);
-            return (allowed, readyFlag, reference, currentEnergy);
-        }
-
-        internal static void RechargeDhhAbilityEnergy(object? controllerInstance, float deltaTime)
-        {
-            // IMPORTANT:
-            // - SpectateCamera.headEnergy and headEnergyEnough drive the vanilla death battery (also tied to speaking).
-            // - The original DHH mod maintains its own bar (AbilityEnergyHandler.Energy).
-            // Recharging the vanilla values previously altered vanilla behavior and spawned anomalies.
-            // From now on we only recharge the DHH mod energy value.
-            if (!FeatureFlags.RechargeWithStamina || deltaTime <= 0f)
-                return;
-
-            if (controllerInstance == null)
-                return;
-
-            if (s_dhhAbilityEnergyHandlerField == null || s_dhhAbilityEnergyProp == null || s_dhhAbilityEnergyMaxProp == null || s_dhhIncreaseEnergyMethod == null)
-                return;
-
-            var rechargeRate01PerSec = GetPlayerSprintRechargeAmount();
-            if (rechargeRate01PerSec <= 0f)
-                return;
-
-            object? handler;
-            try
-            {
-                handler = s_dhhAbilityEnergyHandlerField.GetValue(controllerInstance);
-            }
-            catch
-            {
-                return;
-            }
-
-            if (handler == null)
-                return;
-
-            float energy;
-            float energyMax;
-            try
-            {
-                energy = (float)(s_dhhAbilityEnergyProp.GetValue(handler) ?? 0f);
-                energyMax = (float)(s_dhhAbilityEnergyMaxProp.GetValue(handler) ?? 0f);
-            }
-            catch
-            {
-                return;
-            }
-
-            if (energyMax <= 0f || energy >= energyMax)
-                return;
-
-            // Scale the recharge as a fraction of EnergyMax to keep a rhythm similar to vanilla stamina.
-            var amount = rechargeRate01PerSec * deltaTime;
-
-            try
-            {
-                s_dhhIncreaseEnergyMethod.Invoke(handler, new object[] { amount });
-                LogRecharge(amount, energy + amount, energyMax);
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        // Legacy: keep this method for internal compatibility, but it should no longer be used.
-        internal static void RechargeHeadEnergy(float deltaTime)
-        {
-            // Intentionally empty so we stop modifying the vanilla death battery.
-        }
-
-
-        private static void LogAllowance(float currentEnergy, float reference, bool allowed, bool? readyFlag)
-        {
-            if (!FeatureFlags.DebugLogging)
-                return;
-
-            // This log is emitted by paths that run every frame, so we rate-limit the output.
-            if (!LogLimiter.ShouldLog("DHHBattery.JumpAllowance", 120))
-                return;
-
-            var readyState = readyFlag.HasValue ? readyFlag.Value.ToString() : "unknown";
-            Debug.Log($"[Fix:DHHBattery] Jump allowance: allowed={allowed}, energy={currentEnergy:F3}, ref={reference:F3}, readyFlag={readyState}");
-        }
-
-
-
-        internal static float GetEffectiveBatteryJumpUsage()
-        {
-            return Math.Max(0f, FeatureFlags.BatteryJumpUsage);
-        }
-
-        internal static float ComputeVanillaBatteryJumpUsage()
-        {
-            var player = PlayerController.instance;
-            if (player == null || player.playerAvatarScript == null)
-                return 0.02f;
-
-            float num = 25f;
-            float increment = 5f;
-            var upgradeValue = GetUpgradeDeathHeadBattery(player.playerAvatarScript);
-            for (float i = upgradeValue; i > 0f; i -= 1f)
-            {
-                num += increment;
-                increment *= 0.95f;
-            }
-
-            return 0.5f / num;
-        }
-
-        internal static float GetVanillaBatteryJumpMinimumEnergy()
-        {
-            return 0.25f;
-        }
-
-        internal static float ApplyConsumption(SpectateCamera spectate, float consumption, float reference)
-        {
-            var currentEnergy = GetHeadEnergy(spectate);
-            var nextValue = Mathf.Max(0f, currentEnergy - consumption);
-            SetHeadEnergy(spectate, nextValue);
-            SetEnergyEnough(spectate, nextValue >= reference);
-            LogConsumption(currentEnergy, nextValue, consumption, reference);
-            return nextValue;
-        }
-
-        internal static float ApplyDamageEnergyPenalty(float penalty)
-        {
-            if (penalty <= 0f)
-                return 0f;
-
-            var spectate = SpectateCamera.instance;
-            if (spectate == null)
-                return 0f;
-
-            return ApplyConsumption(spectate, penalty, GetJumpThreshold());
-        }
-
-        internal static float GetPlayerSprintRechargeAmount()
-        {
-            var controller = PlayerController.instance;
-            if (controller == null || s_playerSprintRechargeAmountField == null)
-                return 0f;
-
-            return (float)(s_playerSprintRechargeAmountField.GetValue(controller) ?? 0f);
-        }
-
-        private static float GetUpgradeDeathHeadBattery(PlayerAvatar avatar)
-        {
-            if (avatar == null)
-                return 0f;
-
-            var field = AccessTools.Field(typeof(PlayerAvatar), "upgradeDeathHeadBattery");
-            if (field == null)
-                return 0f;
-
-            return (float)(field.GetValue(avatar) ?? 0f);
-        }
-
-        private static void LogConsumption(float before, float after, float amount, float reference)
-        {
-            if (!FeatureFlags.DebugLogging)
-                return;
-            if (!LogLimiter.ShouldLog("DHHBattery.Consumption", 120))
-                return;
-
-            Debug.Log($"[Fix:DHHBattery] Energy consume {amount:F3} (before={before:F3}, after={after:F3}, ref={reference:F3})");
-        }
-
-        private static void LogRecharge(float amount, float energy, float max)
-        {
-            if (!FeatureFlags.DebugLogging)
-                return;
-            if (!LogLimiter.ShouldLog("DHHBattery.Recharge", 240))
-                return;
-
-            Debug.Log($"[Fix:DHHBattery] Recharge {amount:F3} (energy={energy:F3} / {max:F3})");
         }
     }
 }
