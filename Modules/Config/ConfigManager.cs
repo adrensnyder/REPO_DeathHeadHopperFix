@@ -1,299 +1,337 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Reflection;
 using BepInEx.Configuration;
-using BepInEx.Logging;
+using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Config
 {
+    [AttributeUsage(AttributeTargets.Field)]
+    internal sealed class FeatureConfigEntryAttribute : Attribute
+    {
+        public FeatureConfigEntryAttribute(string section, string description)
+        {
+            Section = section;
+            Description = description;
+        }
+
+        public string Section { get; }
+        public string Description { get; }
+        public string Key { get; set; } = string.Empty;
+        public float Min { get; set; } = float.NaN;
+        public float Max { get; set; } = float.NaN;
+        public float Step { get; set; } = float.NaN;
+
+        public bool HasRange => !float.IsNaN(Min) && !float.IsNaN(Max);
+    }
+
     internal static class ConfigManager
     {
-        private const string SectionRechargeBattery = "1. Battery";
-        private const string SectionStaminaRecharge = "2. Stamina & Recharge";
-        private const string SectionChargeAbility = "3. Charge ability tunables (DHH)";
-        private const string SectionJump = "4. Jump (DHH)";
-        private const string SectionChargeVanilla = "5. Charge (DHH)";
-        private const string SectionUpgrades = "6. Upgrades";
-        private const string SectionDebug = "7. Debug";
-        private static ManualLogSource _log;
-        private static readonly Dictionary<string, object> s_defaultValues = new(StringComparer.Ordinal);
-        private struct RangeF { public float Min, Max; }
-        private struct RangeI { public int Min, Max; }
+        private struct RangeF { public float Min, Max, Step; }
+        private struct RangeI { public int Min, Max, Step; }
+
+        private static bool s_initialized;
+        private static readonly char[] ColorSeparators = { ',', ';' };
         private static readonly Dictionary<string, RangeF> s_floatRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, RangeI> s_intRanges = new(StringComparer.Ordinal);
 
-        private const string DescriptionBatteryJumpEnabled = "Enables the battery authority system that blocks jumps when the energy meter is too low.";
-        private const string DescriptionBatteryJumpUsage = "Amount of battery drained per death-head jump; larger values drain faster.";
-        private const string DescriptionBatteryJumpMinimumEnergy = "Minimum battery level that must be filled before the death head can hop. 0.25f matches the vanilla talk threshold so the head can still speak.";
-        private const string DescriptionJumpBlockDuration = "Duration (in seconds) that jump blocking remains active after the energy warning fires.";
-        private const string DescriptionHeadStationaryVelocitySqrThreshold = "Velocity squared threshold the death head must stay below to be considered stationary for recharge.";
-        private const string DescriptionRechargeTickInterval = "Interval (seconds) between stamina-based recharge ticks.";
-        private const string DescriptionEnergyWarningCheckInterval = "Interval (seconds) between energy warning / SpectateCamera checks.";
-        private const string DescriptionRechargeWithStamina = "Mirrors vanilla stamina regen to refill the death-head battery instead of draining energy.";
-        private const string DescriptionRechargeStaminaOnlyStationary = "When true, the death-head only recharges while standing still, matching vanilla stamina guard behavior.";
-        private const string DescriptionChargeAbilityStaminaCost = "Charge ability custom stamina cost (always read). How much player stamina the vanilla Charge ability consumes when executed.";
-        private const string DescriptionChargeAbilityCooldown = "Cooldown in seconds before Charge can be used again.";
-        private const string DescriptionDHHChargeStrengthBaseValue = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Default values mirror vanilla ChargeHandler.ResetState: DHHFunc.StatWithDiminishingReturns(baseStrength(12f), ChargeStrengthIncrease, AbilityLevel, 10, 0.75f). Base impact strength used to compute the Charge ability hit force.";
-        private const string DescriptionDHHChargeStrengthIncreasePerLevel = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Strength increase applied each ability level before diminishing returns.";
-        private const string DescriptionDHHChargeStrengthThresholdLevel = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Ability level threshold where extra strength gain starts to shrink.";
-        private const string DescriptionDHHChargeStrengthDiminishingFactor = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Fraction that scales down extra strength beyond the threshold.";
-        private const string DescriptionDHHHopJumpBaseValue = "Default values mirror vanilla HopHandler.JumpForce: DHHFunc.StatWithDiminishingReturns(3f, jumpIncrease(0.11f), PowerLevel+1, 5, 0.9f). Base slot value that determines the vertical boost for hop upgrades.";
-        private const string DescriptionDHHHopJumpIncreasePerLevel = "Additional boost added for each hop upgrade level before the threshold.";
-        private const string DescriptionDHHJumpForceBaseValue = "Default values mirror DeathHeadHopper JumpHandler: DHHFunc.StatWithDiminishingReturns(2.8f, forceIncrease(0.4f), PowerLevel+1, 5, 0.9f). Base jump force the death head uses when leaping off the ground.";
-        private const string DescriptionDHHJumpForceIncreasePerLevel = "Force increment applied for each power level before the threshold.";
-        private const string DescriptionDHHHopJumpThresholdLevel = "Level after which hop upgrades start diminishing in effectiveness.";
-        private const string DescriptionDHHHopJumpDiminishingFactor = "Curve factor that controls how quickly extra hop levels taper off.";
-        private const string DescriptionDHHJumpForceThresholdLevel = "Threshold level where jump force increases start to diminish.";
-        private const string DescriptionDHHJumpForceDiminishingFactor = "Diminishing factor that cuts additional force beyond the threshold.";
-        private const string DescriptionDHHShopMaxItems = "Maximum number of DeathHeadHopper mod items that can spawn in the shop (-1 = unlimited).";
-        private const string DescriptionDHHShopSpawnChance = "Chance each DeathHeadHopper shop slot actually spawns an item.";
-        private const string DescriptionShopItemsSpawnChance = "Second-tier chance that a DeathHeadHopper slot produces an item after it was selected.";
-        private const string DescriptionDebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
-
-        internal static void Initialize(ConfigFile config, ManualLogSource log)
+        internal static void Initialize(ConfigFile config)
         {
-            _log = log;
+            if (s_initialized || config == null)
+            {
+                return;
+            }
 
-            //Battery
-            BindBool(config, SectionRechargeBattery, "BatteryJumpEnabled", FeatureFlags.BatteryJumpEnabled,
-                DescriptionBatteryJumpEnabled,
-                value => FeatureFlags.BatteryJumpEnabled = value);
-
-            BindFloat(config, SectionRechargeBattery, "BatteryJumpUsage", FeatureFlags.BatteryJumpUsage,
-                DescriptionBatteryJumpUsage,
-                value => FeatureFlags.BatteryJumpUsage = value,
-                minValue: 0.01f, maxValue: 1f);
-            BindFloat(config, SectionRechargeBattery, "BatteryJumpMinimumEnergy", FeatureFlags.BatteryJumpMinimumEnergy,
-                DescriptionBatteryJumpMinimumEnergy,
-                value => FeatureFlags.BatteryJumpMinimumEnergy = value,
-                minValue: 0.01f, maxValue: 1f);
-
-            BindFloat(config, SectionRechargeBattery, "JumpBlockDuration", FeatureFlags.JumpBlockDuration,
-                DescriptionJumpBlockDuration,
-                value => FeatureFlags.JumpBlockDuration = value,
-                minValue: 0.1f, maxValue: 1f);
-
-            BindFloat(config, SectionRechargeBattery, "HeadStationaryVelocitySqrThreshold", FeatureFlags.HeadStationaryVelocitySqrThreshold,
-                DescriptionHeadStationaryVelocitySqrThreshold,
-                value => FeatureFlags.HeadStationaryVelocitySqrThreshold = value,
-                minValue: 0.01f, maxValue: 1f);
-
-            BindFloat(config, SectionRechargeBattery, "RechargeTickInterval", FeatureFlags.RechargeTickInterval,
-                DescriptionRechargeTickInterval,
-                value => FeatureFlags.RechargeTickInterval = value,
-                minValue: 0.1f, maxValue: 1f);
-
-            BindFloat(config, SectionRechargeBattery, "EnergyWarningCheckInterval", FeatureFlags.EnergyWarningCheckInterval,
-                DescriptionEnergyWarningCheckInterval,
-                value => FeatureFlags.EnergyWarningCheckInterval = value,
-                minValue: 0.1f, maxValue: 1f);
-
-            //Stamina & Recharge
-            BindBool(config, SectionStaminaRecharge, "RechargeWithStamina", FeatureFlags.RechargeWithStamina,
-                DescriptionRechargeWithStamina,
-                value => FeatureFlags.RechargeWithStamina = value);
-
-            BindBool(config, SectionStaminaRecharge, "RechargeStaminaOnlyStationary", FeatureFlags.RechargeStaminaOnlyStationary,
-                DescriptionRechargeStaminaOnlyStationary,
-                value => FeatureFlags.RechargeStaminaOnlyStationary = value);
-
-            // Charge (DHH)
-            BindInt(config, SectionChargeAbility, "ChargeAbilityStaminaCost", FeatureFlags.ChargeAbilityStaminaCost,
-                DescriptionChargeAbilityStaminaCost,
-                value => FeatureFlags.ChargeAbilityStaminaCost = value,
-                minValue: 10, maxValue: 200);
-
-            BindInt(config, SectionChargeAbility, "ChargeAbilityCooldown", FeatureFlags.ChargeAbilityCooldown,
-                DescriptionChargeAbilityCooldown,
-                value => FeatureFlags.ChargeAbilityCooldown = value,
-                minValue: 1, maxValue: 20);
-
-            BindInt(config, SectionChargeVanilla, "DHHChargeStrengthBaseValue", FeatureFlags.DHHChargeStrengthBaseValue,
-                DescriptionDHHChargeStrengthBaseValue,
-                value => FeatureFlags.DHHChargeStrengthBaseValue = value,
-                minValue: 1, maxValue: 100);
-
-            BindInt(config, SectionChargeVanilla, "DHHChargeStrengthIncreasePerLevel", FeatureFlags.DHHChargeStrengthIncreasePerLevel,
-                DescriptionDHHChargeStrengthIncreasePerLevel,
-                value => FeatureFlags.DHHChargeStrengthIncreasePerLevel = value,
-                minValue: 1, maxValue: 10);
-
-            BindInt(config, SectionChargeVanilla, "DHHChargeStrengthThresholdLevel", FeatureFlags.DHHChargeStrengthThresholdLevel,
-                DescriptionDHHChargeStrengthThresholdLevel,
-                value => FeatureFlags.DHHChargeStrengthThresholdLevel = value,
-                minValue: 1, maxValue: 100);
-
-            BindFloat(config, SectionChargeVanilla, "DHHChargeStrengthDiminishingFactor", FeatureFlags.DHHChargeStrengthDiminishingFactor,
-                DescriptionDHHChargeStrengthDiminishingFactor,
-                value => FeatureFlags.DHHChargeStrengthDiminishingFactor = value,
-                minValue: 0.1f, maxValue: 0.99f);
-
-            // Jump (DHH)
-            BindInt(config, SectionJump, "DHHHopJumpBaseValue", FeatureFlags.DHHHopJumpBaseValue,
-                DescriptionDHHHopJumpBaseValue,
-                value => FeatureFlags.DHHHopJumpBaseValue = value,
-                minValue: 1, maxValue: 10);
-
-            BindFloat(config, SectionJump, "DHHHopJumpIncreasePerLevel", FeatureFlags.DHHHopJumpIncreasePerLevel,
-                DescriptionDHHHopJumpIncreasePerLevel,
-                value => FeatureFlags.DHHHopJumpIncreasePerLevel = value,
-                minValue: 0.1f, maxValue: 1f);
-
-            BindFloat(config, SectionJump, "DHHJumpForceBaseValue", FeatureFlags.DHHJumpForceBaseValue,
-                DescriptionDHHJumpForceBaseValue,
-                value => FeatureFlags.DHHJumpForceBaseValue = value,
-                minValue: 0.1f, maxValue: 5f);
-
-            BindFloat(config, SectionJump, "DHHJumpForceIncreasePerLevel", FeatureFlags.DHHJumpForceIncreasePerLevel,
-                DescriptionDHHJumpForceIncreasePerLevel,
-                value => FeatureFlags.DHHJumpForceIncreasePerLevel = value,
-                minValue: 0.1f, maxValue: 2f);
-
-            BindInt(config, SectionJump, "DHHHopJumpThresholdLevel", FeatureFlags.DHHHopJumpThresholdLevel,
-                DescriptionDHHHopJumpThresholdLevel,
-                value => FeatureFlags.DHHHopJumpThresholdLevel = value,
-                minValue: 1, maxValue: 10);
-
-            BindFloat(config, SectionJump, "DHHHopJumpDiminishingFactor", FeatureFlags.DHHHopJumpDiminishingFactor,
-                DescriptionDHHHopJumpDiminishingFactor,
-                value => FeatureFlags.DHHHopJumpDiminishingFactor = value,
-                minValue: 0.1f, maxValue: 0.99f);
-
-            BindInt(config, SectionJump, "DHHJumpForceThresholdLevel", FeatureFlags.DHHJumpForceThresholdLevel,
-                DescriptionDHHJumpForceThresholdLevel,
-                value => FeatureFlags.DHHJumpForceThresholdLevel = value,
-                minValue: 1, maxValue: 10);
-
-            BindFloat(config, SectionJump, "DHHJumpForceDiminishingFactor", FeatureFlags.DHHJumpForceDiminishingFactor,
-                DescriptionDHHJumpForceDiminishingFactor,
-                value => FeatureFlags.DHHJumpForceDiminishingFactor = value,
-                minValue: 0.1f, maxValue: 0.99f);
-
-            // Upgrades
-            BindInt(config, SectionUpgrades, "DHHShopMaxItems", FeatureFlags.DHHShopMaxItems,
-                DescriptionDHHShopMaxItems,
-                value => FeatureFlags.DHHShopMaxItems = value,
-                minValue: -1, maxValue: 12);
-
-            BindFloat(config, SectionUpgrades, "DHHShopSpawnChance", FeatureFlags.DHHShopSpawnChance,
-                DescriptionDHHShopSpawnChance,
-                value => FeatureFlags.DHHShopSpawnChance = value,
-                minValue: 0.1f, maxValue: 1f);
-
-            BindFloat(config, SectionUpgrades, "ShopItemsSpawnChance", FeatureFlags.ShopItemsSpawnChance,
-                DescriptionShopItemsSpawnChance,
-                value => FeatureFlags.ShopItemsSpawnChance = value,
-                minValue: 0.1f, maxValue: 1f);
-
-            // Debug
-            BindBool(config, SectionDebug, "DebugLogging", FeatureFlags.DebugLogging,
-                DescriptionDebugLogging,
-                value => FeatureFlags.DebugLogging = value);
-
-            // Advanced Debug
-            //BindBool(config, SectionDebug, "DisableSpectateChecks", FeatureFlags.DisableSpectateChecks,
-            //    "Skip SpectateCamera override/hints when evaluating battery status (debug test).",
-            //    value => FeatureFlags.DisableSpectateChecks = value);
-
-            //BindBool(config, SectionDebug, "DisableBatteryModule", FeatureFlags.DisableBatteryModule,
-            //    "Temporarily disable the BatteryModule component.",
-            //    value => FeatureFlags.DisableBatteryModule = value);
-
-            //BindBool(config, SectionDebug, "DisableAbilityPatches", FeatureFlags.DisableAbilityPatches,
-            //    "Skip ability-related Harmony patches (charge rename, ability cooldown sync, etc.).",
-            //    value => FeatureFlags.DisableAbilityPatches = value);
-
+            s_initialized = true;
+            BindConfigEntries(config, typeof(FeatureFlags), "General");
         }
 
-        private static void BindBool(ConfigFile config, string section, string key, bool fallback, string description, Action<bool> setter)
+        private static void BindConfigEntries(ConfigFile config, Type targetType, string defaultSection)
         {
-            RegisterDefault(key, fallback);
-            var entry = config.Bind(section, key, fallback, new ConfigDescription(description));
-            ApplyAndWatch(entry, setter);
+            foreach (var field in targetType.GetFields(BindingFlags.Public | BindingFlags.Static))
+            {
+                var attribute = field.GetCustomAttribute<FeatureConfigEntryAttribute>();
+                if (attribute == null)
+                {
+                    continue;
+                }
+
+                var section = string.IsNullOrWhiteSpace(attribute.Section) ? defaultSection : attribute.Section;
+                var key = string.IsNullOrWhiteSpace(attribute.Key) ? field.Name : attribute.Key;
+                var description = attribute.Description ?? string.Empty;
+
+                if (field.FieldType == typeof(bool))
+                {
+                    var defaultValue = (bool)field.GetValue(null)!;
+                    var entry = config.Bind(section, key, defaultValue, description);
+                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    continue;
+                }
+
+                if (field.FieldType == typeof(int))
+                {
+                    var defaultValue = (int)field.GetValue(null)!;
+                    ConfigEntry<int> entry;
+                    if (attribute.HasRange)
+                    {
+                        var min = GetIntRangeStart(attribute);
+                        var max = GetIntRangeEnd(attribute);
+                        entry = config.Bind(section, key, defaultValue,
+                            new ConfigDescription(description, new AcceptableValueRange<int>(min, max)));
+                        RegisterIntRange(key, min, max, DetermineIntStep(attribute));
+                    }
+                    else
+                    {
+                        entry = config.Bind(section, key, defaultValue, description);
+                    }
+
+                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    continue;
+                }
+
+                if (field.FieldType == typeof(float))
+                {
+                    var defaultValue = (float)field.GetValue(null)!;
+                    ConfigEntry<float> entry;
+                    if (attribute.HasRange)
+                    {
+                        var min = Math.Min(attribute.Min, attribute.Max);
+                        var max = Math.Max(attribute.Min, attribute.Max);
+                        entry = config.Bind(section, key, defaultValue,
+                            new ConfigDescription(description, new AcceptableValueRange<float>(min, max)));
+                        RegisterFloatRange(key, min, max, DetermineFloatStep(attribute, min));
+                    }
+                    else
+                    {
+                        entry = config.Bind(section, key, defaultValue, description);
+                    }
+
+                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    continue;
+                }
+
+                if (field.FieldType == typeof(string))
+                {
+                    var defaultValue = field.GetValue(null) as string ?? string.Empty;
+                    var entry = config.Bind(section, key, defaultValue, description);
+                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    continue;
+                }
+
+                if (field.FieldType == typeof(Color))
+                {
+                    var defaultValue = (Color)field.GetValue(null)!;
+                    var entry = config.Bind(section, key, ColorToString(defaultValue), description);
+                    ApplyAndWatch(entry, ColorFromString, value => field.SetValue(null, value));
+                    continue;
+                }
+            }
         }
 
-        private static void BindFloat(ConfigFile config, string section, string key, float fallback, string description, Action<float> setter, float minValue = 0.1f, float maxValue = 999f)
+        private static int GetIntRangeStart(FeatureConfigEntryAttribute attribute)
         {
-            RegisterDefault(key, fallback);
-            RegisterFloatRange(key, minValue, Math.Max(minValue, maxValue));
-
-            var entry = config.Bind(section, key, fallback,
-                new ConfigDescription(description,
-                    new AcceptableValueRange<float>(minValue, Math.Max(minValue, maxValue))));
-            ApplyAndWatch(entry, setter);
+            ValidateIntegerRange(attribute);
+            return (int)Math.Min(attribute.Min, attribute.Max);
         }
 
-        private static void BindInt(ConfigFile config, string section, string key, int fallback, string description, Action<int> setter, int minValue = 1, int maxValue = 999)
+        private static int GetIntRangeEnd(FeatureConfigEntryAttribute attribute)
         {
-            RegisterDefault(key, fallback);
-            RegisterIntRange(key, minValue, Math.Max(minValue, maxValue));
+            ValidateIntegerRange(attribute);
+            return (int)Math.Max(attribute.Min, attribute.Max);
+        }
 
-            var entry = config.Bind(section, key, fallback,
-                new ConfigDescription(description,
-                    new AcceptableValueRange<int>(minValue, Math.Max(minValue, maxValue))));
-            ApplyAndWatch(entry, setter);
+        private static void ValidateIntegerRange(FeatureConfigEntryAttribute attribute)
+        {
+            if (!IsWholeNumber(attribute.Min) || !IsWholeNumber(attribute.Max))
+            {
+                throw new InvalidOperationException("FeatureConfigEntryAttribute integer range values must be whole numbers.");
+            }
+        }
+
+        private static bool IsWholeNumber(float value)
+        {
+            double truncated = Math.Truncate(value);
+            return Math.Abs(value - truncated) < float.Epsilon;
         }
 
         private static void ApplyAndWatch<T>(ConfigEntry<T> entry, Action<T> setter)
         {
             if (entry == null || setter == null)
-                return;
-
-            void Update(bool initial)
             {
-                var sanitized = SanitizeValue(entry.Value, entry.Definition.Key, initial);
-                setter(sanitized);
+                return;
             }
 
-            Update(true);
-            entry.SettingChanged += (_, _) => Update(false);
+            void Update()
+            {
+                setter(SanitizeValue(entry.Value, entry.Definition.Key));
+            }
+
+            Update();
+            entry.SettingChanged += (_, _) => Update();
         }
 
-        private static T SanitizeValue<T>(T value, string key, bool initial)
+        private static void ApplyAndWatch(ConfigEntry<string> entry, Func<string, Color> parser, Action<Color> setter)
         {
-            if (value is float f)
+            if (entry == null || parser == null || setter == null)
             {
-                var range = s_floatRanges.TryGetValue(key, out var storedRange) ? storedRange : new RangeF { Min = 0.1f, Max = float.MaxValue };
-                if (initial && f < range.Min && s_defaultValues.TryGetValue(key, out var defObj))
-                {
-                    var defaultValue = defObj is float defFloat ? defFloat : 0.1f;
-                    return (T)(object)Math.Max(range.Min, defaultValue);
-                }
-
-                var clampedF = Math.Min(range.Max, Math.Max(range.Min, f));
-                return (T)(object)clampedF;
+                return;
             }
 
-            if (value is int i)
+            setter(parser(entry.Value));
+            entry.SettingChanged += (_, _) => setter(parser(entry.Value));
+        }
+
+        private static string ColorToString(Color input)
+        {
+            return string.Join(",",
+                input.r.ToString(CultureInfo.InvariantCulture),
+                input.g.ToString(CultureInfo.InvariantCulture),
+                input.b.ToString(CultureInfo.InvariantCulture),
+                input.a.ToString(CultureInfo.InvariantCulture));
+        }
+
+        private static Color ColorFromString(string input)
+        {
+            if (string.IsNullOrWhiteSpace(input))
             {
-                var range = s_intRanges.TryGetValue(key, out var storedRange) ? storedRange : new RangeI { Min = 1, Max = int.MaxValue };
-                if (initial && i < range.Min && s_defaultValues.TryGetValue(key, out var defObj))
+                return Color.black;
+            }
+
+            var segments = input.Split(ColorSeparators, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+            {
+                return Color.black;
+            }
+
+            float r = 0f, g = 0f, b = 0f, a = 1f;
+            TryParseComponent(segments, 0, ref r);
+            TryParseComponent(segments, 1, ref g);
+            TryParseComponent(segments, 2, ref b);
+            TryParseComponent(segments, 3, ref a);
+
+            return new Color(r, g, b, a);
+        }
+
+        private static void TryParseComponent(string[] segments, int index, ref float slot)
+        {
+            if (index >= segments.Length)
+            {
+                return;
+            }
+
+            var trimmed = segments[index].Trim();
+            if (float.TryParse(trimmed, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed))
+            {
+                slot = parsed;
+            }
+        }
+
+        private static T SanitizeValue<T>(T value, string key)
+        {
+            if (value is float f && s_floatRanges.TryGetValue(key, out var floatRange))
+            {
+                var clamped = Math.Min(floatRange.Max, Math.Max(floatRange.Min, f));
+                if (floatRange.Step > 0f)
                 {
-                    var defaultValue = defObj is int defInt ? defInt : 1;
-                    return (T)(object)Math.Max(range.Min, defaultValue);
+                    clamped = SnapFloatToStep(clamped, floatRange.Min, floatRange.Step);
+                    clamped = Math.Min(floatRange.Max, Math.Max(floatRange.Min, clamped));
                 }
 
-                var clampedI = Math.Min(range.Max, Math.Max(range.Min, i));
-                return (T)(object)clampedI;
+                return (T)(object)clamped;
+            }
+
+            if (value is int i && s_intRanges.TryGetValue(key, out var intRange))
+            {
+                var clamped = Math.Min(intRange.Max, Math.Max(intRange.Min, i));
+                if (intRange.Step > 0)
+                {
+                    clamped = SnapIntToStep(clamped, intRange.Min, intRange.Step);
+                    clamped = Math.Min(intRange.Max, Math.Max(intRange.Min, clamped));
+                }
+
+                return (T)(object)clamped;
             }
 
             return value;
         }
 
-        private static void RegisterDefault(string key, object fallback)
+        private static int DetermineIntStep(FeatureConfigEntryAttribute attribute)
         {
-            s_defaultValues[key] = fallback;
+            if (!float.IsNaN(attribute.Step) && attribute.Step >= 1f)
+            {
+                return Math.Max(1, (int)Math.Round(attribute.Step));
+            }
+
+            return 1;
         }
 
-        private static void RegisterFloatRange(string key, float min, float max)
+        private static float DetermineFloatStep(FeatureConfigEntryAttribute attribute, float minValue)
         {
-            s_floatRanges[key] = new RangeF { Min = min, Max = max };
+            if (!float.IsNaN(attribute.Step) && attribute.Step > 0f)
+            {
+                return attribute.Step;
+            }
+
+            return DetermineDefaultFloatStep(minValue);
         }
 
-        private static void RegisterIntRange(string key, int min, int max)
+        private static float DetermineDefaultFloatStep(float minValue)
         {
-            s_intRanges[key] = new RangeI { Min = min, Max = max };
+            var baseValue = Math.Abs(minValue);
+            if (baseValue <= 0f)
+            {
+                return 0.1f;
+            }
+
+            var exponent = Math.Floor(Math.Log10(baseValue));
+            return (float)Math.Pow(10, exponent);
         }
 
+        private static void RegisterFloatRange(string key, float min, float max, float step)
+        {
+            s_floatRanges[key] = new RangeF
+            {
+                Min = min,
+                Max = max,
+                Step = step
+            };
+        }
+
+        private static void RegisterIntRange(string key, int min, int max, int step)
+        {
+            s_intRanges[key] = new RangeI
+            {
+                Min = min,
+                Max = max,
+                Step = step
+            };
+        }
+
+        private static float SnapFloatToStep(float value, float min, float step)
+        {
+            if (step <= 0f)
+            {
+                return value;
+            }
+
+            var offset = (value - min) / step;
+            var steps = Math.Round(offset, MidpointRounding.AwayFromZero);
+            return min + (float)steps * step;
+        }
+
+        private static int SnapIntToStep(int value, int min, int step)
+        {
+            if (step <= 0)
+            {
+                return value;
+            }
+
+            var offset = (value - min) / (double)step;
+            var steps = (int)Math.Round(offset, MidpointRounding.AwayFromZero);
+            return min + steps * step;
+        }
     }
 }
-

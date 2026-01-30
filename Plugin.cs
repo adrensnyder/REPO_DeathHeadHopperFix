@@ -58,7 +58,7 @@ namespace DeathHeadHopperFix
         private void Awake()
         {
             _log = Logger;
-            ConfigManager.Initialize(Config, Logger);
+            ConfigManager.Initialize(Config);
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
             PatchSpectateCameraStateNormal();
