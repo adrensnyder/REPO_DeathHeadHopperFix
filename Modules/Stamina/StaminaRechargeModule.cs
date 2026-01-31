@@ -5,11 +5,12 @@ using System.Reflection;
 using HarmonyLib;
 using Photon.Pun;
 using UnityEngine;
+using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
 
-namespace DeathHeadHopperFix.Modules.Battery
+namespace DeathHeadHopperFix.Modules.Stamina
 {
-    internal sealed class BatteryRechargeModule : MonoBehaviour
+    internal sealed class StaminaRechargeModule : MonoBehaviour
     {
         private static readonly Type? s_deathHeadControllerType = AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController");
 

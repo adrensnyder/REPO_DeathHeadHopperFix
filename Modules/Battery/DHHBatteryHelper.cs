@@ -16,6 +16,9 @@ namespace DeathHeadHopperFix.Modules.Battery
         private static readonly FieldInfo? s_headEnergyEnoughField = typeof(SpectateCamera).GetField("headEnergyEnough", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         private static readonly FieldInfo? s_playerSprintRechargeAmountField = typeof(PlayerController).GetField("sprintRechargeAmount", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
 
+        private const float JumpConsumptionCoalesceWindow = 0.2f;
+        private static float s_lastJumpConsumptionTime = float.NegativeInfinity;
+
         // The DHH mod tracks its own dedicated ability energy pool instead of SpectateCamera.headEnergy.
         private static readonly FieldInfo? s_dhhAbilityEnergyHandlerField = AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController")
             ?.GetField("abilityEnergyHandler", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
@@ -162,6 +165,11 @@ namespace DeathHeadHopperFix.Modules.Battery
             return Math.Max(0f, FeatureFlags.BatteryJumpUsage);
         }
 
+        internal static bool HasRecentJumpConsumption()
+        {
+            return Time.time - s_lastJumpConsumptionTime < JumpConsumptionCoalesceWindow;
+        }
+
         internal static float ComputeVanillaBatteryJumpUsage()
         {
             var player = PlayerController.instance;
@@ -192,6 +200,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             SetHeadEnergy(spectate, nextValue);
             SetEnergyEnough(spectate, nextValue >= reference);
             LogConsumption(currentEnergy, nextValue, consumption, reference);
+            s_lastJumpConsumptionTime = Time.time;
             return nextValue;
         }
 

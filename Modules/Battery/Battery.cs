@@ -273,6 +273,9 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
                 return;
 
+            if (DHHBatteryHelper.HasRecentJumpConsumption())
+                return;
+
             var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
             if (!allowance.allowed)
             {

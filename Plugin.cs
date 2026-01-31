@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Battery;
+using DeathHeadHopperFix.Modules.Stamina;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay;
 using DeathHeadHopperFix.Modules.Patches;
@@ -411,9 +412,9 @@ namespace DeathHeadHopperFix
                 go.AddComponent<BatteryJumpModule>();
             }
 
-            if (FeatureFlags.RechargeWithStamina && go.GetComponent<BatteryRechargeModule>() == null)
+            if (go.GetComponent<StaminaRechargeModule>() == null)
             {
-                go.AddComponent<BatteryRechargeModule>();
+                go.AddComponent<StaminaRechargeModule>();
             }
         }
 

@@ -86,6 +86,17 @@ namespace DeathHeadHopperFix.Modules.Patches
 
             ___physGrabObject.GrabStarted(grabber);
             ___physGrabObject.GrabEnded(grabber);
+
+            if (FeatureFlags.BatteryJumpEnabled && !DHHBatteryHelper.HasRecentJumpConsumption())
+            {
+                var spectate = SpectateCamera.instance;
+                if (spectate != null)
+                {
+                    var consumption = DHHBatteryHelper.GetEffectiveBatteryJumpUsage();
+                    var reference = DHHBatteryHelper.GetJumpThreshold();
+                    DHHBatteryHelper.ApplyConsumption(spectate, consumption, reference);
+                }
+            }
         }
     }
 }
