@@ -52,7 +52,9 @@ namespace DeathHeadHopperFix.Modules.Utilities
             "SamplePosition",
             BindingFlags.Static | BindingFlags.Public,
             null,
-            new[] { typeof(Vector3), s_navMeshHitType, typeof(float), typeof(int) },
+            s_navMeshHitType == null
+                ? null
+                : new[] { typeof(Vector3), s_navMeshHitType.MakeByRefType(), typeof(float), typeof(int) },
             null);
         private static readonly FieldInfo? s_navMeshHitPositionField = s_navMeshHitType == null ? null : AccessTools.Field(s_navMeshHitType, "position");
         private static readonly MethodInfo? s_navMeshCalculatePathMethod = s_navMeshType?.GetMethod(
