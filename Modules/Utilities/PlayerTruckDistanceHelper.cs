@@ -41,10 +41,20 @@ namespace DeathHeadHopperFix.Modules.Utilities
         private static readonly FieldInfo? s_roomVolumeTruckField = s_roomVolumeType == null ? null : AccessTools.Field(s_roomVolumeType, "Truck");
         private static readonly FieldInfo? s_playerLastNavmeshField = AccessTools.Field(typeof(PlayerAvatar), "LastNavmeshPosition");
         private static readonly FieldInfo? s_playerRoomVolumeCheckField = AccessTools.Field(typeof(PlayerAvatar), "RoomVolumeCheck");
+        private static readonly Type? s_playerDeathHeadType = AccessTools.TypeByName("PlayerDeathHead");
+        private static readonly FieldInfo? s_playerDeathHeadRoomVolumeCheckField = s_playerDeathHeadType == null ? null : AccessTools.Field(s_playerDeathHeadType, "roomVolumeCheck");
         private static readonly Type? s_roomVolumeCheckType = AccessTools.TypeByName("RoomVolumeCheck");
         private static readonly FieldInfo? s_roomVolumeCheckCurrentRoomsField = s_roomVolumeCheckType == null ? null : AccessTools.Field(s_roomVolumeCheckType, "CurrentRooms");
         private static readonly Type? s_navMeshType = AccessTools.TypeByName("UnityEngine.AI.NavMesh");
+        private static readonly Type? s_navMeshHitType = AccessTools.TypeByName("UnityEngine.AI.NavMeshHit");
         private static readonly Type? s_navMeshPathType = AccessTools.TypeByName("UnityEngine.AI.NavMeshPath");
+        private static readonly MethodInfo? s_navMeshSamplePositionMethod = s_navMeshType?.GetMethod(
+            "SamplePosition",
+            BindingFlags.Static | BindingFlags.Public,
+            null,
+            new[] { typeof(Vector3), s_navMeshHitType, typeof(float), typeof(int) },
+            null);
+        private static readonly FieldInfo? s_navMeshHitPositionField = s_navMeshHitType == null ? null : AccessTools.Field(s_navMeshHitType, "position");
         private static readonly MethodInfo? s_navMeshCalculatePathMethod = s_navMeshType?.GetMethod(
             "CalculatePath",
             BindingFlags.Static | BindingFlags.Public,
@@ -89,7 +99,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 var worldPosition = GetPlayerWorldPosition(player);
                 var heightDelta = worldPosition.y - truckPosition.y;
                 var navDistance = -1f;
-                var hasPath = TryGetPlayerNavMeshPosition(player, out var navMeshStart) &&
+                var hasPath = TryGetPlayerNavMeshPosition(player, worldPosition, out var navMeshStart) &&
                               TryCalculatePathDistance(navMeshStart, truckPosition, out navDistance);
                 var roomsAway = ResolveRoomsAway(player, truckPoint, allLevelPoints);
 
@@ -239,7 +249,18 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return results;
             }
 
-            var roomCheck = s_playerRoomVolumeCheckField.GetValue(player);
+            object? roomCheck = null;
+            var deathHead = player.playerDeathHead;
+            if (deathHead != null && s_playerDeathHeadRoomVolumeCheckField != null)
+            {
+                roomCheck = s_playerDeathHeadRoomVolumeCheckField.GetValue(deathHead);
+            }
+
+            if (roomCheck == null)
+            {
+                roomCheck = s_playerRoomVolumeCheckField.GetValue(player);
+            }
+
             if (roomCheck == null)
             {
                 return results;
@@ -401,21 +422,58 @@ namespace DeathHeadHopperFix.Modules.Utilities
             return player.transform.position;
         }
 
-        private static bool TryGetPlayerNavMeshPosition(PlayerAvatar player, out Vector3 navMeshPosition)
+        private static bool TryGetPlayerNavMeshPosition(PlayerAvatar player, Vector3 worldPosition, out Vector3 navMeshPosition)
         {
             navMeshPosition = Vector3.zero;
-            if (player == null || s_playerLastNavmeshField == null)
+            if (player == null)
             {
                 return false;
             }
 
-            if (s_playerLastNavmeshField.GetValue(player) is Vector3 position && position != Vector3.zero)
+            if (TrySamplePosition(worldPosition, out var sampledPosition))
+            {
+                navMeshPosition = sampledPosition;
+                return true;
+            }
+
+            if (s_playerLastNavmeshField != null &&
+                s_playerLastNavmeshField.GetValue(player) is Vector3 position &&
+                position != Vector3.zero)
             {
                 navMeshPosition = position;
                 return true;
             }
 
             return false;
+        }
+
+        private static bool TrySamplePosition(Vector3 worldPosition, out Vector3 navMeshPosition)
+        {
+            navMeshPosition = Vector3.zero;
+            if (s_navMeshType == null || s_navMeshHitType == null || s_navMeshSamplePositionMethod == null || s_navMeshHitPositionField == null)
+            {
+                return false;
+            }
+
+            var navHit = Activator.CreateInstance(s_navMeshHitType);
+            if (navHit == null)
+            {
+                return false;
+            }
+
+            var args = new object?[] { worldPosition, navHit, 6f, -1 };
+            if (s_navMeshSamplePositionMethod.Invoke(null, args) is not bool success || !success)
+            {
+                return false;
+            }
+
+            if (s_navMeshHitPositionField.GetValue(args[1]) is not Vector3 hitPosition)
+            {
+                return false;
+            }
+
+            navMeshPosition = hitPosition;
+            return true;
         }
 
         private static bool TryCalculatePathDistance(Vector3 from, Vector3 to, out float navMeshDistance)

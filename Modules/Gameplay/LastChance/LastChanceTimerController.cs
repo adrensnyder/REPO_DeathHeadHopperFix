@@ -31,6 +31,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool s_currencyCaptured;
         private static readonly Color TimerColor = new(1f, 0.85f, 0.1f, 1f);
         private static readonly Color FlashColor = new(1f, 0.2f, 0.2f, 1f);
+        private const string SurrenderHintPrompt = "Hold Jump to surrender";
+        private const string SurrenderCountdownFormat = "Surrender in {0}s";
+        private const string SurrenderedHintText = "Surrendered <3";
+        private const string LocalSurrenderedHintText = "You surrendered <3";
 
         private static readonly FieldInfo? RunManagerRunStartedField =
             AccessTools.Field(typeof(RunManager), "runStarted");
@@ -141,7 +145,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_currencyCaptured = false;
             CaptureBaseCurrency();
             LastChanceSurrenderNetwork.EnsureCreated();
-            LastChanceTimerUI.Show();
+            LastChanceTimerUI.Show(SurrenderHintPrompt);
             s_jumpDistanceLogged = false;
 
             if (FeatureFlags.DebugLogging)
@@ -412,7 +416,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (s_localSurrendered)
             {
-                LastChanceTimerUI.SetSurrenderHintText("Ti sei arreso <3");
+                LastChanceTimerUI.SetSurrenderHintText(SurrenderedHintText);
                 return;
             }
 
@@ -432,7 +436,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (remaining > 0f)
             {
                 var secs = Mathf.CeilToInt(remaining);
-                LastChanceTimerUI.SetSurrenderHintText($"Surrender in {secs}s");
+                LastChanceTimerUI.SetSurrenderHintText(string.Format(SurrenderCountdownFormat, secs));
                 return;
             }
 
@@ -448,7 +452,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             s_localSurrendered = true;
             s_surrenderHoldTimer = SurrenderHoldDuration;
-            LastChanceTimerUI.SetSurrenderHintText("Ti sei arreso <3");
+            LastChanceTimerUI.SetSurrenderHintText(LocalSurrenderedHintText);
 
             var actorNumber = GetLocalActorNumber();
             RegisterSurrenderedActor(actorNumber, true);
@@ -456,7 +460,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void ResetLocalSurrenderAttempt()
         {
-            if (s_surrenderHoldTimer > 0f)
+            if (s_surrenderHoldTimer > 0f && !s_localSurrendered)
             {
                 s_surrenderHoldTimer = 0f;
                 LastChanceTimerUI.ResetSurrenderHint();

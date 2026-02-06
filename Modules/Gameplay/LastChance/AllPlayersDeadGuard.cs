@@ -13,9 +13,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 {
     internal static class AllPlayersDeadGuard
     {
-        private const string ModuleTag = "[DeathHeadHopperFix-VR] [Gameplay]";
+        private const string ModuleTag = "[DeathHeadHopperFix] [Gameplay]";
         private const string LogKey = "SuppressAllDeadTransition";
-        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix-VR.Gameplay");
+        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.Gameplay");
         private static readonly FieldInfo? AllPlayersDeadField = AccessTools.Field(typeof(RunManager), "allPlayersDead");
         private static readonly FieldInfo? PlayerIsDisabledField = AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
         private static Harmony? _harmony;
@@ -24,11 +24,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         internal static void EnsureEnabled()
         {
-            if (!FeatureFlags.LastChangeMode)
-            {
-                return;
-            }
-
             if (_harmony != null)
             {
                 return;
@@ -44,7 +39,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            _harmony = new Harmony("DeathHeadHopperFix-VR.Gameplay.AllPlayersDeadGuard");
+            _harmony = new Harmony("DeathHeadHopperFix.Gameplay.AllPlayersDeadGuard");
             _harmony.Patch(
                 AccessTools.Method(typeof(RunManager), "Update"),
                 transpiler: new HarmonyMethod(typeof(AllPlayersDeadGuard), nameof(UpdateTranspiler)));

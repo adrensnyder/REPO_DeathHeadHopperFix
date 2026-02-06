@@ -18,7 +18,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
         private static readonly MethodInfo? s_shouldSkipMethod =
             AccessTools.Method(typeof(SpectateDeadPlayersModule), nameof(ShouldSkipSpectateTarget),
-                Array.Empty<Type>(), Array.Empty<Type>());
+                new[] { typeof(PlayerAvatar) });
 
         private static bool s_applied;
 
@@ -29,14 +29,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
-            var target = AccessTools.Method(typeof(SpectateCamera), "PlayerSwitch", Array.Empty<Type>(), Array.Empty<Type>());
+            var target = AccessTools.Method(typeof(SpectateCamera), "PlayerSwitch", new[] { typeof(bool) });
             if (target == null || s_playerIsDisabledField == null || s_shouldSkipMethod == null)
             {
                 return;
             }
 
             var transpiler = AccessTools.Method(typeof(SpectateDeadPlayersModule), nameof(PlayerSwitchTranspiler),
-                new[] { typeof(IEnumerable<CodeInstruction>) }, Array.Empty<Type>());
+                new[] { typeof(IEnumerable<CodeInstruction>) });
             if (transpiler == null)
             {
                 return;

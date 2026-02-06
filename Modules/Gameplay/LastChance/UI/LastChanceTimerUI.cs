@@ -26,10 +26,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
         private static RectTransform? s_rect;
         private static Component? s_hintLabel;
         private static RectTransform? s_hintRect;
-        private const string DefaultHintText = "Hold Jump to surrender";
+        private static string s_defaultHintText = string.Empty;
+        private const float SurrenderHintVerticalOffset = -45f;
 
-        internal static void Show()
+        internal static void Show(string defaultHintText)
         {
+            s_defaultHintText = defaultHintText;
             if (s_label != null)
             {
                 SetEnabled(true);
@@ -64,13 +66,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
                 s_hintRect.anchorMin = new Vector2(0.5f, 1f);
                 s_hintRect.anchorMax = new Vector2(0.5f, 1f);
                 s_hintRect.pivot = new Vector2(0.5f, 1f);
-                s_hintRect.anchoredPosition = new Vector2(0f, -70f);
+                s_hintRect.anchoredPosition = new Vector2(0f, SurrenderHintVerticalOffset);
                 s_hintRect.sizeDelta = new Vector2(600f, 26f);
             }
 
             s_hintLabel = hintGo.AddComponent(LabelType);
             SetHintDefaults(s_hintLabel);
-            SetSurrenderHintText(DefaultHintText);
+            SetSurrenderHintText(s_defaultHintText);
         }
 
         internal static void UpdateText(string text)
@@ -174,7 +176,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
 
         internal static void ResetSurrenderHint()
         {
-            SetSurrenderHintText(DefaultHintText);
+            SetSurrenderHintText(s_defaultHintText);
         }
     }
 }
