@@ -9,11 +9,12 @@ using System.Reflection;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using DeathHeadHopperFix.Modules.Battery;
+using DeathHeadHopperFix.Modules.Gameplay.Spectate;
 using DeathHeadHopperFix.Modules.Stamina;
 using DeathHeadHopperFix.Modules.Config;
-using DeathHeadHopperFix.Modules.Gameplay;
+using DeathHeadHopperFix.Modules.Gameplay.Core;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance;
-using DeathHeadHopperFix.Modules.Patches;
+using DeathHeadHopperFix.Modules.Gameplay.Spectate.Patches;
 using DeathHeadHopperFix.Modules.Utilities;
 
 namespace DeathHeadHopperFix
@@ -66,6 +67,7 @@ namespace DeathHeadHopperFix
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
             PatchSpectateCameraStateNormal();
+            SpectateDeadPlayersModule.Apply(_harmony);
 
             // Local patches from this assembly, e.g. PlayerDeathHeadUpdatePatch.
             // NOTE: we no longer patch SpectateCamera.UpdateState/StateHead because they were fragile

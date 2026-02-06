@@ -6,7 +6,7 @@ using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
-namespace DeathHeadHopperFix.Modules.Gameplay
+namespace DeathHeadHopperFix.Modules.Gameplay.Core
 {
     internal static class AbilityModule
     {

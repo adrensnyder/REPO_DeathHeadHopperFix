@@ -12,6 +12,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string Upgrades = "6. Upgrades";
             public const string LastChance = "7. LastChance";
             public const string Debug = "8. Debug";
+            public const string Spectate = "9. Spectate";
         }
 
         internal static class Descriptions
@@ -50,6 +51,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DisableBatteryModule = "Temporarily disable the BatteryModule component.";
             public const string DisableAbilityPatches = "Skip ability-related Harmony patches (charge rename, ability cooldown sync, etc.).";
             public const string DisableSpectateChecks = "Skip SpectateCamera override/hints when evaluating battery status (debug test).";
+            public const string SpectateDeadPlayers = "Allow SpectateCamera to cycle through disabled players (dead bodies) when toggling targets.";
         }
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpEnabled)]
@@ -144,6 +146,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceSurrenderSeconds, Min = 2f, Max = 10f)]
         public static int LastChanceSurrenderSeconds = 5;
+
+        [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayers)]
+        public static bool SpectateDeadPlayers = false;
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = true;

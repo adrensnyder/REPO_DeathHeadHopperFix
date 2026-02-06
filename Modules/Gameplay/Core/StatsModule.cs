@@ -8,7 +8,7 @@ using HarmonyLib;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Utilities;
 
-namespace DeathHeadHopperFix.Modules.Gameplay
+namespace DeathHeadHopperFix.Modules.Gameplay.Core
 {
     internal static class StatsModule
     {

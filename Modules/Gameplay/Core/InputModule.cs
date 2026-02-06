@@ -9,7 +9,7 @@ using UnityEngine;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Utilities;
 
-namespace DeathHeadHopperFix.Modules.Gameplay
+namespace DeathHeadHopperFix.Modules.Gameplay.Core
 {
     internal static class InputModule
     {

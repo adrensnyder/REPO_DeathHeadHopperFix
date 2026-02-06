@@ -9,7 +9,7 @@ using Photon.Pun;
 using UnityEngine;
 using DeathHeadHopper.DeathHead.Handlers;
 
-namespace DeathHeadHopperFix.Modules.Patches
+namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 {
     [HarmonyPatch(typeof(StunHandler), "HandleStun")]
     internal static class StunHandlerReleasePatch

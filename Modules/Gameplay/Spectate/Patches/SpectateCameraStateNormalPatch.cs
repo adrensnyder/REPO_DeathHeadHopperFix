@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Reflection.Emit;
 using HarmonyLib;
 
-namespace DeathHeadHopperFix.Modules.Patches
+namespace DeathHeadHopperFix.Modules.Gameplay.Spectate.Patches
 {
     internal static class SpectateCameraStateNormalPatch
     {

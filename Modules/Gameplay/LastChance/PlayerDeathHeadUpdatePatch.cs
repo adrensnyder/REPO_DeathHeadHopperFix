@@ -4,7 +4,9 @@ using UnityEngine;
 using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
 
-namespace DeathHeadHopperFix.Modules.Patches
+#nullable enable
+
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 {
     [HarmonyPatch(typeof(PlayerDeathHead), "Update")]
     internal static class PlayerDeathHeadUpdatePatch

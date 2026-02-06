@@ -10,7 +10,7 @@ using UnityEngine;
 using DeathHeadHopperFix.Modules.Utilities;
 using DeathHeadHopperFix.Modules.Config;
 
-namespace DeathHeadHopperFix.Modules.Gameplay
+namespace DeathHeadHopperFix.Modules.Gameplay.Core
 {
     internal static class AudioModule
     {

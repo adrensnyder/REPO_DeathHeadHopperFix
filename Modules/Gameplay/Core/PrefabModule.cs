@@ -12,7 +12,7 @@ using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 
-namespace DeathHeadHopperFix.Modules.Gameplay
+namespace DeathHeadHopperFix.Modules.Gameplay.Core
 {
     internal static class PrefabModule
     {
