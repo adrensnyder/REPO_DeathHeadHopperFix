@@ -44,9 +44,21 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHShopSpawnChance = "Chance each DeathHeadHopper shop slot actually spawns an item.";
             public const string ShopItemsSpawnChance = "Second-tier chance that a DeathHeadHopper slot produces an item after it was selected.";
             public const string LastChanceTimerSeconds = "LastChance timer duration in seconds (integer, 30s steps).";
+            public const string LastChanceDynamicTimerEnabled = "Enable dynamic LastChance timer scaling from base timer and run context metrics.";
+            public const string LastChanceTimerPerRequiredPlayerSeconds = "Extra seconds added per required player that must reach the truck.";
+            public const string LastChanceTimerPerLevelSeconds = "Extra seconds added per current level number.";
+            public const string LastChanceTimerPerFarthestMeterSeconds = "Extra seconds added per meter for the farthest required player distance to truck.";
+            public const string LastChanceTimerPerBelowTruckPlayerSeconds = "Extra seconds added per required player below the truck threshold height.";
+            public const string LastChanceTimerPerBelowTruckMeterSeconds = "Extra seconds added per meter below threshold (only when height delta <= threshold).";
+            public const string LastChanceBelowTruckThresholdMeters = "Height delta threshold (playerY - truckY) below which low-altitude penalties apply. -0.5 means at least half meter below.";
+            public const string LastChanceTimerPerRoomStepSeconds = "Extra seconds added per room step for the longest shortest-room-path among required players.";
+            public const string LastChanceDynamicDiminishStartSeconds = "Added-seconds value after which diminishing begins.";
+            public const string LastChanceDynamicDiminishRangeSeconds = "Saturation range for diminishing function; bigger values allow more growth before flattening.";
+            public const string LastChanceDynamicDiminishReduction = "How strongly diminishing compresses overflow above start (0=no reduction, 0.9=strong reduction).";
+            public const string LastChanceDynamicMaxMinutes = "Hard cap (minutes) for final LastChance timer after dynamic scaling.";
             public const string LastChanceConsolationMoney = "LastChance consolation money added on success (integer).";
             public const string LastChanceMissingPlayers = "Number of players allowed to stay outside the truck before LastChance success triggers (0 = all players required).";
-            public const string LastChanceSurrenderSeconds = "Seconds the player must hold Jump to surrender during LastChance.";
+            public const string LastChanceSurrenderSeconds = "Seconds the player must hold Crouch to surrender during LastChance.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
             public const string DisableBatteryModule = "Temporarily disable the BatteryModule component.";
             public const string DisableAbilityPatches = "Skip ability-related Harmony patches (charge rename, ability cooldown sync, etc.).";
@@ -137,6 +149,42 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerSeconds, Min = 30f, Max = 600f)]
         public static int LastChanceTimerSeconds = 300;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicTimerEnabled)]
+        public static bool LastChanceDynamicTimerEnabled = true;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerRequiredPlayerSeconds, Min = 0f, Max = 120f)]
+        public static float LastChanceTimerPerRequiredPlayerSeconds = 8f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerLevelSeconds, Min = 0f, Max = 60f)]
+        public static float LastChanceTimerPerLevelSeconds = 3f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerFarthestMeterSeconds, Min = 0f, Max = 20f)]
+        public static float LastChanceTimerPerFarthestMeterSeconds = 1.2f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerBelowTruckPlayerSeconds, Min = 0f, Max = 120f)]
+        public static float LastChanceTimerPerBelowTruckPlayerSeconds = 6f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerBelowTruckMeterSeconds, Min = 0f, Max = 30f)]
+        public static float LastChanceTimerPerBelowTruckMeterSeconds = 5f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceBelowTruckThresholdMeters, Min = -5f, Max = 0f)]
+        public static float LastChanceBelowTruckThresholdMeters = -0.5f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerRoomStepSeconds, Min = 0f, Max = 60f)]
+        public static float LastChanceTimerPerRoomStepSeconds = 4f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicDiminishStartSeconds, Min = 0f, Max = 1800f)]
+        public static int LastChanceDynamicDiminishStartSeconds = 120;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicDiminishRangeSeconds, Min = 10f, Max = 3600f)]
+        public static int LastChanceDynamicDiminishRangeSeconds = 240;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicDiminishReduction, Min = 0f, Max = 0.99f)]
+        public static float LastChanceDynamicDiminishReduction = 0.9f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicMaxMinutes, Min = 5f, Max = 20f)]
+        public static int LastChanceDynamicMaxMinutes = 10;
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceConsolationMoney, Min = 0f, Max = 5f)]
         public static int LastChanceConsolationMoney = 1;

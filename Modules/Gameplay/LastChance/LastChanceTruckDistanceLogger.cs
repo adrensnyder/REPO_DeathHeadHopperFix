@@ -37,9 +37,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 var heightText = record.HeightDelta >= 0
                     ? $"+{record.HeightDelta:F2}m"
                     : $"{record.HeightDelta:F2}m";
-                var roomsText = record.RoomsAway >= 0 ? record.RoomsAway.ToString() : "n/a";
+                var shortestRoomsText = record.ShortestRoomPathToTruck >= 0 ? record.ShortestRoomPathToTruck.ToString() : "n/a";
+                var totalMapRoomsText = record.TotalMapRooms > 0 ? record.TotalMapRooms.ToString() : "n/a";
 
-                message.AppendFormat(" {0}=d{1},h{2},r{3}", playerName, distanceText, heightText, roomsText);
+                message.AppendFormat(
+                    " {0}=distance:{1},height:{2},shortestRoomPathToTruck:{3},totalMapRooms:{4}",
+                    playerName,
+                    distanceText,
+                    heightText,
+                    shortestRoomsText,
+                    totalMapRoomsText);
             }
 
             Debug.Log(message.ToString());

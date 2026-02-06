@@ -13,19 +13,21 @@ namespace DeathHeadHopperFix.Modules.Utilities
     {
         internal readonly struct PlayerTruckDistance
         {
-            internal PlayerTruckDistance(PlayerAvatar playerAvatar, float navMeshDistance, float heightDelta, int roomsAway, bool hasValidPath)
+            internal PlayerTruckDistance(PlayerAvatar playerAvatar, float navMeshDistance, float heightDelta, int shortestRoomPathToTruck, int totalMapRooms, bool hasValidPath)
             {
                 PlayerAvatar = playerAvatar;
                 NavMeshDistance = navMeshDistance;
                 HeightDelta = heightDelta;
-                RoomsAway = roomsAway;
+                ShortestRoomPathToTruck = shortestRoomPathToTruck;
+                TotalMapRooms = totalMapRooms;
                 HasValidPath = hasValidPath;
             }
 
             internal PlayerAvatar PlayerAvatar { get; }
             internal float NavMeshDistance { get; }
             internal float HeightDelta { get; }
-            internal int RoomsAway { get; }
+            internal int ShortestRoomPathToTruck { get; }
+            internal int TotalMapRooms { get; }
             internal bool HasValidPath { get; }
         }
 
@@ -43,6 +45,9 @@ namespace DeathHeadHopperFix.Modules.Utilities
         private static readonly FieldInfo? s_playerRoomVolumeCheckField = AccessTools.Field(typeof(PlayerAvatar), "RoomVolumeCheck");
         private static readonly Type? s_playerDeathHeadType = AccessTools.TypeByName("PlayerDeathHead");
         private static readonly FieldInfo? s_playerDeathHeadRoomVolumeCheckField = s_playerDeathHeadType == null ? null : AccessTools.Field(s_playerDeathHeadType, "roomVolumeCheck");
+        private static readonly FieldInfo? s_playerDeathHeadPhysGrabObjectField = s_playerDeathHeadType == null ? null : AccessTools.Field(s_playerDeathHeadType, "physGrabObject");
+        private static readonly Type? s_physGrabObjectType = AccessTools.TypeByName("PhysGrabObject");
+        private static readonly FieldInfo? s_physGrabObjectCenterPointField = s_physGrabObjectType == null ? null : AccessTools.Field(s_physGrabObjectType, "centerPoint");
         private static readonly Type? s_roomVolumeCheckType = AccessTools.TypeByName("RoomVolumeCheck");
         private static readonly FieldInfo? s_roomVolumeCheckCurrentRoomsField = s_roomVolumeCheckType == null ? null : AccessTools.Field(s_roomVolumeCheckType, "CurrentRooms");
         private static readonly Type? s_navMeshType = AccessTools.TypeByName("UnityEngine.AI.NavMesh");
@@ -56,7 +61,8 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 ? null
                 : new[] { typeof(Vector3), s_navMeshHitType.MakeByRefType(), typeof(float), typeof(int) },
             null);
-        private static readonly FieldInfo? s_navMeshHitPositionField = s_navMeshHitType == null ? null : AccessTools.Field(s_navMeshHitType, "position");
+        private static readonly PropertyInfo? s_navMeshHitPositionProperty = s_navMeshHitType?.GetProperty("position", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static readonly FieldInfo? s_navMeshHitPositionField = s_navMeshHitType?.GetField("position", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private static readonly MethodInfo? s_navMeshCalculatePathMethod = s_navMeshType?.GetMethod(
             "CalculatePath",
             BindingFlags.Static | BindingFlags.Public,
@@ -90,6 +96,8 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return Array.Empty<PlayerTruckDistance>();
             }
 
+            var roomGraph = BuildRoomGraph(allLevelPoints);
+            var totalMapRooms = roomGraph.Count > 0 ? roomGraph.Count : -1;
             var distances = new List<PlayerTruckDistance>(director.PlayerList.Count);
             foreach (var player in director.PlayerList)
             {
@@ -103,13 +111,14 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 var navDistance = -1f;
                 var hasPath = TryGetPlayerNavMeshPosition(player, worldPosition, out var navMeshStart) &&
                               TryCalculatePathDistance(navMeshStart, truckPosition, out navDistance);
-                var roomsAway = ResolveRoomsAway(player, truckPoint, allLevelPoints);
+                var shortestRoomPathToTruck = ResolveShortestRoomPathToTruck(player, truckPoint, roomGraph);
 
                 distances.Add(new PlayerTruckDistance(
                     player,
                     hasPath ? navDistance : -1f,
                     heightDelta,
-                    roomsAway,
+                    shortestRoomPathToTruck,
+                    totalMapRooms,
                     hasPath));
             }
 
@@ -208,42 +217,65 @@ namespace DeathHeadHopperFix.Modules.Utilities
             return false;
         }
 
-        private static int ResolveRoomsAway(PlayerAvatar player, object? truckPoint, List<object>? allLevelPoints)
+        private static int ResolveShortestRoomPathToTruck(PlayerAvatar player, object? truckPoint, Dictionary<object, HashSet<object>> roomGraph)
         {
-            if (truckPoint == null || allLevelPoints == null)
+            if (truckPoint == null || roomGraph.Count == 0)
             {
                 return -1;
             }
 
-            var playerPoints = GetPlayerLevelPoints(player, allLevelPoints);
-            if (playerPoints.Count == 0)
+            var truckRoom = GetLevelPointRoom(truckPoint);
+            if (truckRoom == null || !roomGraph.ContainsKey(truckRoom))
             {
                 return -1;
             }
 
-            var minDistance = int.MaxValue;
-            foreach (var point in playerPoints)
+            var playerRooms = GetPlayerRooms(player);
+            if (playerRooms.Count == 0)
             {
-                var distance = CalculateRoomDistance(point, truckPoint);
-                if (!distance.HasValue)
+                return -1;
+            }
+
+            var visited = new HashSet<object>();
+            var queue = new Queue<(object room, int distance)>();
+            foreach (var room in playerRooms)
+            {
+                if (room == null || !roomGraph.ContainsKey(room) || !visited.Add(room))
                 {
                     continue;
                 }
 
-                if (distance.Value < minDistance)
+                queue.Enqueue((room, 0));
+            }
+
+            while (queue.Count > 0)
+            {
+                var (room, depth) = queue.Dequeue();
+                if (ReferenceEquals(room, truckRoom))
                 {
-                    minDistance = distance.Value;
-                    if (minDistance == 0)
+                    return depth;
+                }
+
+                if (!roomGraph.TryGetValue(room, out var neighbors))
+                {
+                    continue;
+                }
+
+                foreach (var neighbor in neighbors)
+                {
+                    if (neighbor == null || !visited.Add(neighbor))
                     {
-                        break;
+                        continue;
                     }
+
+                    queue.Enqueue((neighbor, depth + 1));
                 }
             }
 
-            return minDistance == int.MaxValue ? -1 : minDistance;
+            return -1;
         }
 
-        private static List<object> GetPlayerLevelPoints(PlayerAvatar player, List<object> allLevelPoints)
+        private static List<object> GetPlayerRooms(PlayerAvatar player)
         {
             var results = new List<object>();
             if (player == null || s_playerRoomVolumeCheckField == null || s_roomVolumeCheckCurrentRoomsField == null)
@@ -274,85 +306,81 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return results;
             }
 
-            var seen = new HashSet<object>();
             foreach (var room in currentRooms)
             {
-                if (room == null)
-                {
-                    continue;
-                }
-
-                foreach (var levelPoint in allLevelPoints)
-                {
-                    if (levelPoint == null)
-                    {
-                        continue;
-                    }
-
-                    if (LevelPointRoomMatches(levelPoint, room) && seen.Add(levelPoint))
-                    {
-                        results.Add(levelPoint);
-                    }
-                }
+                if (room != null)
+                    results.Add(room);
             }
 
             return results;
         }
 
-        private static bool LevelPointRoomMatches(object levelPoint, object room)
+        private static Dictionary<object, HashSet<object>> BuildRoomGraph(List<object>? allLevelPoints)
         {
-            if (levelPoint == null || room == null || s_levelPointRoomField == null)
+            var graph = new Dictionary<object, HashSet<object>>();
+            if (allLevelPoints == null || s_levelPointRoomField == null)
             {
-                return false;
+                return graph;
             }
 
-            var matchRoom = s_levelPointRoomField.GetValue(levelPoint);
-            return ReferenceEquals(matchRoom, room);
-        }
-
-        private static int? CalculateRoomDistance(object startPoint, object targetPoint)
-        {
-            if (startPoint == null || targetPoint == null || s_levelPointConnectedPointsField == null)
+            foreach (var point in allLevelPoints)
             {
-                return null;
-            }
-
-            if (ReferenceEquals(startPoint, targetPoint))
-            {
-                return 0;
-            }
-
-            var visited = new HashSet<object> { startPoint };
-            var queue = new Queue<(object point, int distance)>();
-            queue.Enqueue((startPoint, 0));
-
-            while (queue.Count > 0)
-            {
-                var (current, depth) = queue.Dequeue();
-                var neighbors = GetConnectedPoints(current);
-                if (neighbors == null)
+                if (point == null)
                 {
                     continue;
                 }
 
-                foreach (var neighbor in neighbors)
+                var room = GetLevelPointRoom(point);
+                if (room == null)
                 {
-                    if (neighbor == null || visited.Contains(neighbor))
+                    continue;
+                }
+
+                if (!graph.ContainsKey(room))
+                {
+                    graph[room] = new HashSet<object>();
+                }
+
+                var connected = GetConnectedPoints(point);
+                if (connected == null)
+                {
+                    continue;
+                }
+
+                foreach (var neighborPoint in connected)
+                {
+                    if (neighborPoint == null)
                     {
                         continue;
                     }
 
-                    if (ReferenceEquals(neighbor, targetPoint))
+                    var neighborRoom = GetLevelPointRoom(neighborPoint);
+                    if (neighborRoom == null)
                     {
-                        return depth + 1;
+                        continue;
                     }
 
-                    visited.Add(neighbor);
-                    queue.Enqueue((neighbor, depth + 1));
+                    if (!graph.ContainsKey(neighborRoom))
+                    {
+                        graph[neighborRoom] = new HashSet<object>();
+                    }
+
+                    if (!ReferenceEquals(room, neighborRoom))
+                    {
+                        graph[room].Add(neighborRoom);
+                        graph[neighborRoom].Add(room);
+                    }
                 }
             }
 
-            return null;
+            return graph;
+        }
+
+        private static object? GetLevelPointRoom(object levelPoint)
+        {
+            if (levelPoint == null || s_levelPointRoomField == null)
+                return null;
+            return s_levelPointRoomField.GetValue(levelPoint);
         }
 
         private static IEnumerable<object>? GetConnectedPoints(object levelPoint)
@@ -432,10 +460,40 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return false;
             }
 
-            if (TrySamplePosition(worldPosition, out var sampledPosition))
+            if (TrySamplePosition(worldPosition, 8f, out var sampledPosition))
             {
                 navMeshPosition = sampledPosition;
                 return true;
+            }
+
+            // Death head often moves above the navmesh; prefer multiple probes around its physics center
+            // before falling back to PlayerAvatar.LastNavmeshPosition (which may remain at death location).
+            var deathHead = player.playerDeathHead;
+            if (deathHead != null)
+            {
+                var headCenter = deathHead.transform.position;
+                if (s_playerDeathHeadPhysGrabObjectField != null &&
+                    s_physGrabObjectCenterPointField != null)
+                {
+                    var physGrabObject = s_playerDeathHeadPhysGrabObjectField.GetValue(deathHead);
+                    if (physGrabObject != null &&
+                        s_physGrabObjectCenterPointField.GetValue(physGrabObject) is Vector3 centerPoint)
+                    {
+                        headCenter = centerPoint;
+                    }
+                }
+
+                if (TrySamplePosition(headCenter, 12f, out sampledPosition) ||
+                    TrySamplePosition(headCenter - Vector3.up * 0.5f, 18f, out sampledPosition) ||
+                    TrySamplePosition(headCenter, 30f, out sampledPosition))
+                {
+                    navMeshPosition = sampledPosition;
+                    return true;
+                }
+
+                // When the death head is active and no navmesh point can be resolved nearby,
+                // avoid using stale avatar navmesh position from the corpse location.
+                return false;
             }
 
             if (s_playerLastNavmeshField != null &&
@@ -449,10 +507,10 @@ namespace DeathHeadHopperFix.Modules.Utilities
             return false;
         }
 
-        private static bool TrySamplePosition(Vector3 worldPosition, out Vector3 navMeshPosition)
+        private static bool TrySamplePosition(Vector3 worldPosition, float maxDistance, out Vector3 navMeshPosition)
         {
             navMeshPosition = Vector3.zero;
-            if (s_navMeshType == null || s_navMeshHitType == null || s_navMeshSamplePositionMethod == null || s_navMeshHitPositionField == null)
+            if (s_navMeshType == null || s_navMeshHitType == null || s_navMeshSamplePositionMethod == null)
             {
                 return false;
             }
@@ -463,19 +521,44 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return false;
             }
 
-            var args = new object?[] { worldPosition, navHit, 6f, -1 };
+            var args = new object?[] { worldPosition, navHit, maxDistance, -1 };
             if (s_navMeshSamplePositionMethod.Invoke(null, args) is not bool success || !success)
             {
                 return false;
             }
 
-            if (s_navMeshHitPositionField.GetValue(args[1]) is not Vector3 hitPosition)
+            if (!TryGetNavMeshHitPosition(args[1], out var hitPosition))
             {
                 return false;
             }
 
             navMeshPosition = hitPosition;
             return true;
+        }
+
+        private static bool TryGetNavMeshHitPosition(object? navHitBoxed, out Vector3 position)
+        {
+            position = Vector3.zero;
+            if (navHitBoxed == null)
+            {
+                return false;
+            }
+
+            if (s_navMeshHitPositionProperty != null &&
+                s_navMeshHitPositionProperty.GetValue(navHitBoxed) is Vector3 propPosition)
+            {
+                position = propPosition;
+                return true;
+            }
+
+            if (s_navMeshHitPositionField != null &&
+                s_navMeshHitPositionField.GetValue(navHitBoxed) is Vector3 fieldPosition)
+            {
+                position = fieldPosition;
+                return true;
+            }
+
+            return false;
         }
 
         private static bool TryCalculatePathDistance(Vector3 from, Vector3 to, out float navMeshDistance)

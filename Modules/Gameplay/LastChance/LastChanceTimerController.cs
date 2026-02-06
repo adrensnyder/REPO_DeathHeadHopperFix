@@ -31,7 +31,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool s_currencyCaptured;
         private static readonly Color TimerColor = new(1f, 0.85f, 0.1f, 1f);
         private static readonly Color FlashColor = new(1f, 0.2f, 0.2f, 1f);
-        private const string SurrenderHintPrompt = "Hold Jump to surrender";
+        private const string SurrenderHintPrompt = "Hold Crouch to surrender";
         private const string SurrenderCountdownFormat = "Surrender in {0}s";
         private const string SurrenderedHintText = "Surrendered <3";
         private const string LocalSurrenderedHintText = "You surrendered <3";
@@ -58,6 +58,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static float s_surrenderHoldTimer;
         private static bool s_localSurrendered;
         private static bool s_jumpDistanceLogged;
+        
+        private readonly struct DynamicTimerInputs
+        {
+            internal DynamicTimerInputs(
+                int requiredPlayers,
+                int levelNumber,
+                float farthestDistanceMeters,
+                int playersBelowTruckThreshold,
+                float totalBelowTruckMeters,
+                int longestShortestRoomPath)
+            {
+                RequiredPlayers = requiredPlayers;
+                LevelNumber = levelNumber;
+                FarthestDistanceMeters = farthestDistanceMeters;
+                PlayersBelowTruckThreshold = playersBelowTruckThreshold;
+                TotalBelowTruckMeters = totalBelowTruckMeters;
+                LongestShortestRoomPath = longestShortestRoomPath;
+            }
+
+            internal int RequiredPlayers { get; }
+            internal int LevelNumber { get; }
+            internal float FarthestDistanceMeters { get; }
+            internal int PlayersBelowTruckThreshold { get; }
+            internal float TotalBelowTruckMeters { get; }
+            internal int LongestShortestRoomPath { get; }
+        }
 
         internal static bool IsActive => s_active;
 
@@ -113,7 +139,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (!s_active)
             {
-                StartTimer();
+                StartTimer(maxPlayers);
             }
 
             UpdateTimer();
@@ -138,10 +164,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
         }
 
-        private static void StartTimer()
+        private static void StartTimer(int maxPlayers)
         {
             s_active = true;
-            s_timerRemaining = GetConfiguredSeconds();
+            s_timerRemaining = GetInitialTimerSeconds(maxPlayers);
             s_currencyCaptured = false;
             CaptureBaseCurrency();
             LastChanceSurrenderNetwork.EnsureCreated();
@@ -420,7 +446,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            if (!SemiFunc.InputHold(InputKey.Jump))
+            if (!SemiFunc.InputHold(InputKey.Crouch))
             {
                 ResetLocalSurrenderAttempt();
                 return;
@@ -727,6 +753,186 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var seconds = Mathf.Clamp(FeatureFlags.LastChanceTimerSeconds, 30, 600);
             var step = Mathf.RoundToInt(seconds / 30f) * 30;
             return Mathf.Clamp(step, 30, 600);
+        }
+
+        private static float GetInitialTimerSeconds(int maxPlayers)
+        {
+            var baseSeconds = GetConfiguredSeconds();
+            var maxSeconds = GetDynamicTimerCapSeconds();
+            if (!FeatureFlags.LastChanceDynamicTimerEnabled)
+            {
+                return Mathf.Clamp(baseSeconds, 30f, maxSeconds);
+            }
+
+            var inputs = CollectDynamicTimerInputs(maxPlayers);
+            var rawAddedSeconds = CalculateRawAddedSeconds(inputs);
+            var reducedAddedSeconds = ApplyDiminishing(rawAddedSeconds);
+            var finalSeconds = Mathf.Clamp(baseSeconds + reducedAddedSeconds, 30f, maxSeconds);
+
+            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.DynamicTimer", 30))
+            {
+                Debug.Log(
+                    $"[LastChance] DynamicTimer: base={baseSeconds:F1}s level={inputs.LevelNumber} required={inputs.RequiredPlayers} " +
+                    $"farthest={inputs.FarthestDistanceMeters:F1}m belowPlayers={inputs.PlayersBelowTruckThreshold} belowMeters={inputs.TotalBelowTruckMeters:F2} " +
+                    $"maxRoomPath={inputs.LongestShortestRoomPath} rawAdd={rawAddedSeconds:F1}s reducedAdd={reducedAddedSeconds:F1}s final={finalSeconds:F1}s cap={maxSeconds:F1}s");
+            }
+
+            return finalSeconds;
+        }
+
+        private static float GetDynamicTimerCapSeconds()
+        {
+            var capMinutes = Mathf.Clamp(FeatureFlags.LastChanceDynamicMaxMinutes, 5, 20);
+            return capMinutes * 60f;
+        }
+
+        private static DynamicTimerInputs CollectDynamicTimerInputs(int maxPlayers)
+        {
+            var requiredPlayers = Mathf.Max(1, GetLastChanceNeededPlayers(maxPlayers));
+            var levelNumber = GetCurrentLevelNumber();
+            var records = PlayerTruckDistanceHelper.GetDistancesFromTruck();
+            if (records.Length == 0)
+            {
+                return new DynamicTimerInputs(
+                    requiredPlayers,
+                    levelNumber,
+                    0f,
+                    0,
+                    0f,
+                    0);
+            }
+
+            var selected = SelectRequiredPlayers(records, requiredPlayers);
+            var belowThreshold = Mathf.Min(0f, FeatureFlags.LastChanceBelowTruckThresholdMeters);
+            var farthestDistanceMeters = 0f;
+            var playersBelowTruckThreshold = 0;
+            var totalBelowTruckMeters = 0f;
+            var longestShortestRoomPath = 0;
+
+            for (var i = 0; i < selected.Count; i++)
+            {
+                var record = selected[i];
+                if (record.HasValidPath && record.NavMeshDistance >= 0f)
+                {
+                    farthestDistanceMeters = Mathf.Max(farthestDistanceMeters, record.NavMeshDistance);
+                }
+
+                if (record.ShortestRoomPathToTruck >= 0)
+                {
+                    longestShortestRoomPath = Mathf.Max(longestShortestRoomPath, record.ShortestRoomPathToTruck);
+                }
+
+                if (record.HeightDelta <= belowThreshold)
+                {
+                    playersBelowTruckThreshold++;
+                    totalBelowTruckMeters += Mathf.Max(0f, belowThreshold - record.HeightDelta);
+                }
+            }
+
+            return new DynamicTimerInputs(
+                requiredPlayers,
+                levelNumber,
+                farthestDistanceMeters,
+                playersBelowTruckThreshold,
+                totalBelowTruckMeters,
+                longestShortestRoomPath);
+        }
+
+        private static List<PlayerTruckDistanceHelper.PlayerTruckDistance> SelectRequiredPlayers(
+            PlayerTruckDistanceHelper.PlayerTruckDistance[] records,
+            int requiredPlayers)
+        {
+            var sorted = new List<PlayerTruckDistanceHelper.PlayerTruckDistance>(records.Length);
+            for (var i = 0; i < records.Length; i++)
+            {
+                sorted.Add(records[i]);
+            }
+
+            sorted.Sort((left, right) => ScoreTimerDifficulty(left).CompareTo(ScoreTimerDifficulty(right)));
+            var take = Mathf.Clamp(requiredPlayers, 1, sorted.Count);
+            if (take >= sorted.Count)
+            {
+                return sorted;
+            }
+
+            var trimmed = new List<PlayerTruckDistanceHelper.PlayerTruckDistance>(take);
+            for (var i = 0; i < take; i++)
+            {
+                trimmed.Add(sorted[i]);
+            }
+
+            return trimmed;
+        }
+
+        private static float ScoreTimerDifficulty(PlayerTruckDistanceHelper.PlayerTruckDistance record)
+        {
+            if (record.HasValidPath && record.NavMeshDistance >= 0f)
+            {
+                return record.NavMeshDistance;
+            }
+
+            if (record.ShortestRoomPathToTruck >= 0)
+            {
+                return record.ShortestRoomPathToTruck * 15f;
+            }
+
+            return 99999f;
+        }
+
+        private static int GetCurrentLevelNumber()
+        {
+            var runMgr = RunManager.instance;
+            if (runMgr == null)
+            {
+                return 1;
+            }
+
+            try
+            {
+                return Mathf.Max(1, Convert.ToInt32(runMgr.levelCurrent));
+            }
+            catch
+            {
+                return 1;
+            }
+        }
+
+        private static float CalculateRawAddedSeconds(DynamicTimerInputs inputs)
+        {
+            var added = 0f;
+            added += inputs.RequiredPlayers * FeatureFlags.LastChanceTimerPerRequiredPlayerSeconds;
+            added += inputs.LevelNumber * FeatureFlags.LastChanceTimerPerLevelSeconds;
+            added += inputs.FarthestDistanceMeters * FeatureFlags.LastChanceTimerPerFarthestMeterSeconds;
+            added += inputs.PlayersBelowTruckThreshold * FeatureFlags.LastChanceTimerPerBelowTruckPlayerSeconds;
+            added += inputs.TotalBelowTruckMeters * FeatureFlags.LastChanceTimerPerBelowTruckMeterSeconds;
+            added += inputs.LongestShortestRoomPath * FeatureFlags.LastChanceTimerPerRoomStepSeconds;
+            return Mathf.Max(0f, added);
+        }
+
+        private static float ApplyDiminishing(float rawAddedSeconds)
+        {
+            if (rawAddedSeconds <= 0f)
+            {
+                return 0f;
+            }
+
+            var start = Mathf.Max(0f, FeatureFlags.LastChanceDynamicDiminishStartSeconds);
+            if (rawAddedSeconds <= start)
+            {
+                return rawAddedSeconds;
+            }
+
+            var reduction = Mathf.Clamp01(FeatureFlags.LastChanceDynamicDiminishReduction);
+            if (reduction <= 0f)
+            {
+                return rawAddedSeconds;
+            }
+
+            var range = Mathf.Max(1f, FeatureFlags.LastChanceDynamicDiminishRangeSeconds);
+            var overflow = rawAddedSeconds - start;
+            var compressedOverflow = (overflow * range) / (overflow + range);
+            var reducedOverflow = Mathf.Lerp(overflow, compressedOverflow, reduction);
+            return start + reducedOverflow;
         }
 
         private static string FormatTimerText(float secondsRemaining)

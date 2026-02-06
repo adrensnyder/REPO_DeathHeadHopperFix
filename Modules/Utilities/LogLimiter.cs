@@ -11,7 +11,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
     internal static class LogLimiter
     {
         // Default: 120 frames (~2s at 60fps)
-        public const int DefaultFrameInterval = 120;
+        public const int DefaultFrameInterval = 240;
 
         private static readonly Dictionary<string, int> _lastFrameByKey = new(StringComparer.Ordinal);
 
