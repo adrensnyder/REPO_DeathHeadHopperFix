@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
@@ -23,20 +24,23 @@ namespace DeathHeadHopperFix.Modules.Config
         public string Key { get; set; } = string.Empty;
         public float Min { get; set; } = float.NaN;
         public float Max { get; set; } = float.NaN;
-        public float Step { get; set; } = float.NaN;
+        public bool HostControlled { get; set; } = true;
 
         public bool HasRange => !float.IsNaN(Min) && !float.IsNaN(Max);
     }
 
     internal static class ConfigManager
     {
-        private struct RangeF { public float Min, Max, Step; }
-        private struct RangeI { public int Min, Max, Step; }
+        private struct RangeF { public float Min, Max; }
+        private struct RangeI { public int Min, Max; }
 
         private static bool s_initialized;
         private static readonly char[] ColorSeparators = { ',', ';' };
         private static readonly Dictionary<string, RangeF> s_floatRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, RangeI> s_intRanges = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, FieldInfo> s_hostControlledFields = new(StringComparer.Ordinal);
+
+        internal static event Action? HostControlledChanged;
 
         internal static void Initialize(ConfigFile config)
         {
@@ -61,13 +65,15 @@ namespace DeathHeadHopperFix.Modules.Config
 
                 var section = string.IsNullOrWhiteSpace(attribute.Section) ? defaultSection : attribute.Section;
                 var key = string.IsNullOrWhiteSpace(attribute.Key) ? field.Name : attribute.Key;
+                var rangeKey = BuildRangeKey(section, key);
                 var description = attribute.Description ?? string.Empty;
 
                 if (field.FieldType == typeof(bool))
                 {
                     var defaultValue = (bool)field.GetValue(null)!;
                     var entry = config.Bind(section, key, defaultValue, description);
-                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    RegisterHostControlledField(attribute, key, field);
+                    ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
                 }
 
@@ -81,14 +87,15 @@ namespace DeathHeadHopperFix.Modules.Config
                         var max = GetIntRangeEnd(attribute);
                         entry = config.Bind(section, key, defaultValue,
                             new ConfigDescription(description, new AcceptableValueRange<int>(min, max)));
-                        RegisterIntRange(key, min, max, DetermineIntStep(attribute));
+                        RegisterIntRange(rangeKey, min, max);
                     }
                     else
                     {
                         entry = config.Bind(section, key, defaultValue, description);
                     }
 
-                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
+                    RegisterHostControlledField(attribute, key, field);
                     continue;
                 }
 
@@ -102,14 +109,15 @@ namespace DeathHeadHopperFix.Modules.Config
                         var max = Math.Max(attribute.Min, attribute.Max);
                         entry = config.Bind(section, key, defaultValue,
                             new ConfigDescription(description, new AcceptableValueRange<float>(min, max)));
-                        RegisterFloatRange(key, min, max, DetermineFloatStep(attribute, min));
+                        RegisterFloatRange(rangeKey, min, max);
                     }
                     else
                     {
                         entry = config.Bind(section, key, defaultValue, description);
                     }
 
-                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
+                    RegisterHostControlledField(attribute, key, field);
                     continue;
                 }
 
@@ -117,7 +125,8 @@ namespace DeathHeadHopperFix.Modules.Config
                 {
                     var defaultValue = field.GetValue(null) as string ?? string.Empty;
                     var entry = config.Bind(section, key, defaultValue, description);
-                    ApplyAndWatch(entry, value => field.SetValue(null, value));
+                    RegisterHostControlledField(attribute, key, field);
+                    ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
                 }
 
@@ -125,7 +134,8 @@ namespace DeathHeadHopperFix.Modules.Config
                 {
                     var defaultValue = (Color)field.GetValue(null)!;
                     var entry = config.Bind(section, key, ColorToString(defaultValue), description);
-                    ApplyAndWatch(entry, ColorFromString, value => field.SetValue(null, value));
+                    RegisterHostControlledField(attribute, key, field);
+                    ApplyAndWatch(entry, ColorFromString, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
                 }
             }
@@ -157,7 +167,7 @@ namespace DeathHeadHopperFix.Modules.Config
             return Math.Abs(value - truncated) < float.Epsilon;
         }
 
-        private static void ApplyAndWatch<T>(ConfigEntry<T> entry, Action<T> setter)
+        private static void ApplyAndWatch<T>(ConfigEntry<T> entry, string rangeKey, Action<T> setter, bool notifyHostControlled)
         {
             if (entry == null || setter == null)
             {
@@ -166,14 +176,18 @@ namespace DeathHeadHopperFix.Modules.Config
 
             void Update()
             {
-                setter(SanitizeValue(entry.Value, entry.Definition.Key));
+                setter(SanitizeValue(entry.Value, rangeKey));
+                if (notifyHostControlled)
+                {
+                    HostControlledChanged?.Invoke();
+                }
             }
 
             Update();
             entry.SettingChanged += (_, _) => Update();
         }
 
-        private static void ApplyAndWatch(ConfigEntry<string> entry, Func<string, Color> parser, Action<Color> setter)
+        private static void ApplyAndWatch(ConfigEntry<string> entry, Func<string, Color> parser, Action<Color> setter, bool notifyHostControlled)
         {
             if (entry == null || parser == null || setter == null)
             {
@@ -181,7 +195,123 @@ namespace DeathHeadHopperFix.Modules.Config
             }
 
             setter(parser(entry.Value));
-            entry.SettingChanged += (_, _) => setter(parser(entry.Value));
+            if (notifyHostControlled)
+            {
+                HostControlledChanged?.Invoke();
+            }
+            entry.SettingChanged += (_, _) =>
+            {
+                setter(parser(entry.Value));
+                if (notifyHostControlled)
+                {
+                    HostControlledChanged?.Invoke();
+                }
+            };
+        }
+
+        private static void RegisterHostControlledField(FeatureConfigEntryAttribute attribute, string key, FieldInfo field)
+        {
+            if (!attribute.HostControlled)
+            {
+                return;
+            }
+
+            s_hostControlledFields[key] = field;
+        }
+
+        internal static Dictionary<string, string> SnapshotHostControlled()
+        {
+            var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var kvp in s_hostControlledFields)
+            {
+                var field = kvp.Value;
+                var value = field.GetValue(null);
+                snapshot[kvp.Key] = SerializeValue(value, field.FieldType);
+            }
+
+            return snapshot;
+        }
+
+        internal static void ApplyHostSnapshot(Dictionary<string, string> snapshot)
+        {
+            if (snapshot == null)
+            {
+                return;
+            }
+
+            foreach (var kvp in snapshot)
+            {
+                if (!s_hostControlledFields.TryGetValue(kvp.Key, out var field))
+                {
+                    continue;
+                }
+
+                var parsed = DeserializeValue(kvp.Value, field.FieldType);
+                if (parsed != null)
+                {
+                    field.SetValue(null, parsed);
+                }
+            }
+        }
+
+        private static string SerializeValue(object? value, Type fieldType)
+        {
+            if (fieldType == typeof(bool))
+            {
+                return ((bool)(value ?? false)).ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (fieldType == typeof(int))
+            {
+                return ((int)(value ?? 0)).ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (fieldType == typeof(float))
+            {
+                return ((float)(value ?? 0f)).ToString(CultureInfo.InvariantCulture);
+            }
+
+            if (fieldType == typeof(string))
+            {
+                return value as string ?? string.Empty;
+            }
+
+            if (fieldType == typeof(Color))
+            {
+                return ColorToString((Color)(value ?? Color.black));
+            }
+
+            return value?.ToString() ?? string.Empty;
+        }
+
+        private static object? DeserializeValue(string value, Type fieldType)
+        {
+            if (fieldType == typeof(bool))
+            {
+                return bool.TryParse(value, out var b) && b;
+            }
+
+            if (fieldType == typeof(int))
+            {
+                return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var i) ? i : 0;
+            }
+
+            if (fieldType == typeof(float))
+            {
+                return float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out var f) ? f : 0f;
+            }
+
+            if (fieldType == typeof(string))
+            {
+                return value ?? string.Empty;
+            }
+
+            if (fieldType == typeof(Color))
+            {
+                return ColorFromString(value ?? string.Empty);
+            }
+
+            return null;
         }
 
         private static string ColorToString(Color input)
@@ -234,104 +364,42 @@ namespace DeathHeadHopperFix.Modules.Config
             if (value is float f && s_floatRanges.TryGetValue(key, out var floatRange))
             {
                 var clamped = Math.Min(floatRange.Max, Math.Max(floatRange.Min, f));
-                if (floatRange.Step > 0f)
-                {
-                    clamped = SnapFloatToStep(clamped, floatRange.Min, floatRange.Step);
-                    clamped = Math.Min(floatRange.Max, Math.Max(floatRange.Min, clamped));
-                }
-
                 return (T)(object)clamped;
             }
 
             if (value is int i && s_intRanges.TryGetValue(key, out var intRange))
             {
                 var clamped = Math.Min(intRange.Max, Math.Max(intRange.Min, i));
-                if (intRange.Step > 0)
-                {
-                    clamped = SnapIntToStep(clamped, intRange.Min, intRange.Step);
-                    clamped = Math.Min(intRange.Max, Math.Max(intRange.Min, clamped));
-                }
-
                 return (T)(object)clamped;
             }
 
             return value;
         }
 
-        private static int DetermineIntStep(FeatureConfigEntryAttribute attribute)
-        {
-            if (!float.IsNaN(attribute.Step) && attribute.Step >= 1f)
-            {
-                return Math.Max(1, (int)Math.Round(attribute.Step));
-            }
 
-            return 1;
-        }
-
-        private static float DetermineFloatStep(FeatureConfigEntryAttribute attribute, float minValue)
-        {
-            if (!float.IsNaN(attribute.Step) && attribute.Step > 0f)
-            {
-                return attribute.Step;
-            }
-
-            return DetermineDefaultFloatStep(minValue);
-        }
-
-        private static float DetermineDefaultFloatStep(float minValue)
-        {
-            var baseValue = Math.Abs(minValue);
-            if (baseValue <= 0f)
-            {
-                return 0.1f;
-            }
-
-            var exponent = Math.Floor(Math.Log10(baseValue));
-            return (float)Math.Pow(10, exponent);
-        }
-
-        private static void RegisterFloatRange(string key, float min, float max, float step)
+        private static void RegisterFloatRange(string key, float min, float max)
         {
             s_floatRanges[key] = new RangeF
             {
                 Min = min,
-                Max = max,
-                Step = step
+                Max = max
             };
         }
 
-        private static void RegisterIntRange(string key, int min, int max, int step)
+        private static void RegisterIntRange(string key, int min, int max)
         {
             s_intRanges[key] = new RangeI
             {
                 Min = min,
-                Max = max,
-                Step = step
+                Max = max
             };
         }
 
-        private static float SnapFloatToStep(float value, float min, float step)
-        {
-            if (step <= 0f)
-            {
-                return value;
-            }
 
-            var offset = (value - min) / step;
-            var steps = Math.Round(offset, MidpointRounding.AwayFromZero);
-            return min + (float)steps * step;
+        private static string BuildRangeKey(string section, string key)
+        {
+            return $"{section}:{key}";
         }
 
-        private static int SnapIntToStep(int value, int min, int step)
-        {
-            if (step <= 0)
-            {
-                return value;
-            }
-
-            var offset = (value - min) / (double)step;
-            var steps = (int)Math.Round(offset, MidpointRounding.AwayFromZero);
-            return min + steps * step;
-        }
     }
 }

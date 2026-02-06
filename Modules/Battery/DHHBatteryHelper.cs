@@ -15,6 +15,8 @@ namespace DeathHeadHopperFix.Modules.Battery
         private static readonly FieldInfo? s_headEnergyField = typeof(SpectateCamera).GetField("headEnergy", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         private static readonly FieldInfo? s_headEnergyEnoughField = typeof(SpectateCamera).GetField("headEnergyEnough", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
         private static readonly FieldInfo? s_playerSprintRechargeAmountField = typeof(PlayerController).GetField("sprintRechargeAmount", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+        private static readonly FieldInfo? s_playerDeadSetField = AccessTools.Field(typeof(PlayerAvatar), "deadSet");
+        private static readonly FieldInfo? s_playerIsDisabledField = AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
 
         private const float JumpConsumptionCoalesceWindow = 0.2f;
         private static float s_lastJumpConsumptionTime = float.NegativeInfinity;
@@ -147,7 +149,10 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private static void LogAllowance(float currentEnergy, float reference, bool allowed, bool? readyFlag)
         {
-            if (!FeatureFlags.DebugLogging)
+            if (!FeatureFlags.DebugLogging || !FeatureFlags.BatteryJumpEnabled)
+                return;
+
+            if (!IsDeathHeadContext())
                 return;
 
             // This log is emitted by paths that run every frame, so we rate-limit the output.
@@ -156,6 +161,39 @@ namespace DeathHeadHopperFix.Modules.Battery
 
             var readyState = readyFlag.HasValue ? readyFlag.Value.ToString() : "unknown";
             Debug.Log($"[Fix:DHHBattery] Jump allowance: allowed={allowed}, energy={currentEnergy:F3}, ref={reference:F3}, readyFlag={readyState}");
+        }
+
+        private static bool IsDeathHeadContext()
+        {
+            try
+            {
+                if (SemiFunc.IsSpectating())
+                    return true;
+            }
+            catch
+            {
+                // ignore
+            }
+
+            var avatar = PlayerAvatar.instance;
+            if (avatar == null)
+                return false;
+
+            if (s_playerIsDisabledField != null &&
+                s_playerIsDisabledField.GetValue(avatar) is bool disabled &&
+                disabled)
+            {
+                return true;
+            }
+
+            if (s_playerDeadSetField != null &&
+                s_playerDeadSetField.GetValue(avatar) is bool dead &&
+                dead)
+            {
+                return true;
+            }
+
+            return false;
         }
 
 

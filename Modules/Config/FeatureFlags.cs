@@ -10,7 +10,8 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string Jump = "4. Jump (DHH)";
             public const string ChargeVanilla = "5. Charge (DHH)";
             public const string Upgrades = "6. Upgrades";
-            public const string Debug = "7. Debug";
+            public const string LastChance = "7. LastChance";
+            public const string Debug = "8. Debug";
         }
 
         internal static class Descriptions
@@ -41,6 +42,10 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHShopMaxItems = "Maximum number of DeathHeadHopper mod items that can spawn in the shop (-1 = unlimited).";
             public const string DHHShopSpawnChance = "Chance each DeathHeadHopper shop slot actually spawns an item.";
             public const string ShopItemsSpawnChance = "Second-tier chance that a DeathHeadHopper slot produces an item after it was selected.";
+            public const string LastChanceTimerSeconds = "LastChance timer duration in seconds (integer, 30s steps).";
+            public const string LastChanceConsolationMoney = "LastChance consolation money added on success (integer).";
+            public const string LastChanceMissingPlayers = "Number of players allowed to stay outside the truck before LastChance success triggers (0 = all players required).";
+            public const string LastChanceSurrenderSeconds = "Seconds the player must hold Jump to surrender during LastChance.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
             public const string DisableBatteryModule = "Temporarily disable the BatteryModule component.";
             public const string DisableAbilityPatches = "Skip ability-related Harmony patches (charge rename, ability cooldown sync, etc.).";
@@ -125,8 +130,23 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.ShopItemsSpawnChance, Min = 0.1f, Max = 1f)]
         public static float ShopItemsSpawnChance = 0.5f;
 
-        [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging)]
-        public static bool DebugLogging = false;
+        [FeatureConfigEntry(Sections.LastChance, "When true, prevent the vanilla run manager from switching to the dump level when all players die.")]
+        public static bool LastChangeMode = true;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerSeconds, Min = 30f, Max = 600f)]
+        public static int LastChanceTimerSeconds = 300;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceConsolationMoney, Min = 0f, Max = 5f)]
+        public static int LastChanceConsolationMoney = 1;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceMissingPlayers, Min = 0f, Max = 32f)]
+        public static int LastChanceMissingPlayers = 0;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceSurrenderSeconds, Min = 2f, Max = 10f)]
+        public static int LastChanceSurrenderSeconds = 5;
+
+        [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
+        public static bool DebugLogging = true;
 
         //[FeatureConfigEntry(Sections.Debug, Descriptions.DisableBatteryModule)]
         public static bool DisableBatteryModule = false;
@@ -136,5 +156,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
         //[FeatureConfigEntry(Sections.Debug, Descriptions.DisableSpectateChecks)]
         public static bool DisableSpectateChecks = false;
+
+        
     }
 }

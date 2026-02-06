@@ -109,10 +109,12 @@
 		<Message Text="Copied $(TargetFileName) to Thunderstore manifest folder" Importance="high" />
 	</Target>
 
+	<!--
 	<Target Name="PostBuildThunderstoreZip" AfterTargets="Build" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix')">
 		<Exec Command="powershell -NoProfile -Command &quot;Compress-Archive -Path 'Thunderstore\AdrenSnyder-DeathHeadHopperFix\*' -DestinationPath 'Thunderstore\$(ThunderstoreZipFileName)' -Force&quot;" />
 		<Message Text="Created Thunderstore\$(ThunderstoreZipFileName)" Importance="high" />
 	</Target>
+	-->
 
 </Project>
 

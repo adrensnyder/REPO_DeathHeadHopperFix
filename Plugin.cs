@@ -7,10 +7,12 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Stamina;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance;
 using DeathHeadHopperFix.Modules.Patches;
 using DeathHeadHopperFix.Modules.Utilities;
 
@@ -27,7 +29,7 @@ namespace DeathHeadHopperFix
     }
 
 
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.8")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.9")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
@@ -60,6 +62,7 @@ namespace DeathHeadHopperFix
         {
             _log = Logger;
             ConfigManager.Initialize(Config);
+            AllPlayersDeadGuard.EnsureEnabled();
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
             PatchSpectateCameraStateNormal();
@@ -73,6 +76,7 @@ namespace DeathHeadHopperFix
             ApplyEarlyPatches();
 
             AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
+            SceneManager.sceneLoaded += OnSceneLoaded;
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 TryPatchIfTargetAssembly(asm);
@@ -82,11 +86,17 @@ namespace DeathHeadHopperFix
         private void OnDestroy()
         {
             AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+            SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
         private void OnAssemblyLoad(object sender, AssemblyLoadEventArgs args)
         {
             TryPatchIfTargetAssembly(args.LoadedAssembly);
+        }
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            LastChanceTimerController.OnLevelLoaded();
         }
 
         private void ApplyEarlyPatches()

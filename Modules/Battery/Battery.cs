@@ -46,6 +46,10 @@ namespace DeathHeadHopperFix.Modules.Battery
         {
             if (s_headJumpEventField == null)
             {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.HeadJumpEvent.Missing", 600))
+                {
+                    Debug.Log("[Fix:DHHBattery] Head jump event field not found; BatteryJumpModule disabled.");
+                }
                 enabled = false;
                 return;
             }
@@ -53,6 +57,10 @@ namespace DeathHeadHopperFix.Modules.Battery
             _controllerInstance = GetComponent(s_headJumpEventField.DeclaringType);
             if (_controllerInstance == null)
             {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.HeadJumpEvent.NoController", 600))
+                {
+                    Debug.Log("[Fix:DHHBattery] Head jump controller component missing; BatteryJumpModule disabled.");
+                }
                 enabled = false;
                 return;
             }
@@ -60,12 +68,21 @@ namespace DeathHeadHopperFix.Modules.Battery
             _jumpEvent = s_headJumpEventField.GetValue(_controllerInstance) as UnityEvent;
             if (_jumpEvent == null)
             {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.HeadJumpEvent.Null", 600))
+                {
+                    Debug.Log("[Fix:DHHBattery] Head jump UnityEvent is null; BatteryJumpModule disabled.");
+                }
                 enabled = false;
                 return;
             }
 
             _jumpAction = new UnityAction(OnHeadJump);
             _jumpEvent.AddListener(_jumpAction);
+
+            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.HeadJumpEvent.Hooked", 600))
+            {
+                Debug.Log("[Fix:DHHBattery] Head jump listener hooked.");
+            }
 
             _photonView = GetComponent<PhotonView>();
             _isOwner = _photonView == null || _photonView.IsMine;
