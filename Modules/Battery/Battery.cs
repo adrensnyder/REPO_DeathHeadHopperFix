@@ -41,6 +41,7 @@ namespace DeathHeadHopperFix.Modules.Battery
         private bool _jumpBlocked;
         private bool _overrideSpectatedCleared;
         private float _energyWarningAccumulator;
+        private bool _inactiveStateApplied;
 
         private void Awake()
         {
@@ -107,9 +108,15 @@ namespace DeathHeadHopperFix.Modules.Battery
 
             if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
             {
-                ResetBlockedState();
+                if (!_inactiveStateApplied)
+                {
+                    ResetBlockedState();
+                    _inactiveStateApplied = true;
+                }
                 return;
             }
+
+            _inactiveStateApplied = false;
 
             if (_jumpBlocked && _jumpBlockedTimer > 0f)
             {

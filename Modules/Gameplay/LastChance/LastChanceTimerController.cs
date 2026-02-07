@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using DeathHeadHopperFix.Modules.Config;
+using DeathHeadHopperFix.Modules.Gameplay.Core;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance.UI;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
@@ -37,19 +38,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private const string LocalSurrenderedHintText = "You surrendered <3";
         private const string IndicatorLogKey = "LastChance.Indicator";
         private const string IndicatorCooldownLogKey = "LastChance.Indicator.Cooldown";
+        private static readonly Vector2 DirectionLineScrollSpeed = new(4f, 0f);
+        private const float DirectionLineHeightOffset = 0.2f;
+        private const float DirectionPathRefreshSeconds = 0.4f;
+        private const float DirectionPathMovementThresholdSqr = 0.64f; // 0.8m
 
         private enum LastChanceIndicatorMode
         {
             None = 0,
-            Direction = 1,
-            Map = 2,
-            All = 3
+            Direction = 1
         }
 
         private enum IndicatorKind
         {
-            Direction = 1,
-            Map = 2
+            Direction = 1
         }
 
         private static readonly FieldInfo? RunManagerRunStartedField =
@@ -64,6 +66,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             AccessTools.Field(typeof(PlayerAvatar), "RoomVolumeCheck");
         private static readonly FieldInfo? PlayerAvatarNameField =
             AccessTools.Field(typeof(PlayerAvatar), "playerName");
+        private static readonly FieldInfo? SpectateCameraSpectatePlayerField =
+            AccessTools.Field(typeof(SpectateCamera), "spectatePlayer");
         private static FieldInfo? s_roomVolumeCheckInTruckField;
         private static FieldInfo? s_deathHeadInTruckField;
         private static FieldInfo? s_deathHeadRoomVolumeCheckField;
@@ -77,16 +81,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static float s_directionCooldownUntil;
         private static float s_directionActiveUntil;
         private static bool s_directionActive;
-        private static float s_mapCooldownUntil;
-        private static float s_mapActiveUntil;
-        private static bool s_mapActive;
-        private static bool s_indicatorForcedMap;
-        private static float s_mapUiRetryAt;
+        private static bool s_indicatorNoneLoggedThisCycle;
         private static GameObject? s_indicatorDirectionObject;
         private static LineRenderer? s_indicatorDirectionLine;
+        private static Material? s_indicatorDirectionMaterial;
         private static float s_indicatorNextPathRefreshAt;
-        private static Camera? s_mapIndicatorCamera;
-        private static RenderTexture? s_mapIndicatorRenderTexture;
+        private static object? s_reusableNavMeshHitBoxed;
+        private static object? s_reusableNavMeshPath;
+        private static Vector3 s_lastDirectionPathFrom;
+        private static Vector3 s_lastDirectionPathTo;
+        private static bool s_hasLastDirectionPathSample;
+        private static DynamicTimerInputs s_cachedDynamicTimerInputs;
+        private static bool s_hasCachedDynamicTimerInputs;
 
         private static readonly Type? s_levelGeneratorType = AccessTools.TypeByName("LevelGenerator");
         private static readonly FieldInfo? s_levelGeneratorInstanceField = s_levelGeneratorType == null ? null : AccessTools.Field(s_levelGeneratorType, "Instance");
@@ -112,8 +118,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_navMeshPathType == null ? null : new[] { typeof(Vector3), typeof(Vector3), typeof(int), s_navMeshPathType },
             null);
         private static readonly PropertyInfo? s_navMeshPathCornersProperty = s_navMeshPathType?.GetProperty("corners", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-        private static readonly FieldInfo? s_mapToolActiveField = AccessTools.Field(typeof(MapToolController), "Active");
-        private static readonly FieldInfo? s_mapToolHideLerpField = AccessTools.Field(typeof(MapToolController), "HideLerp");
+        private static readonly FieldInfo? s_playerAvatarLastNavmeshPositionField = AccessTools.Field(typeof(PlayerAvatar), "LastNavmeshPosition");
         
         private readonly struct DynamicTimerInputs
         {
@@ -148,10 +153,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
 
         internal static bool IsActive => s_active;
+        internal static bool IsDirectionIndicatorUiVisible =>
+            s_active &&
+            AllPlayersDeadGuard.AllPlayersDisabled() &&
+            GetIndicatorMode() == LastChanceIndicatorMode.Direction;
+        internal static float GetDirectionIndicatorPenaltySecondsPreview()
+        {
+            if (!IsDirectionIndicatorUiVisible)
+            {
+                return 0f;
+            }
+
+            var maxPlayers = GetRunPlayerCount();
+            if (maxPlayers <= 0)
+            {
+                return 0f;
+            }
+
+            return CalculateIndicatorPenaltySeconds(maxPlayers);
+        }
 
         internal static void OnLevelLoaded()
         {
             ClearSurrenderState();
+            ClearCachedDynamicTimerInputs();
 
             if (!s_active)
             {
@@ -205,15 +230,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             UpdateTimer();
-            UpdateSurrenderInput();
-            UpdateIndicators(maxPlayers);
+            UpdateSurrenderInput(allDead);
+            UpdateIndicators(maxPlayers, allDead);
 
             if (CheckSurrenderFailure(maxPlayers))
             {
                 return;
             }
 
-            DebugTruckState();
+            DebugTruckState(allDead);
 
             if (AllHeadsInTruck())
             {
@@ -232,6 +257,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_active = true;
             s_timerRemaining = GetInitialTimerSeconds(maxPlayers);
             s_currencyCaptured = false;
+            s_indicatorNoneLoggedThisCycle = false;
             CaptureBaseCurrency();
             LastChanceSurrenderNetwork.EnsureCreated();
             LastChanceTimerUI.Show(SurrenderHintPrompt);
@@ -306,7 +332,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void ResetState()
         {
+            if (!HasRuntimeStateToReset())
+            {
+                return;
+            }
+
             ClearSurrenderState();
+            ClearCachedDynamicTimerInputs();
 
             if (!s_active)
             {
@@ -320,6 +352,31 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
             LastChanceSpectateHelper.ResetForceState();
             LastChanceSaveDeleteState.ResetAutoDeleteBlock();
+        }
+
+        private static bool HasRuntimeStateToReset()
+        {
+            if (s_active)
+            {
+                return true;
+            }
+
+            if (s_currencyCaptured || s_timerRemaining > 0f)
+            {
+                return true;
+            }
+
+            if (LastChanceSurrenderedPlayers.Count > 0 || s_surrenderHoldTimer > 0f || s_localSurrendered)
+            {
+                return true;
+            }
+
+            if (s_directionActive || s_directionActiveUntil > 0f || s_directionCooldownUntil > 0f)
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private static bool IsValidRunContext()
@@ -496,9 +553,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             runMgr.ChangeLevel(false, true, RunManager.ChangeLevelType.Normal);
         }
 
-        private static void UpdateSurrenderInput()
+        private static void UpdateSurrenderInput(bool allDead)
         {
-            if (!s_active || !AllPlayersDeadGuard.AllPlayersDisabled())
+            if (!s_active || !allDead)
             {
                 ResetLocalSurrenderAttempt();
                 return;
@@ -636,25 +693,37 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             ClearIndicatorsState();
         }
 
-        private static void UpdateIndicators(int maxPlayers)
+        private static void UpdateIndicators(int maxPlayers, bool allDead)
         {
             var mode = GetIndicatorMode();
-            if (!s_active || mode == LastChanceIndicatorMode.None || !AllPlayersDeadGuard.AllPlayersDisabled())
+            if (!s_active || !allDead)
             {
                 if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.Indicator.Blocked", 5))
                 {
                     var rawMode = FeatureFlags.LastChanceIndicators ?? string.Empty;
-                    Debug.Log($"[LastChance] Indicator blocked: active={s_active} allDead={AllPlayersDeadGuard.AllPlayersDisabled()} modeRaw='{rawMode}' modeParsed={mode}");
+                    Debug.Log($"[LastChance] Indicator blocked: active={s_active} allDead={allDead} modeRaw='{rawMode}' modeParsed={mode}");
                 }
                 ClearActiveIndicatorVisuals();
+                AbilityModule.RefreshDirectionSlotVisuals();
                 return;
             }
 
-            var directionEnabled = mode == LastChanceIndicatorMode.Direction || mode == LastChanceIndicatorMode.All;
-            var mapEnabled = mode == LastChanceIndicatorMode.Map || mode == LastChanceIndicatorMode.All;
+            if (mode == LastChanceIndicatorMode.None)
+            {
+                if (!s_indicatorNoneLoggedThisCycle && FeatureFlags.DebugLogging)
+                {
+                    var rawMode = FeatureFlags.LastChanceIndicators ?? string.Empty;
+                    Debug.Log($"[LastChance] Indicator disabled for this cycle: modeRaw='{rawMode}' modeParsed={mode}");
+                    s_indicatorNoneLoggedThisCycle = true;
+                }
+                ClearActiveIndicatorVisuals();
+                AbilityModule.RefreshDirectionSlotVisuals();
+                return;
+            }
 
-            UpdateSingleIndicator(IndicatorKind.Direction, directionEnabled, InputKey.Tumble, maxPlayers);
-            UpdateSingleIndicator(IndicatorKind.Map, mapEnabled, InputKey.Rotate, maxPlayers);
+            var directionEnabled = mode == LastChanceIndicatorMode.Direction;
+            UpdateSingleIndicator(IndicatorKind.Direction, directionEnabled, InputKey.Interact, maxPlayers);
+            AbilityModule.RefreshDirectionSlotVisuals();
         }
 
         private static LastChanceIndicatorMode GetIndicatorMode()
@@ -665,19 +734,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return LastChanceIndicatorMode.Direction;
             }
 
-            if (raw.Equals("Map", StringComparison.OrdinalIgnoreCase))
+            if (raw.Equals("Indicator", StringComparison.OrdinalIgnoreCase))
             {
-                return LastChanceIndicatorMode.Map;
-            }
-
-            if (raw.Equals("All", StringComparison.OrdinalIgnoreCase))
-            {
-                return LastChanceIndicatorMode.All;
-            }
-
-            if (raw.Equals("Both", StringComparison.OrdinalIgnoreCase))
-            {
-                return LastChanceIndicatorMode.All;
+                return LastChanceIndicatorMode.Direction;
             }
 
             return LastChanceIndicatorMode.None;
@@ -718,16 +777,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void TriggerIndicator(IndicatorKind kind, int maxPlayers)
         {
-            var duration = Mathf.Clamp(FeatureFlags.LastChanceIndicatorDurationSeconds, 0.5f, 10f);
-            var cooldown = Mathf.Clamp(FeatureFlags.LastChanceIndicatorCooldownSeconds, 1f, 30f);
+            var duration = Mathf.Clamp(FeatureFlags.LastChanceIndicatorDirectionDurationSeconds, 0.5f, 20f);
+            var cooldown = Mathf.Clamp(FeatureFlags.LastChanceIndicatorDirectionCooldownSeconds, 1f, 60f);
             var activeUntil = Time.time + duration;
             SetIndicatorActive(kind, true);
             SetIndicatorActiveUntil(kind, activeUntil);
             SetIndicatorCooldownUntil(kind, activeUntil + cooldown);
-            if (kind == IndicatorKind.Map)
-            {
-                s_mapUiRetryAt = 0f;
-            }
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog($"{IndicatorCooldownLogKey}.Start.{kind}", 2))
             {
@@ -736,6 +791,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             ApplyIndicatorPenalty(kind, maxPlayers);
             TickActiveIndicator(kind);
+            if (kind == IndicatorKind.Direction)
+            {
+                var uiLockSeconds = Mathf.Max(0f, GetIndicatorCooldownUntil(kind) - Time.time);
+                AbilityModule.TriggerDirectionSlotCooldown(uiLockSeconds);
+            }
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog(IndicatorLogKey, 3))
             {
@@ -746,25 +806,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void ApplyIndicatorPenalty(IndicatorKind kind, int maxPlayers)
         {
-            var inputs = CollectDynamicTimerInputs(maxPlayers);
-            var difficulty = EstimateDifficulty01(inputs);
-            float easyPenalty;
-            float hardPenalty;
-
-            if (kind == IndicatorKind.Direction)
-            {
-                easyPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyEasySeconds);
-                hardPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyHardSeconds);
-            }
-            else
-            {
-                easyPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorMapPenaltyEasySeconds);
-                hardPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorMapPenaltyHardSeconds);
-            }
-
-            var maxPenalty = Mathf.Max(easyPenalty, hardPenalty);
-            var minPenalty = Mathf.Min(easyPenalty, hardPenalty);
-            var penalty = Mathf.Lerp(maxPenalty, minPenalty, difficulty);
+            var penalty = CalculateIndicatorPenaltySeconds(maxPlayers);
             if (penalty <= 0f)
             {
                 return;
@@ -772,6 +814,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             s_timerRemaining = Mathf.Max(0f, s_timerRemaining - penalty);
             LastChanceTimerUI.UpdateText(FormatTimerText(s_timerRemaining));
+        }
+
+        private static float CalculateIndicatorPenaltySeconds(int maxPlayers)
+        {
+            var inputs = GetDynamicTimerInputsForRuntime(maxPlayers);
+            var difficulty = EstimateDifficulty01(inputs);
+            var easyPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyEasySeconds);
+            var hardPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyHardSeconds);
+
+            var maxPenalty = Mathf.Max(easyPenalty, hardPenalty);
+            var minPenalty = Mathf.Min(easyPenalty, hardPenalty);
+            return Mathf.Lerp(maxPenalty, minPenalty, difficulty);
         }
 
         private static float EstimateDifficulty01(DynamicTimerInputs inputs)
@@ -787,78 +841,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void TickActiveIndicator(IndicatorKind kind)
         {
-            if (kind == IndicatorKind.Map)
-            {
-                if (Time.time < s_mapUiRetryAt)
-                {
-                    return;
-                }
-
-                if (Map.Instance != null)
-                {
-                    Map.Instance.ActiveSet(true);
-                    s_indicatorForcedMap = true;
-
-                    var mapTexture = TryGetMapScreenTexture(out var textureDebug);
-                    var mapUiShown = LastChanceMapIndicatorUI.Show(mapTexture, FeatureFlags.DebugLogging);
-                    if (mapUiShown)
-                    {
-                        s_mapUiRetryAt = Time.time + 0.5f;
-                        if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.Indicator.Map.UI.Shown", 2))
-                        {
-                            Debug.Log($"[LastChance] Indicator Map UI: shown=True textureInfo={textureDebug}");
-                        }
-                    }
-                    else
-                    {
-                        s_mapUiRetryAt = Time.time + 0.2f;
-                        if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.Indicator.Map.UI.Missing", 1))
-                        {
-                            Debug.LogWarning($"[LastChance] Indicator Map UI missing texture. info={textureDebug} mapActive={Map.Instance.Active}");
-                        }
-                    }
-                }
-                else if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.Indicator.Map.Missing", 5))
-                {
-                    Debug.LogWarning("[LastChance] Indicator Map: Map.Instance is null.");
-                }
-                return;
-            }
-
-            if (kind == IndicatorKind.Direction)
-            {
-                EnsureDirectionLine();
-                UpdateDirectionPath(force: Time.time >= s_indicatorNextPathRefreshAt);
-            }
+            EnsureDirectionLine();
+            AnimateDirectionLineMaterial();
+            UpdateDirectionPath(force: Time.time >= s_indicatorNextPathRefreshAt);
         }
 
         private static void DeactivateIndicator(IndicatorKind kind)
         {
             SetIndicatorActive(kind, false);
-            if (kind == IndicatorKind.Map && s_indicatorForcedMap && Map.Instance != null)
-            {
-                var mapToolActive = false;
-                if (MapToolController.instance != null)
-                {
-                    var activeField = AccessTools.Field(MapToolController.instance.GetType(), "Active");
-                    if (activeField != null && activeField.GetValue(MapToolController.instance) is bool active)
-                    {
-                        mapToolActive = active;
-                    }
-                }
-                if (!mapToolActive)
-                {
-                    Map.Instance.ActiveSet(false);
-                }
-                s_indicatorForcedMap = false;
-                s_mapUiRetryAt = 0f;
-            }
-            if (kind == IndicatorKind.Map)
-            {
-                LastChanceMapIndicatorUI.Hide();
-            }
-
-            if (kind == IndicatorKind.Direction && s_indicatorDirectionLine != null)
+            if (s_indicatorDirectionLine != null)
             {
                 s_indicatorDirectionLine.positionCount = 0;
                 s_indicatorDirectionLine.enabled = false;
@@ -867,50 +858,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static bool IsIndicatorActive(IndicatorKind kind)
         {
-            return kind == IndicatorKind.Direction ? s_directionActive : s_mapActive;
+            return s_directionActive;
         }
 
         private static void SetIndicatorActive(IndicatorKind kind, bool value)
         {
-            if (kind == IndicatorKind.Direction)
-            {
-                s_directionActive = value;
-                return;
-            }
-
-            s_mapActive = value;
+            s_directionActive = value;
         }
 
         private static float GetIndicatorActiveUntil(IndicatorKind kind)
         {
-            return kind == IndicatorKind.Direction ? s_directionActiveUntil : s_mapActiveUntil;
+            return s_directionActiveUntil;
         }
 
         private static void SetIndicatorActiveUntil(IndicatorKind kind, float value)
         {
-            if (kind == IndicatorKind.Direction)
-            {
-                s_directionActiveUntil = value;
-                return;
-            }
-
-            s_mapActiveUntil = value;
+            s_directionActiveUntil = value;
         }
 
         private static float GetIndicatorCooldownUntil(IndicatorKind kind)
         {
-            return kind == IndicatorKind.Direction ? s_directionCooldownUntil : s_mapCooldownUntil;
+            return s_directionCooldownUntil;
         }
 
         private static void SetIndicatorCooldownUntil(IndicatorKind kind, float value)
         {
-            if (kind == IndicatorKind.Direction)
-            {
-                s_directionCooldownUntil = value;
-                return;
-            }
-
-            s_mapCooldownUntil = value;
+            s_directionCooldownUntil = value;
         }
 
         private static void EnsureDirectionLine()
@@ -936,44 +909,68 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (!TryApplyPhysGrabBeamMaterial(s_indicatorDirectionLine))
             {
                 s_indicatorDirectionLine.material = new Material(Shader.Find("Sprites/Default"));
+                s_indicatorDirectionMaterial = s_indicatorDirectionLine.material;
             }
-
-            var gradient = new Gradient();
-            gradient.SetKeys(
-                new[]
-                {
-                    new GradientColorKey(new Color(3.2f, 3.4f, 0.25f), 0f),
-                    new GradientColorKey(new Color(2.0f, 2.2f, 0.18f), 0.65f),
-                    new GradientColorKey(new Color(1.3f, 1.4f, 0.12f), 1f)
-                },
-                new[]
-                {
-                    new GradientAlphaKey(0.95f, 0f),
-                    new GradientAlphaKey(0.98f, 0.35f),
-                    new GradientAlphaKey(0.9f, 1f)
-                });
-            s_indicatorDirectionLine.colorGradient = gradient;
-            s_indicatorDirectionLine.startColor = new Color(3.2f, 3.4f, 0.25f, 1f);
-            s_indicatorDirectionLine.endColor = new Color(1.3f, 1.4f, 0.12f, 0.95f);
-
-            var mat = s_indicatorDirectionLine.material;
-            if (mat != null)
-            {
-                if (mat.HasProperty("_EmissionColor"))
-                {
-                    mat.EnableKeyword("_EMISSION");
-                    mat.SetColor("_EmissionColor", new Color(3.8f, 4.0f, 0.3f, 1f));
-                }
-                else if (mat.HasProperty("_TintColor"))
-                {
-                    mat.SetColor("_TintColor", new Color(2.5f, 2.7f, 0.25f, 1f));
-                }
-            }
+            ConfigureDirectionLineFromPhysGrabBeam();
             s_indicatorNextPathRefreshAt = 0f;
         }
 
         private static bool TryApplyPhysGrabBeamMaterial(LineRenderer lineRenderer)
         {
+            if (!TryGetPhysGrabBeamSource(out var source))
+            {
+                return false;
+            }
+            if (source == null)
+            {
+                return false;
+            }
+
+            lineRenderer.material = source.material;
+            lineRenderer.textureMode = source.textureMode;
+            s_indicatorDirectionMaterial = lineRenderer.material;
+            return true;
+        }
+
+        private static void ConfigureDirectionLineFromPhysGrabBeam()
+        {
+            if (s_indicatorDirectionLine == null || !TryGetPhysGrabBeamSource(out var source))
+            {
+                return;
+            }
+            if (source == null)
+            {
+                return;
+            }
+
+            s_indicatorDirectionLine.alignment = source.alignment;
+            s_indicatorDirectionLine.textureMode = source.textureMode;
+            s_indicatorDirectionLine.widthMultiplier = source.widthMultiplier;
+            s_indicatorDirectionLine.widthCurve = source.widthCurve;
+            s_indicatorDirectionLine.colorGradient = source.colorGradient;
+            s_indicatorDirectionLine.startColor = source.startColor;
+            s_indicatorDirectionLine.endColor = source.endColor;
+            s_indicatorDirectionLine.numCornerVertices = source.numCornerVertices;
+            s_indicatorDirectionLine.numCapVertices = source.numCapVertices;
+            s_indicatorDirectionLine.generateLightingData = source.generateLightingData;
+            s_indicatorDirectionLine.material = source.material;
+            s_indicatorDirectionMaterial = s_indicatorDirectionLine.material;
+        }
+
+        private static void AnimateDirectionLineMaterial()
+        {
+            if (s_indicatorDirectionMaterial == null)
+            {
+                return;
+            }
+
+            s_indicatorDirectionMaterial.mainTextureScale = Vector2.one;
+            s_indicatorDirectionMaterial.mainTextureOffset = Time.time * DirectionLineScrollSpeed;
+        }
+
+        private static bool TryGetPhysGrabBeamSource(out LineRenderer? source)
+        {
+            source = null;
             var avatar = PlayerAvatar.instance;
             if (avatar == null)
             {
@@ -986,14 +983,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return false;
             }
 
-            var source = physGrabber.physGrabBeam.GetComponent<LineRenderer>();
+            source = physGrabber.physGrabBeam.GetComponent<LineRenderer>();
             if (source == null || source.material == null)
             {
                 return false;
             }
-
-            lineRenderer.material = source.material;
-            lineRenderer.textureMode = source.textureMode;
             return true;
         }
 
@@ -1004,61 +998,82 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            s_indicatorNextPathRefreshAt = Time.time + 0.2f;
+            s_indicatorNextPathRefreshAt = Time.time + DirectionPathRefreshSeconds;
             if (s_indicatorDirectionLine == null)
             {
                 return;
             }
 
-            if (!TryBuildPathToTruck(out var pathPoints))
+            if (!TryBuildPathToTruck(out var pathPoints, out var navFrom, out var navTo))
             {
                 s_indicatorDirectionLine.positionCount = 0;
                 return;
             }
 
-            s_indicatorDirectionLine.positionCount = pathPoints.Length;
-            s_indicatorDirectionLine.SetPositions(pathPoints);
+            if (s_hasLastDirectionPathSample &&
+                (navFrom - s_lastDirectionPathFrom).sqrMagnitude <= DirectionPathMovementThresholdSqr &&
+                (navTo - s_lastDirectionPathTo).sqrMagnitude <= DirectionPathMovementThresholdSqr)
+            {
+                return;
+            }
+
+            s_hasLastDirectionPathSample = true;
+            s_lastDirectionPathFrom = navFrom;
+            s_lastDirectionPathTo = navTo;
+
+            s_indicatorDirectionLine.positionCount = pathPoints.Count;
+            for (var i = 0; i < pathPoints.Count; i++)
+            {
+                s_indicatorDirectionLine.SetPosition(i, pathPoints[pathPoints.Count - 1 - i]);
+            }
         }
 
-        private static bool TryBuildPathToTruck(out Vector3[] points)
+        private static bool TryBuildPathToTruck(out List<Vector3> points, out Vector3 navFrom, out Vector3 navTo)
         {
-            points = Array.Empty<Vector3>();
+            points = new List<Vector3>(2);
+            navFrom = Vector3.zero;
+            navTo = Vector3.zero;
             var localAvatar = PlayerAvatar.instance;
             if (localAvatar == null)
             {
                 return false;
             }
 
-            var localPos = GetLocalHeadOrPlayerPosition(localAvatar);
-            if (!TryGetTruckPosition(out var truckPos))
+            var localPosBase = GetLocalHeadOrPlayerPosition(localAvatar);
+            if (!TryGetTruckPosition(out var truckPosBase))
             {
                 return false;
             }
+            var localPos = localPosBase + Vector3.up * DirectionLineHeightOffset;
+            var truckPos = truckPosBase + Vector3.up * DirectionLineHeightOffset;
 
-            if (!TrySampleNavMeshPosition(localPos, 12f, out var from))
+            if (!TrySampleNavMeshPosition(localPosBase, 12f, out var from))
             {
-                from = localPos;
+                from = localPosBase;
             }
 
-            if (!TrySampleNavMeshPosition(truckPos, 8f, out var to))
+            if (!TrySampleNavMeshPosition(truckPosBase, 8f, out var to))
             {
-                to = truckPos;
+                to = truckPosBase;
             }
+
+            navFrom = from;
+            navTo = to;
 
             if (!TryCalculateNavMeshPathCorners(from, to, out var corners) || corners.Length == 0)
             {
-                points = new[] { localPos, truckPos };
+                points.Add(localPos);
+                points.Add(truckPos);
                 return true;
             }
 
-            var results = new List<Vector3>(corners.Length + 1) { localPos };
+            points = new List<Vector3>(corners.Length + 1) { localPos };
             for (var i = 0; i < corners.Length; i++)
             {
-                results.Add(corners[i] + Vector3.up * 0.05f);
+                points.Add(corners[i] + Vector3.up * DirectionLineHeightOffset);
             }
 
-            points = results.ToArray();
-            return points.Length >= 2;
+            return points.Count >= 2;
         }
 
         private static Vector3 GetLocalHeadOrPlayerPosition(PlayerAvatar avatar)
@@ -1152,13 +1167,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return false;
             }
 
-            var navHit = Activator.CreateInstance(s_navMeshHitType);
-            if (navHit == null)
+            s_reusableNavMeshHitBoxed ??= Activator.CreateInstance(s_navMeshHitType);
+            if (s_reusableNavMeshHitBoxed == null)
             {
                 return false;
             }
 
-            var args = new object[] { source, navHit, maxDistance, -1 };
+            var args = new object[] { source, s_reusableNavMeshHitBoxed, maxDistance, -1 };
             if (s_navMeshSamplePositionMethod.Invoke(null, args) is not bool success || !success)
             {
                 return false;
@@ -1204,19 +1219,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return false;
             }
 
-            var path = Activator.CreateInstance(s_navMeshPathType);
-            if (path == null)
+            s_reusableNavMeshPath ??= Activator.CreateInstance(s_navMeshPathType);
+            if (s_reusableNavMeshPath == null)
             {
                 return false;
             }
 
-            var args = new object[] { from, to, -1, path };
+            var args = new object[] { from, to, -1, s_reusableNavMeshPath };
             if (s_navMeshCalculatePathMethod.Invoke(null, args) is not bool success || !success)
             {
                 return false;
             }
 
-            if (s_navMeshPathCornersProperty.GetValue(path) is Vector3[] pathCorners && pathCorners.Length > 0)
+            if (s_navMeshPathCornersProperty.GetValue(s_reusableNavMeshPath) is Vector3[] pathCorners && pathCorners.Length > 0)
             {
                 corners = pathCorners;
                 return true;
@@ -1227,172 +1242,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void ClearActiveIndicatorVisuals()
         {
-            DeactivateIndicator(IndicatorKind.Map);
             DeactivateIndicator(IndicatorKind.Direction);
-        }
-
-        private static Texture? TryGetMapScreenTexture(out string debug)
-        {
-            debug = "none";
-            var mapTool = MapToolController.instance;
-            if (mapTool == null)
-            {
-                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.Indicator.Map.MapToolMissing", 4))
-                {
-                    Debug.Log("[LastChance] Indicator Map source: MapToolController.instance is null, using fallback render path.");
-                }
-                return TryGetFallbackMapTexture(out debug);
-            }
-
-            var displayMesh = mapTool.DisplayMesh;
-            if (displayMesh == null)
-            {
-                debug = "DisplayMesh=null";
-                return null;
-            }
-
-            var mat = displayMesh.material;
-            if (mat == null)
-            {
-                debug = "DisplayMesh.material=null";
-                return null;
-            }
-
-            if (mat.mainTexture != null)
-            {
-                debug = $"material={mat.name} texture={mat.mainTexture.name}";
-                return mat.mainTexture;
-            }
-
-            var shared = displayMesh.sharedMaterial;
-            if (shared?.mainTexture != null)
-            {
-                debug = $"sharedMaterial={shared.name} texture={shared.mainTexture.name}";
-                return shared.mainTexture;
-            }
-
-            return TryGetFallbackMapTexture(out debug);
-        }
-
-        private static Texture? TryGetFallbackMapTexture(out string debug)
-        {
-            debug = "fallback:none";
-            var map = Map.Instance;
-            if (map == null)
-            {
-                debug = "fallback:Map.Instance null";
-                return null;
-            }
-
-            var root = map.ActiveParent;
-            if (root == null)
-            {
-                root = map.gameObject;
-            }
-            if (root == null)
-            {
-                debug = "fallback:root null";
-                return null;
-            }
-
-            if (s_mapIndicatorRenderTexture == null)
-            {
-                s_mapIndicatorRenderTexture = new RenderTexture(512, 512, 16, RenderTextureFormat.ARGB32)
-                {
-                    name = "DHHFix.LastChanceMapRT"
-                };
-            }
-
-            if (s_mapIndicatorCamera == null)
-            {
-                var go = new GameObject("DHHFix.LastChanceMapCamera");
-                UnityEngine.Object.DontDestroyOnLoad(go);
-                s_mapIndicatorCamera = go.AddComponent<Camera>();
-                s_mapIndicatorCamera.enabled = false;
-                s_mapIndicatorCamera.orthographic = true;
-                s_mapIndicatorCamera.clearFlags = CameraClearFlags.SolidColor;
-                s_mapIndicatorCamera.backgroundColor = new Color(0.02f, 0.12f, 0.06f, 1f);
-                s_mapIndicatorCamera.allowHDR = false;
-                s_mapIndicatorCamera.allowMSAA = false;
-                s_mapIndicatorCamera.nearClipPlane = 0.1f;
-                s_mapIndicatorCamera.farClipPlane = 1000f;
-                s_mapIndicatorCamera.cullingMask = ~0;
-            }
-
-            Bounds bounds;
-            if (!TryGetMapBounds(root, out bounds, out var rendererCount))
-            {
-                var center = map.OverLayerParent != null ? map.OverLayerParent.position : root.transform.position;
-                bounds = new Bounds(center, new Vector3(30f, 10f, 30f));
-                rendererCount = 0;
-            }
-
-            var maxPlanar = Mathf.Max(bounds.size.x, bounds.size.z);
-            var height = Mathf.Max(20f, maxPlanar + 10f);
-            var camPos = bounds.center + Vector3.up * height;
-            s_mapIndicatorCamera.transform.position = camPos;
-            s_mapIndicatorCamera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
-            s_mapIndicatorCamera.orthographicSize = Mathf.Max(8f, maxPlanar * 0.6f);
-            s_mapIndicatorCamera.targetTexture = s_mapIndicatorRenderTexture;
-            s_mapIndicatorCamera.Render();
-
-            debug = $"fallback:rt={s_mapIndicatorRenderTexture.width}x{s_mapIndicatorRenderTexture.height} renderers={rendererCount} root='{root.name}' activeSelf={root.activeSelf} activeInHierarchy={root.activeInHierarchy} bounds={bounds.size.x:F1}x{bounds.size.z:F1}";
-            return s_mapIndicatorRenderTexture;
-        }
-
-        private static bool TryGetMapBounds(GameObject root, out Bounds bounds, out int rendererCount)
-        {
-            bounds = default;
-            rendererCount = 0;
-            if (root == null)
-            {
-                return false;
-            }
-
-            var renderers = root.GetComponentsInChildren<Renderer>(true);
-            for (var i = 0; i < renderers.Length; i++)
-            {
-                var r = renderers[i];
-                if (r == null)
-                {
-                    continue;
-                }
-                rendererCount++;
-
-                if (bounds.size == Vector3.zero)
-                {
-                    bounds = r.bounds;
-                }
-                else
-                {
-                    bounds.Encapsulate(r.bounds);
-                }
-            }
-
-            return bounds.size != Vector3.zero;
+            AbilityModule.RefreshDirectionSlotVisuals();
         }
 
         private static void ClearIndicatorsState()
         {
+            s_indicatorNoneLoggedThisCycle = false;
             s_directionCooldownUntil = 0f;
             s_directionActiveUntil = 0f;
             s_directionActive = false;
-            s_mapCooldownUntil = 0f;
-            s_mapActiveUntil = 0f;
-            s_mapActive = false;
-            s_mapUiRetryAt = 0f;
             s_indicatorNextPathRefreshAt = 0f;
+            s_hasLastDirectionPathSample = false;
             ClearActiveIndicatorVisuals();
         }
 
-        private static void DebugTruckState()
+
+        private static void DebugTruckState(bool allDead)
         {
             if (!FeatureFlags.DebugLogging || !FeatureFlags.LastChangeMode || !FeatureFlags.BatteryJumpEnabled)
             {
                 return;
             }
 
-            if (!AllPlayersDeadGuard.AllPlayersDisabled())
+            if (!allDead)
             {
                 return;
             }
@@ -1575,10 +1448,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var maxSeconds = GetDynamicTimerCapSeconds();
             if (!FeatureFlags.LastChanceDynamicTimerEnabled)
             {
+                ClearCachedDynamicTimerInputs();
                 return Mathf.Clamp(baseSeconds, 30f, maxSeconds);
             }
 
             var inputs = CollectDynamicTimerInputs(maxPlayers);
+            CacheDynamicTimerInputs(inputs);
             var rawAddedSeconds = CalculateRawAddedSeconds(inputs);
             var levelCurveMultiplier = GetLevelCurveMultiplier(inputs.LevelNumber);
             var levelScaledAddedSeconds = rawAddedSeconds * levelCurveMultiplier;
@@ -1596,6 +1471,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             return finalSeconds;
+        }
+
+        private static DynamicTimerInputs GetDynamicTimerInputsForRuntime(int maxPlayers)
+        {
+            if (s_hasCachedDynamicTimerInputs)
+            {
+                return s_cachedDynamicTimerInputs;
+            }
+
+            var inputs = CollectDynamicTimerInputs(maxPlayers);
+            CacheDynamicTimerInputs(inputs);
+            return inputs;
+        }
+
+        private static void CacheDynamicTimerInputs(DynamicTimerInputs inputs)
+        {
+            s_cachedDynamicTimerInputs = inputs;
+            s_hasCachedDynamicTimerInputs = true;
+        }
+
+        private static void ClearCachedDynamicTimerInputs()
+        {
+            s_cachedDynamicTimerInputs = default;
+            s_hasCachedDynamicTimerInputs = false;
         }
 
         private static float GetDynamicTimerCapSeconds()
@@ -1807,5 +1706,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     }
 
 }
+
 
 

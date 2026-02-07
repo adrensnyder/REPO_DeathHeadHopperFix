@@ -16,10 +16,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     {
         private const string PatchId = "DeathHeadHopperFix.Gameplay.LastChance.MonstersSearch";
         private static readonly FieldInfo? s_playerIsDisabledField = AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
+        private static readonly AccessTools.FieldRef<PlayerAvatar, bool>? s_playerIsDisabledGetter =
+            s_playerIsDisabledField != null ? AccessTools.FieldRefAccess<PlayerAvatar, bool>(s_playerIsDisabledField.Name) : null;
         private static readonly FieldInfo? s_enemyParentSpawnedField = AccessTools.Field(typeof(EnemyParent), "Spawned");
         private static readonly FieldInfo? s_enemyParentForceLeaveField = AccessTools.Field(typeof(EnemyParent), "forceLeave");
         private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.MonstersSearch");
         private static Harmony? s_harmony;
+        private static float s_runtimeStateCachedAt;
+        private static bool s_runtimeStateEnabled;
 
         internal static void Apply(Harmony harmony, Assembly asm)
         {
@@ -196,28 +200,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static bool RemapMonsterDisabledCheck(PlayerAvatar? player)
         {
-            if (player == null || s_playerIsDisabledField == null)
+            if (player == null || s_playerIsDisabledGetter == null)
             {
                 return false;
             }
 
-            var isDisabled = s_playerIsDisabledField.GetValue(player) is bool value && value;
-            if (!isDisabled)
+            if (IsMonstersSearchRuntimeEnabled())
             {
                 return false;
             }
 
-            if (!FeatureFlags.LastChanceMonstersSearchEnabled)
+            return s_playerIsDisabledGetter(player);
+        }
+
+        private static bool IsMonstersSearchRuntimeEnabled()
+        {
+            // Fast cache for the hot enemy-AI path; refresh often enough for responsive toggles.
+            var now = Time.unscaledTime;
+            if (now - s_runtimeStateCachedAt < 0.1f)
             {
-                return true;
+                return s_runtimeStateEnabled;
             }
 
-            if (!FeatureFlags.LastChangeMode || !LastChanceTimerController.IsActive)
-            {
-                return true;
-            }
-
-            return false;
+            s_runtimeStateCachedAt = now;
+            s_runtimeStateEnabled =
+                FeatureFlags.LastChanceMonstersSearchEnabled &&
+                FeatureFlags.LastChangeMode &&
+                LastChanceTimerController.IsActive;
+            return s_runtimeStateEnabled;
         }
     }
 }

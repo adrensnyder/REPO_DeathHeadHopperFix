@@ -21,12 +21,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
         private static readonly object? CenterAlignment = AlignmentType != null
             ? Enum.Parse(AlignmentType, "Center")
             : null;
+        private static readonly FieldInfo? CurrentMenuPageField = AccessTools.Field(typeof(MenuManager), "currentMenuPage");
 
         private static Component? s_label;
         private static RectTransform? s_rect;
         private static Component? s_hintLabel;
         private static RectTransform? s_hintRect;
         private static string s_defaultHintText = string.Empty;
+        private static string s_lastTimerText = string.Empty;
+        private static string s_lastHintText = string.Empty;
+        private static bool s_isVisible;
+        private static Transform? s_cachedUiParent;
+        private static float s_nextVisibilityRefreshAt;
+        private const float VisibilityRefreshIntervalSeconds = 0.5f;
         private const float SurrenderHintVerticalOffset = -45f;
 
         internal static void Show(string defaultHintText)
@@ -34,17 +41,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             s_defaultHintText = defaultHintText;
             if (s_label != null)
             {
-                SetEnabled(true);
+                ReparentToPreferredUiRoot();
+                RefreshVisibility(force: true);
                 return;
             }
 
-            if (LabelType == null || HUDCanvas.instance == null)
+            var parent = ResolvePreferredUiParent();
+            if (LabelType == null || parent == null)
             {
                 return;
             }
 
             var go = new GameObject("LastChanceTimer", typeof(RectTransform));
-            go.transform.SetParent(HUDCanvas.instance.transform, false);
+            go.transform.SetParent(parent, false);
 
             s_rect = go.GetComponent<RectTransform>();
             s_rect.anchorMin = new Vector2(0.5f, 1f);
@@ -55,7 +64,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
 
             s_label = go.AddComponent(LabelType);
             SetDefaults(s_label);
-            SetEnabled(true);
+            SetEnabled(false);
 
             var hintGo = new GameObject("LastChanceSurrenderHint", typeof(RectTransform));
             hintGo.transform.SetParent(go.transform, false);
@@ -73,6 +82,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             s_hintLabel = hintGo.AddComponent(LabelType);
             SetHintDefaults(s_hintLabel);
             SetSurrenderHintText(s_defaultHintText);
+            RefreshVisibility(force: true);
         }
 
         internal static void UpdateText(string text)
@@ -81,6 +91,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             {
                 return;
             }
+
+            RefreshVisibility(force: false);
+
+            if (string.Equals(s_lastTimerText, text, StringComparison.Ordinal))
+            {
+                return;
+            }
+            s_lastTimerText = text;
 
             if (TextProperty != null)
             {
@@ -96,6 +114,83 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             }
 
             SetEnabled(false);
+        }
+
+        private static void RefreshVisibility(bool force)
+        {
+            if (!force && Time.unscaledTime < s_nextVisibilityRefreshAt)
+            {
+                return;
+            }
+
+            s_nextVisibilityRefreshAt = Time.unscaledTime + VisibilityRefreshIntervalSeconds;
+            SetEnabled(ShouldBeVisibleNow());
+        }
+
+        private static bool ShouldBeVisibleNow()
+        {
+            if (GetPreferredUiParentCached() == null)
+            {
+                return false;
+            }
+
+            if (MenuManager.instance != null && CurrentMenuPageField != null && CurrentMenuPageField.GetValue(MenuManager.instance) != null)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void ReparentToPreferredUiRoot()
+        {
+            if (s_label is not Component labelComponent)
+            {
+                return;
+            }
+
+            var parent = GetPreferredUiParentCached();
+            if (parent == null)
+            {
+                return;
+            }
+
+            if (labelComponent.transform.parent != parent)
+            {
+                labelComponent.transform.SetParent(parent, false);
+            }
+        }
+
+        private static Transform? ResolvePreferredUiParent()
+        {
+            // Prefer the same root used by DHH ability/energy UI (better compatibility with UI-mirroring mods, e.g. VR).
+            var dhhUiMgrType = AccessTools.TypeByName("DeathHeadHopper.Managers.DHHUIManager");
+            if (dhhUiMgrType != null)
+            {
+                var instanceProperty = dhhUiMgrType.GetProperty("instance", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                var instance = instanceProperty?.GetValue(null);
+                if (instance != null)
+                {
+                    var gameHudField = dhhUiMgrType.GetField("gameHUD", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    if (gameHudField?.GetValue(instance) is GameObject gameHud && gameHud != null)
+                    {
+                        return gameHud.transform;
+                    }
+                }
+            }
+
+            return HUDCanvas.instance != null ? HUDCanvas.instance.transform : null;
+        }
+
+        private static Transform? GetPreferredUiParentCached()
+        {
+            if (s_cachedUiParent != null)
+            {
+                return s_cachedUiParent;
+            }
+
+            s_cachedUiParent = ResolvePreferredUiParent();
+            return s_cachedUiParent;
         }
 
         private static void SetDefaults(Component label)
@@ -143,6 +238,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
                 return;
             }
 
+            if (s_isVisible == enabled)
+            {
+                return;
+            }
+            s_isVisible = enabled;
+
             if (s_label is Behaviour behaviour)
             {
                 behaviour.enabled = enabled;
@@ -171,6 +272,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
                 return;
             }
 
+            if (string.Equals(s_lastHintText, text, StringComparison.Ordinal))
+            {
+                return;
+            }
+            s_lastHintText = text;
             TextProperty.SetValue(s_hintLabel, text);
         }
 

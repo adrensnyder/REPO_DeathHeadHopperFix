@@ -66,12 +66,10 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceConsolationMoney = "LastChance consolation money added on success (integer).";
             public const string LastChanceMissingPlayers = "Number of players allowed to stay outside the truck before LastChance success triggers (0 = all players required).";
             public const string LastChanceSurrenderSeconds = "Seconds the player must hold Crouch to surrender during LastChance.";
-            public const string LastChanceIndicators = "LastChance indicators mode: None, Direction, Map, All. Direction uses Tumble hold; Map uses Rotate hold.";
+            public const string LastChanceIndicators = "LastChance indicators mode: None, Direction.";
             public const string LastChanceIndicatorHoldSeconds = "Seconds to hold Tumble before triggering the selected indicator.";
-            public const string LastChanceIndicatorDurationSeconds = "Seconds the indicator stays active once triggered.";
-            public const string LastChanceIndicatorCooldownSeconds = "Cooldown seconds before the indicator can be triggered again.";
-            public const string LastChanceIndicatorMapPenaltyEasySeconds = "Timer penalty per Map trigger at easy conditions.";
-            public const string LastChanceIndicatorMapPenaltyHardSeconds = "Timer penalty per Map trigger at hard conditions.";
+            public const string LastChanceIndicatorDirectionDurationSeconds = "Seconds the Direction indicator stays active once triggered.";
+            public const string LastChanceIndicatorDirectionCooldownSeconds = "Cooldown seconds before Direction can be triggered again.";
             public const string LastChanceIndicatorDirectionPenaltyEasySeconds = "Timer penalty per Direction trigger at easy conditions.";
             public const string LastChanceIndicatorDirectionPenaltyHardSeconds = "Timer penalty per Direction trigger at hard conditions.";
             public const string LastChanceMonstersSearchEnabled = "During LastChance, monsters treat disabled players as valid targets (harder return to truck).";
@@ -233,23 +231,17 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceSurrenderSeconds, Min = 2f, Max = 10f)]
         public static int LastChanceSurrenderSeconds = 5;
 
-        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicators)]
-        public static string LastChanceIndicators = "All";
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicators, Options = new[] { "None", "Direction" })]
+        public static string LastChanceIndicators = "Direction";
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorHoldSeconds, Min = 0.2f, Max = 5f)]
         public static float LastChanceIndicatorHoldSeconds = 2f;
 
-        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorDurationSeconds, Min = 0.5f, Max = 10f)]
-        public static float LastChanceIndicatorDurationSeconds = 5f;
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorDirectionDurationSeconds, Min = 0.5f, Max = 20f)]
+        public static float LastChanceIndicatorDirectionDurationSeconds = 5f;
 
-        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorCooldownSeconds, Min = 1f, Max = 30f)]
-        public static float LastChanceIndicatorCooldownSeconds = 15f;
-
-        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorMapPenaltyEasySeconds, Min = 0f, Max = 60f)]
-        public static float LastChanceIndicatorMapPenaltyEasySeconds = 8f;
-
-        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorMapPenaltyHardSeconds, Min = 0f, Max = 60f)]
-        public static float LastChanceIndicatorMapPenaltyHardSeconds = 2f;
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorDirectionCooldownSeconds, Min = 1f, Max = 60f)]
+        public static float LastChanceIndicatorDirectionCooldownSeconds = 15f;
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceIndicatorDirectionPenaltyEasySeconds, Min = 0f, Max = 60f)]
         public static float LastChanceIndicatorDirectionPenaltyEasySeconds = 12f;
@@ -273,7 +265,7 @@ namespace DeathHeadHopperFix.Modules.Config
         public static float LastChanceTimerMonsterDiminishReduction = 0.6f;
 
         [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayers)]
-        public static bool SpectateDeadPlayers = false;
+        public static bool SpectateDeadPlayers = true;
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = true;

@@ -24,6 +24,7 @@ namespace DeathHeadHopperFix.Modules.Config
         public string Key { get; set; } = string.Empty;
         public float Min { get; set; } = float.NaN;
         public float Max { get; set; } = float.NaN;
+        public string[]? Options { get; set; }
         public bool HostControlled { get; set; } = true;
 
         public bool HasRange => !float.IsNaN(Min) && !float.IsNaN(Max);
@@ -71,7 +72,8 @@ namespace DeathHeadHopperFix.Modules.Config
                 if (field.FieldType == typeof(bool))
                 {
                     var defaultValue = (bool)field.GetValue(null)!;
-                    var entry = config.Bind(section, key, defaultValue, description);
+                    var entry = config.Bind(section, key, defaultValue,
+                        new ConfigDescription(description, new AcceptableValueList<bool>(false, true)));
                     RegisterHostControlledField(attribute, key, field);
                     ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
@@ -124,7 +126,16 @@ namespace DeathHeadHopperFix.Modules.Config
                 if (field.FieldType == typeof(string))
                 {
                     var defaultValue = field.GetValue(null) as string ?? string.Empty;
-                    var entry = config.Bind(section, key, defaultValue, description);
+                    ConfigEntry<string> entry;
+                    if (attribute.Options != null && attribute.Options.Length > 0)
+                    {
+                        entry = config.Bind(section, key, defaultValue,
+                            new ConfigDescription(description, new AcceptableValueList<string>(attribute.Options)));
+                    }
+                    else
+                    {
+                        entry = config.Bind(section, key, defaultValue, description);
+                    }
                     RegisterHostControlledField(attribute, key, field);
                     ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;

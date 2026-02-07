@@ -101,6 +101,10 @@ namespace DeathHeadHopperFix
             LastChanceTimerController.OnLevelLoaded();
         }
 
+        private void Update()
+        {
+        }
+
         private void ApplyEarlyPatches()
         {
             if (_harmony == null)
@@ -178,11 +182,8 @@ namespace DeathHeadHopperFix
                 PatchAbilityEnergyHandlerRechargeSoundIfPossible(harmony, asm);
 
                 AbilityModule.ApplyAbilitySpotLabelOverlay(harmony, asm);
-                if (!FeatureFlags.DisableAbilityPatches)
-                {
-                    AbilityModule.ApplyAbilityManagerHooks(harmony, asm);
-                    PatchChargeAbilityGettersIfPossible(harmony, asm);
-                }
+                AbilityModule.ApplyAbilityManagerHooks(harmony, asm);
+                PatchChargeAbilityGettersIfPossible(harmony, asm);
 
                 _patched = true;
                 _log?.LogInfo("Patches applied successfully.");
@@ -295,6 +296,8 @@ namespace DeathHeadHopperFix
         {
             if (__instance == null)
                 return;
+            if (FeatureFlags.DisableAbilityPatches)
+                return;
 
             var abilityBaseCost = Mathf.Max(0f, __result);
             var customChargeCost = Mathf.Max(0f, (float)FeatureFlags.ChargeAbilityStaminaCost);
@@ -315,6 +318,8 @@ namespace DeathHeadHopperFix
         private static bool ChargeAbility_Cooldown_Prefix(UnityEngine.Object __instance, ref float __result)
         {
             if (__instance == null)
+                return true;
+            if (FeatureFlags.DisableAbilityPatches)
                 return true;
 
             var customCooldown = Mathf.Max(0f, (float)FeatureFlags.ChargeAbilityCooldown);
@@ -420,7 +425,7 @@ namespace DeathHeadHopperFix
                 return;
 
             var go = mono.gameObject;
-            if (!FeatureFlags.DisableBatteryModule && go.GetComponent<BatteryJumpModule>() == null)
+            if (go.GetComponent<BatteryJumpModule>() == null)
             {
                 go.AddComponent<BatteryJumpModule>();
             }

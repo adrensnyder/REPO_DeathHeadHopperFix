@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Battery;
@@ -102,4 +102,3 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
-
