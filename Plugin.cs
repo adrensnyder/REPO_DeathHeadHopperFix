@@ -157,6 +157,7 @@ namespace DeathHeadHopperFix
                 PrefabModule.Apply(harmony, asm, _log);
                 AudioModule.Apply(harmony, asm, _log);
                 DHHShopModule.Apply(harmony, asm, _log);
+                LastChanceMonstersSearchModule.Apply(harmony, asm);
 
                 // 5) Guard DeathHeadController revive/update when localCameraPosition is missing
                 PatchDeathHeadControllerGuardsIfPossible(harmony, asm);
