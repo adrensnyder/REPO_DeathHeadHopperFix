@@ -22,6 +22,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         private static FieldInfo? s_abilitySpotsField;
         private static readonly HashSet<object> s_trackedSpots = new();
         private static readonly Dictionary<object, Vector3> s_spotBaseLocalPos = new();
+        private static float s_directionActivationProgress;
 
         private const int DirectionIndicatorSlotIndex = 1;
         private const string DirectionIconFileName = "Direction.png";
@@ -133,6 +134,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             if (FeatureFlags.DisableAbilityPatches)
                 return;
 
+            s_directionActivationProgress = 0f;
             EnsureAbilityReflection();
             if (s_abilitySpotSetCooldown == null)
                 return;
@@ -149,11 +151,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 try
                 {
                     s_abilitySpotSetCooldown.Invoke(spot, new object[] { clamped });
+                    SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
                 }
                 catch
                 {
                     // ignore
                 }
+            }
+        }
+
+        internal static void SetDirectionSlotActivationProgress(float progress01)
+        {
+            if (FeatureFlags.DisableAbilityPatches)
+                return;
+
+            s_directionActivationProgress = Mathf.Clamp01(progress01);
+            if (s_trackedSpots.Count == 0)
+                return;
+
+            foreach (var spot in s_trackedSpots)
+            {
+                if (!IsSpotUsable(spot))
+                    continue;
+                if (GetAbilityIndex(spot) != DirectionIndicatorSlotIndex)
+                    continue;
+                if (!LastChanceTimerController.IsDirectionIndicatorUiVisible)
+                    continue;
+
+                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
             }
         }
 
@@ -213,6 +238,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 AbilitySpotLabelOverlay.SetDirectionLabel(spot, string.Empty);
                 SlotCostOverrides.RestoreDefaultCostText(spot);
                 SlotVisualOverrides.RestoreDefaultIcon(spot);
+                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
                 SlotLayoutOverrides.RestoreBasePosition(spot);
                 return;
             }
@@ -224,6 +250,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             AbilitySpotLabelOverlay.SetDirectionLabel(spot, string.Empty);
             SlotCostOverrides.SetDirectionCostText(spot, GetDirectionCostLabel());
             SlotVisualOverrides.ApplyDirectionIcon(spot, DirectionIconFileName);
+            SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
             SlotLayoutOverrides.EnsureBasePosition(spot);
         }
 
@@ -567,6 +594,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             private static string s_loadedFrom = string.Empty;
             private static PropertyInfo? s_behaviourEnabledProp;
             private static PropertyInfo? s_imageSpriteProp;
+            private static PropertyInfo? s_imageColorProp;
+            private static PropertyInfo? s_imageFillAmountProp;
+            private static readonly Dictionary<object, Color> s_cooldownIconBaseColors = new();
 
             internal static void ApplyDirectionIcon(object spot, string fileName)
             {
@@ -640,6 +670,51 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 if (s_noAbilityField?.GetValue(spot) is Behaviour noAbilityText)
                 {
                     noAbilityText.enabled = currentAbility == null;
+                }
+            }
+
+            internal static void ApplyDirectionActivationProgress(object spot, float progress01)
+            {
+                if (spot == null)
+                    return;
+
+                var type = spot.GetType();
+                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                if (cooldownImage == null)
+                    return;
+
+                var imageType = cooldownImage.GetType();
+                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != imageType)
+                {
+                    s_imageColorProp = imageType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
+                }
+                if (s_imageFillAmountProp == null || s_imageFillAmountProp.DeclaringType != imageType)
+                {
+                    s_imageFillAmountProp = imageType.GetProperty("fillAmount", BindingFlags.Instance | BindingFlags.Public);
+                }
+
+                if (!s_cooldownIconBaseColors.TryGetValue(cooldownImage, out var baseColor))
+                {
+                    baseColor = s_imageColorProp?.GetValue(cooldownImage) is Color c ? c : Color.white;
+                    s_cooldownIconBaseColors[cooldownImage] = baseColor;
+                }
+
+                var clamped = Mathf.Clamp01(progress01);
+                if (clamped <= 0f)
+                {
+                    s_imageFillAmountProp?.SetValue(cooldownImage, 0f);
+                    s_imageColorProp?.SetValue(cooldownImage, baseColor);
+                    return;
+                }
+
+                // Reuse cooldown mask as "arming" fill (reverse of cooldown drain), but tint green.
+                s_imageFillAmountProp?.SetValue(cooldownImage, clamped);
+                s_imageColorProp?.SetValue(cooldownImage, new Color(0.2f, 1f, 0.2f, baseColor.a));
+
+                if (s_behaviourEnabledProp != null && typeof(Behaviour).IsAssignableFrom(imageType))
+                {
+                    s_behaviourEnabledProp.SetValue(cooldownImage, true);
                 }
             }
 

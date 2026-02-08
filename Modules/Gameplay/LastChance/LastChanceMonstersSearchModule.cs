@@ -15,47 +15,94 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     internal static class LastChanceMonstersSearchModule
     {
         private const string PatchId = "DeathHeadHopperFix.Gameplay.LastChance.MonstersSearch";
+        private const BindingFlags AnyInstanceField = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private static readonly FieldInfo? s_playerIsDisabledField = AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
         private static readonly AccessTools.FieldRef<PlayerAvatar, bool>? s_playerIsDisabledGetter =
             s_playerIsDisabledField != null ? AccessTools.FieldRefAccess<PlayerAvatar, bool>(s_playerIsDisabledField.Name) : null;
-        private static readonly FieldInfo? s_enemyParentSpawnedField = AccessTools.Field(typeof(EnemyParent), "Spawned");
-        private static readonly FieldInfo? s_enemyParentForceLeaveField = AccessTools.Field(typeof(EnemyParent), "forceLeave");
+        private static readonly FieldInfo? s_enemyParentSpawnedField = typeof(EnemyParent).GetField("Spawned", AnyInstanceField);
+        private static readonly FieldInfo? s_enemyParentForceLeaveField = typeof(EnemyParent).GetField("forceLeave", AnyInstanceField);
+        private static readonly FieldInfo? s_enemyParentEnemyField =
+            typeof(EnemyParent).GetField("Enemy", AnyInstanceField) ??
+            typeof(EnemyParent).GetField("enemy", AnyInstanceField);
         private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.MonstersSearch");
+        private static readonly HashSet<MethodBase> s_patchedMethods = new HashSet<MethodBase>();
         private static Harmony? s_harmony;
+        private static bool s_assemblyLoadHooked;
         private static float s_runtimeStateCachedAt;
         private static bool s_runtimeStateEnabled;
+        private static bool s_loggedActivationSnapshot;
 
         internal static void Apply(Harmony harmony, Assembly asm)
         {
-            if (s_harmony != null || harmony == null || asm == null || s_playerIsDisabledField == null)
-            {
-                return;
-            }
-
-            var methods = CollectEnemyMethodsUsingIsDisabled(asm);
-            if (methods.Count == 0)
+            if (s_harmony != null || harmony == null || s_playerIsDisabledField == null)
             {
                 return;
             }
 
             s_harmony = new Harmony(PatchId);
+            PatchAllLoadedAssemblies();
+
+            if (!s_assemblyLoadHooked)
+            {
+                AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
+                s_assemblyLoadHooked = true;
+            }
+        }
+
+        private static void PatchAllLoadedAssemblies()
+        {
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies();
+            for (var i = 0; i < assemblies.Length; i++)
+            {
+                TryPatchAssembly(assemblies[i]);
+            }
+        }
+
+        private static void OnAssemblyLoad(object? sender, AssemblyLoadEventArgs args)
+        {
+            TryPatchAssembly(args.LoadedAssembly);
+        }
+
+        private static void TryPatchAssembly(Assembly? asm)
+        {
+            if (asm == null || asm.IsDynamic || s_harmony == null || s_playerIsDisabledField == null)
+            {
+                return;
+            }
+
+            List<MethodBase> methods;
+            try
+            {
+                methods = CollectEnemyMethodsUsingIsDisabled(asm);
+            }
+            catch
+            {
+                return;
+            }
+
+            if (methods.Count == 0)
+            {
+                return;
+            }
+
             var transpiler = new HarmonyMethod(typeof(LastChanceMonstersSearchModule), nameof(ReplaceDisabledChecksTranspiler));
-            var patched = 0;
+            var patchedNow = 0;
             for (var i = 0; i < methods.Count; i++)
             {
                 var method = methods[i];
-                if (method == null)
+                if (method == null || s_patchedMethods.Contains(method))
                 {
                     continue;
                 }
 
                 s_harmony.Patch(method, transpiler: transpiler);
-                patched++;
+                s_patchedMethods.Add(method);
+                patchedNow++;
             }
 
-            if (FeatureFlags.DebugLogging)
+            if (patchedNow > 0 && FeatureFlags.DebugLogging)
             {
-                Log.LogInfo($"[LastChance] MonstersSearch patched methods: {patched}.");
+                Log.LogInfo($"[LastChance] MonstersSearch patched methods in {asm.GetName().Name}: {patchedNow}.");
             }
         }
 
@@ -105,7 +152,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             for (var i = 0; i < types.Length; i++)
             {
                 var type = types[i];
-                if (type == null || !type.Name.StartsWith("Enemy", StringComparison.Ordinal))
+                if (type == null || !IsMonsterRelatedType(type))
                 {
                     continue;
                 }
@@ -132,6 +179,37 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             return methods;
         }
 
+        private static bool IsMonsterRelatedType(Type type)
+        {
+            if (typeof(Enemy).IsAssignableFrom(type) || typeof(EnemyParent).IsAssignableFrom(type))
+            {
+                return true;
+            }
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            var fields = type.GetFields(flags);
+            for (var i = 0; i < fields.Length; i++)
+            {
+                var fieldType = fields[i].FieldType;
+                if (typeof(Enemy).IsAssignableFrom(fieldType) || typeof(EnemyParent).IsAssignableFrom(fieldType))
+                {
+                    return true;
+                }
+            }
+
+            var properties = type.GetProperties(flags);
+            for (var i = 0; i < properties.Length; i++)
+            {
+                var propertyType = properties[i].PropertyType;
+                if (typeof(Enemy).IsAssignableFrom(propertyType) || typeof(EnemyParent).IsAssignableFrom(propertyType))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private static bool MethodReadsPlayerIsDisabled(MethodBase method)
         {
             if (method == null || s_playerIsDisabledField == null)
@@ -151,7 +229,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 var targetToken = s_playerIsDisabledField.MetadataToken;
                 for (var i = 0; i <= il.Length - 5; i++)
                 {
-                    if (il[i] != 0x7B)
+                    var op = il[i];
+                    if (op != 0x7B && op != 0x7C) // ldfld / ldflda
                     {
                         continue;
                     }
@@ -188,7 +267,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             for (var i = 0; i < list.Count; i++)
             {
                 var instruction = list[i];
-                if (instruction.opcode == OpCodes.Ldfld && instruction.operand is FieldInfo field && field == s_playerIsDisabledField)
+                if ((instruction.opcode == OpCodes.Ldfld || instruction.opcode == OpCodes.Ldflda) &&
+                    instruction.operand is FieldInfo field &&
+                    field == s_playerIsDisabledField)
                 {
                     instruction.opcode = OpCodes.Call;
                     instruction.operand = remapMethod;
@@ -223,11 +304,89 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             s_runtimeStateCachedAt = now;
+            var wasEnabled = s_runtimeStateEnabled;
             s_runtimeStateEnabled =
                 FeatureFlags.LastChanceMonstersSearchEnabled &&
                 FeatureFlags.LastChangeMode &&
                 LastChanceTimerController.IsActive;
+
+            if (!s_runtimeStateEnabled)
+            {
+                s_loggedActivationSnapshot = false;
+            }
+            else if (!wasEnabled && !s_loggedActivationSnapshot)
+            {
+                TryLogActivationSnapshot();
+            }
+
             return s_runtimeStateEnabled;
+        }
+
+        private static void TryLogActivationSnapshot()
+        {
+            if (!FeatureFlags.DebugLogging || !FeatureFlags.LastChanceMonstersSearchEnabled)
+            {
+                return;
+            }
+
+            s_loggedActivationSnapshot = true;
+
+            var director = EnemyDirector.instance;
+            if (director == null || director.enemiesSpawned == null)
+            {
+                Log.LogInfo("[LastChance] MonstersSearch activation snapshot: EnemyDirector/enemiesSpawned not available.");
+                return;
+            }
+
+            var enemies = director.enemiesSpawned;
+            Log.LogInfo($"[LastChance] MonstersSearch activation snapshot: total={enemies.Count}.");
+            for (var i = 0; i < enemies.Count; i++)
+            {
+                var parent = enemies[i];
+                if (parent == null)
+                {
+                    Log.LogInfo($"[LastChance] MonstersSearch enemy[{i}] = null");
+                    continue;
+                }
+
+                var enemy = s_enemyParentEnemyField?.GetValue(parent);
+                var typeName = GetConcreteEnemyTypeName(enemy);
+                var spawned = s_enemyParentSpawnedField != null && s_enemyParentSpawnedField.GetValue(parent) is bool spawnedValue && spawnedValue;
+                var forceLeave = s_enemyParentForceLeaveField != null && s_enemyParentForceLeaveField.GetValue(parent) is bool forceLeaveValue && forceLeaveValue;
+                Log.LogInfo($"[LastChance] MonstersSearch enemy[{i}] type={typeName} spawned={spawned} forceLeave={forceLeave}");
+            }
+        }
+
+        private static string GetConcreteEnemyTypeName(object? enemyObj)
+        {
+            if (enemyObj == null)
+            {
+                return "null";
+            }
+
+            if (enemyObj is not Component component)
+            {
+                return enemyObj.GetType().Name;
+            }
+
+            var baseName = enemyObj.GetType().Name;
+            var behaviours = component.GetComponents<MonoBehaviour>();
+            for (var i = 0; i < behaviours.Length; i++)
+            {
+                var behaviour = behaviours[i];
+                if (behaviour == null)
+                {
+                    continue;
+                }
+
+                var name = behaviour.GetType().Name;
+                if (name.StartsWith("Enemy", StringComparison.Ordinal) && !string.Equals(name, "Enemy", StringComparison.Ordinal))
+                {
+                    return $"{baseName}/{name}";
+                }
+            }
+
+            return baseName;
         }
     }
 }

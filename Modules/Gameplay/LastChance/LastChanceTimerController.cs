@@ -42,6 +42,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private const float DirectionLineHeightOffset = 0.2f;
         private const float DirectionPathRefreshSeconds = 0.4f;
         private const float DirectionPathMovementThresholdSqr = 0.64f; // 0.8m
+        private const float DirectionIndicatorHoldSeconds = 1f;
 
         private enum LastChanceIndicatorMode
         {
@@ -81,6 +82,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static float s_directionCooldownUntil;
         private static float s_directionActiveUntil;
         private static bool s_directionActive;
+        private static float s_directionHoldTimer;
         private static bool s_indicatorNoneLoggedThisCycle;
         private static GameObject? s_indicatorDirectionObject;
         private static LineRenderer? s_indicatorDirectionLine;
@@ -746,6 +748,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         {
             if (!enabled)
             {
+                ResetIndicatorHold();
                 DeactivateIndicator(kind);
                 return;
             }
@@ -764,15 +767,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (IsIndicatorActive(kind) || Time.time < GetIndicatorCooldownUntil(kind))
             {
+                ResetIndicatorHold();
                 return;
             }
 
-            if (!SemiFunc.InputDown(inputKey))
+            var holdSeconds = DirectionIndicatorHoldSeconds;
+            if (!SemiFunc.InputHold(inputKey))
+            {
+                ResetIndicatorHold();
+                return;
+            }
+
+            s_directionHoldTimer = Mathf.Min(holdSeconds, s_directionHoldTimer + Time.deltaTime);
+            AbilityModule.SetDirectionSlotActivationProgress(Mathf.Clamp01(s_directionHoldTimer / holdSeconds));
+            if (s_directionHoldTimer < holdSeconds)
             {
                 return;
             }
 
+            ResetIndicatorHold();
             TriggerIndicator(kind, maxPlayers);
+        }
+
+        private static void ResetIndicatorHold()
+        {
+            s_directionHoldTimer = 0f;
+            AbilityModule.SetDirectionSlotActivationProgress(0f);
         }
 
         private static void TriggerIndicator(IndicatorKind kind, int maxPlayers)
@@ -1249,11 +1269,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static void ClearIndicatorsState()
         {
             s_indicatorNoneLoggedThisCycle = false;
+            s_directionHoldTimer = 0f;
             s_directionCooldownUntil = 0f;
             s_directionActiveUntil = 0f;
             s_directionActive = false;
             s_indicatorNextPathRefreshAt = 0f;
             s_hasLastDirectionPathSample = false;
+            AbilityModule.SetDirectionSlotActivationProgress(0f);
             ClearActiveIndicatorVisuals();
         }
 

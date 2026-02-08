@@ -34,7 +34,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
         private static Transform? s_cachedUiParent;
         private static float s_nextVisibilityRefreshAt;
         private const float VisibilityRefreshIntervalSeconds = 0.5f;
-        private const float SurrenderHintVerticalOffset = -45f;
+        private const float TopPaddingFromCanvas = 8f;
+        private const float DefaultTimerVerticalPosition = -TopPaddingFromCanvas;
+        private const float SurrenderHintSpacing = 4f;
+        private const float TimerFontSize = 14f;
+        private const float SurrenderHintFontSize = 12f;
 
         internal static void Show(string defaultHintText)
         {
@@ -59,7 +63,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             s_rect.anchorMin = new Vector2(0.5f, 1f);
             s_rect.anchorMax = new Vector2(0.5f, 1f);
             s_rect.pivot = new Vector2(0.5f, 1f);
-            s_rect.anchoredPosition = new Vector2(0f, -30f);
+            s_rect.anchoredPosition = new Vector2(0f, DefaultTimerVerticalPosition);
             s_rect.sizeDelta = new Vector2(600f, 60f);
 
             s_label = go.AddComponent(LabelType);
@@ -75,13 +79,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
                 s_hintRect.anchorMin = new Vector2(0.5f, 1f);
                 s_hintRect.anchorMax = new Vector2(0.5f, 1f);
                 s_hintRect.pivot = new Vector2(0.5f, 1f);
-                s_hintRect.anchoredPosition = new Vector2(0f, SurrenderHintVerticalOffset);
                 s_hintRect.sizeDelta = new Vector2(600f, 26f);
+                UpdateSurrenderHintPosition();
             }
 
             s_hintLabel = hintGo.AddComponent(LabelType);
             SetHintDefaults(s_hintLabel);
             SetSurrenderHintText(s_defaultHintText);
+            KeepAtTopPosition();
             RefreshVisibility(force: true);
         }
 
@@ -124,7 +129,43 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             }
 
             s_nextVisibilityRefreshAt = Time.unscaledTime + VisibilityRefreshIntervalSeconds;
+            KeepAtTopPosition();
+            UpdateSurrenderHintPosition();
             SetEnabled(ShouldBeVisibleNow());
+        }
+
+        private static void KeepAtTopPosition()
+        {
+            if (s_rect == null)
+            {
+                return;
+            }
+
+            var pos = s_rect.anchoredPosition;
+            if (Mathf.Abs(pos.y - DefaultTimerVerticalPosition) <= 0.01f)
+            {
+                return;
+            }
+
+            s_rect.anchoredPosition = new Vector2(pos.x, DefaultTimerVerticalPosition);
+        }
+
+        private static void UpdateSurrenderHintPosition()
+        {
+            if (s_rect == null || s_hintRect == null)
+            {
+                return;
+            }
+
+            // Keep the hint close, but prevent overlap by accounting for both text sizes.
+            var targetOffset = -(TimerFontSize + SurrenderHintFontSize + SurrenderHintSpacing);
+            var pos = s_hintRect.anchoredPosition;
+            if (Mathf.Abs(pos.y - targetOffset) <= 0.01f)
+            {
+                return;
+            }
+
+            s_hintRect.anchoredPosition = new Vector2(pos.x, targetOffset);
         }
 
         private static bool ShouldBeVisibleNow()
@@ -201,7 +242,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             if (ColorProperty != null)
                 ColorProperty.SetValue(label, Color.white);
             if (FontSizeProperty != null)
-                FontSizeProperty.SetValue(label, 24f);
+                FontSizeProperty.SetValue(label, TimerFontSize);
             if (AutoSizeProperty != null)
                 AutoSizeProperty.SetValue(label, false);
             if (WordWrapProperty != null)
@@ -220,7 +261,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             if (ColorProperty != null)
                 ColorProperty.SetValue(label, Color.white);
             if (FontSizeProperty != null)
-                FontSizeProperty.SetValue(label, 18f);
+                FontSizeProperty.SetValue(label, SurrenderHintFontSize);
             if (AutoSizeProperty != null)
                 AutoSizeProperty.SetValue(label, false);
             if (WordWrapProperty != null)
