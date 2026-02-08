@@ -165,15 +165,8 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private static bool IsDeathHeadContext()
         {
-            try
-            {
-                if (SemiFunc.IsSpectating())
-                    return true;
-            }
-            catch
-            {
-                // ignore
-            }
+            if (SpectateContextHelper.IsSpectatingLocalDeathHead())
+                return true;
 
             var avatar = PlayerAvatar.instance;
             if (avatar == null)

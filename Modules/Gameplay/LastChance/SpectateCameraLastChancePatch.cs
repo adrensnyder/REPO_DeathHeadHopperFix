@@ -267,6 +267,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 $"DHH.LocalActive={localActive} DHH.Spectatable={spectatable} DHH.Spectated={spectated}");
         }
 
+        internal static bool ShouldForceLocalDeathHeadSpectate()
+        {
+            // If dead-player spectate is explicitly enabled in Always mode,
+            // do not continuously re-force local spectate while everyone is disabled.
+            if (FeatureFlags.SpectateDeadPlayers)
+            {
+                var mode = (FeatureFlags.SpectateDeadPlayersMode ?? string.Empty).Trim();
+                if (mode.Equals("Always", StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         private static object? TryGetLocalDeathHeadController()
         {
             var local = PlayerAvatar.instance;
@@ -329,18 +345,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            if (!LastChanceTimerController.IsActive)
+            {
+                LastChanceSpectateHelper.ResetForceState();
+                return;
+            }
+
             if (!LastChanceSpectateHelper.AllPlayersDisabled())
             {
                 LastChanceSpectateHelper.ResetForceState();
                 return;
             }
 
-            if (__instance != null)
+            if (LastChanceSpectateHelper.ShouldForceLocalDeathHeadSpectate())
             {
-                LastChanceSpectateHelper.EnsureSpectatePlayerLocal(__instance);
+                if (__instance != null)
+                {
+                    LastChanceSpectateHelper.EnsureSpectatePlayerLocal(__instance);
+                }
+                LastChanceSpectateHelper.ForceDeathHeadSpectateIfPossible();
             }
-
-            LastChanceSpectateHelper.ForceDeathHeadSpectateIfPossible();
             LastChanceSpectateHelper.DebugLogState(__instance);
         }
     }
@@ -361,12 +385,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return true;
             }
 
-            if (LastChanceSpectateHelper.AllPlayersDisabled() || LastChanceSpectateHelper.IsDeathHeadSpectated())
+            if (!LastChanceTimerController.IsActive)
+            {
+                return true;
+            }
+
+            if (!LastChanceSpectateHelper.AllPlayersDisabled())
+            {
+                return true;
+            }
+
+            if (LastChanceSpectateHelper.IsDeathHeadSpectated())
             {
                 return false;
             }
 
-            return true;
+            return false;
         }
     }
 
@@ -386,7 +420,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return true;
             }
 
-            // When everyone is dead, block vanilla Head state (use DHH spectate instead).
+            // During LastChance keep vanilla Head state disabled, even if disabled flags flicker.
+            if (LastChanceTimerController.IsActive)
+            {
+                return false;
+            }
+
+            // Fallback: if all players are disabled outside active timer setup, keep old behavior.
             return !LastChanceSpectateHelper.AllPlayersDisabled();
         }
     }

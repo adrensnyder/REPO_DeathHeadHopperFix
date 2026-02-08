@@ -49,7 +49,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (SemiFunc.IsNotMasterClient())
             {
-                return false;
+                // Clients must keep original flow: blocking this entirely can hide local shop visuals (e.g. shelves).
+                return true;
             }
 
             var volumes = _itemVolumesField?.GetValue(null) as IList<ItemVolume>;
@@ -129,7 +130,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         }
     }
 }
-
 
 
 

@@ -74,8 +74,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static bool ChangeLevelPrefix(RunManager __instance, bool _completedLevel, bool _levelFailed, RunManager.ChangeLevelType _changeLevelType)
         {
-            if (!FeatureFlags.LastChangeMode || !LastChanceTimerController.IsActive)
+            if (!FeatureFlags.LastChangeMode)
             {
+                return true;
+            }
+
+            // LastChance must never intercept Arena/Shop flow.
+            if (SemiFunc.RunIsArena() || SemiFunc.RunIsShop())
+            {
+                s_suppressedLogged = false;
+                s_allowAllPlayersDead = false;
                 return true;
             }
 
@@ -143,10 +151,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (!value)
                 return false;
 
-            if (!FeatureFlags.LastChangeMode || !LastChanceTimerController.IsActive)
+            if (!FeatureFlags.LastChangeMode)
                 return true;
 
-            return s_allowAllPlayersDead;
+            // Preserve vanilla all-dead behavior in Arena/Shop.
+            if (SemiFunc.RunIsArena() || SemiFunc.RunIsShop())
+                return true;
+
+            if (s_allowAllPlayersDead)
+                return true;
+            
+            // Prevent vanilla all-players-dead transitions while LastChance mode is enabled.
+            // Vanilla flow is re-enabled explicitly via AllowVanillaAllPlayersDead().
+            return false;
         }
 
         internal static bool AllPlayersDisabled()

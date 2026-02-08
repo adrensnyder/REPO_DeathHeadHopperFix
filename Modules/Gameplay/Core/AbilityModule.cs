@@ -508,6 +508,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
         }
 
+
         private static class SlotCostOverrides
         {
             private static FieldInfo? s_energyCostField;

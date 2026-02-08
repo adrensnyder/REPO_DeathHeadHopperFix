@@ -19,7 +19,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             _log = log;
             PatchDhhInputManagerAwakeIfPossible(harmony, asm);
-            PatchDhhPunManagerAwakeIfPossible(harmony, asm);
+            DHHPunViewFixModule.Apply(harmony, asm, log);
         }
 
         private static void PatchDhhInputManagerAwakeIfPossible(Harmony harmony, Assembly asm)
@@ -42,25 +42,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             harmony.Patch(mAwake, prefix: new HarmonyMethod(prefix));
         }
 
-        private static void PatchDhhPunManagerAwakeIfPossible(Harmony harmony, Assembly asm)
-        {
-            if (harmony == null || asm == null)
-                return;
-
-            var tPun = asm.GetType("DeathHeadHopper.Managers.DHHPunManager", throwOnError: false);
-            if (tPun == null)
-                return;
-
-            var mAwake = AccessTools.Method(tPun, "Awake");
-            if (mAwake == null)
-                return;
-
-            var postfix = typeof(InputModule).GetMethod(nameof(DHHPunManager_Awake_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (postfix == null)
-                return;
-
-            harmony.Patch(mAwake, postfix: new HarmonyMethod(postfix));
-        }
 
         private static void DHHInputManager_Awake_Prefix(MonoBehaviour __instance)
         {
@@ -92,8 +73,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 fHost.SetValue(null, "pending");
 
                 var inst = ReflectionHelper.GetStaticInstanceByName("DeathHeadHopper.Managers.DHHPunManager");
-                var mVersionCheck = inst?.GetType().GetMethod("VersionCheck", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-                mVersionCheck?.Invoke(inst, Array.Empty<object?>());
+                __instance.StartCoroutine(DHHInputManager_InvokeVersionCheckWhenReady(inst));
 
                 __instance.StartCoroutine(DHHInputManager_WaitForHostVersion());
             }
@@ -129,6 +109,31 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
         }
 
+        private static IEnumerator DHHInputManager_InvokeVersionCheckWhenReady(object? punManager)
+        {
+            if (punManager == null)
+                yield break;
+
+            var mVersionCheck = punManager.GetType().GetMethod("VersionCheck", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (mVersionCheck == null)
+                yield break;
+
+            var fPhotonView = punManager.GetType().GetField("photonView", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            const int maxFrames = 300;
+            for (int i = 0; i < maxFrames; i++)
+            {
+                if (fPhotonView?.GetValue(punManager) is PhotonView pv && pv.ViewID > 0)
+                    break;
+
+                yield return null;
+            }
+
+            if (fPhotonView?.GetValue(punManager) is not PhotonView readyPv || readyPv.ViewID <= 0)
+                yield break;
+
+            mVersionCheck.Invoke(punManager, Array.Empty<object?>());
+        }
+
         private static bool IsMasterClientOrSingleplayer()
         {
             try
@@ -155,27 +160,5 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             return null;
         }
 
-        private static void DHHPunManager_Awake_Postfix(MonoBehaviour __instance)
-        {
-            try
-            {
-                UnityEngine.Object.DontDestroyOnLoad(__instance.gameObject);
-
-                var t = __instance.GetType();
-                var mEnsure = AccessTools.Method(t, "EnsurePhotonView");
-                mEnsure?.Invoke(__instance, Array.Empty<object?>());
-
-                var fPv = AccessTools.Field(t, "photonView");
-                if (fPv?.GetValue(__instance) is PhotonView pv)
-                {
-                    if (pv.ViewID == 0)
-                        pv.ViewID = 745;
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-        }
     }
 }

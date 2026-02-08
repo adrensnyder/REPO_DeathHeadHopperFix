@@ -11,8 +11,9 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string ChargeVanilla = "5. Charge (DHH)";
             public const string Upgrades = "6. Upgrades";
             public const string LastChance = "7. LastChance";
-            public const string Debug = "8. Debug";
-            public const string Spectate = "9. Spectate";
+            public const string Spectate = "8. Spectate";
+            public const string Debug = "9. Debug";
+            
         }
 
         internal static class Descriptions
@@ -49,6 +50,8 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceTimerUseHardestRequiredPlayers = "When true, timer estimates use the hardest required players (highest distance/room difficulty). When false, use easiest required players for a general estimate.";
             public const string LastChanceTimerPerRequiredPlayerSeconds = "Extra seconds added per required player that must reach the truck.";
             public const string LastChanceTimerPerLevelSeconds = "Extra seconds added per current level number.";
+            public const string LastChanceLevelContextRoomWeight = "Extra multiplier weight applied to level contribution from room-path difficulty (0 disables room context).";
+            public const string LastChanceLevelContextMonsterWeight = "Extra multiplier weight applied to level contribution from active search monsters (0 disables monster context).";
             public const string LastChanceTimerPerFarthestMeterSeconds = "Extra seconds added per meter for the farthest required player distance to truck.";
             public const string LastChanceTimerPerBelowTruckPlayerSeconds = "Extra seconds added per required player below the truck threshold height.";
             public const string LastChanceTimerPerBelowTruckMeterSeconds = "Extra seconds added per meter below threshold (only when height delta <= threshold).";
@@ -59,6 +62,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceLevelCurveMaxMultiplier = "Level-curve multiplier reached at/after the full-growth level.";
             public const string LastChanceLevelCurveExponent = "Curve exponent: >1 keeps early levels lower and accelerates growth later.";
             public const string LastChanceLevelCurveFullGrowthLevel = "Level where the level-curve reaches its max multiplier.";
+            public const string LastChanceDynamicMaxMinutesAtLevel = "Level where dynamic timer reaches configured max minutes; from that level onward timer is capped at max.";
             public const string LastChanceDynamicDiminishStartSeconds = "Added-seconds value after which diminishing begins.";
             public const string LastChanceDynamicDiminishRangeSeconds = "Saturation range for diminishing function; bigger values allow more growth before flattening.";
             public const string LastChanceDynamicDiminishReduction = "How strongly diminishing compresses overflow above start (0=no reduction, 0.9=strong reduction).";
@@ -82,6 +86,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DisableAbilityPatches = "Skip ability-related Harmony patches (charge rename, ability cooldown sync, etc.).";
             public const string DisableSpectateChecks = "Skip SpectateCamera override/hints when evaluating battery status (debug test).";
             public const string SpectateDeadPlayers = "Allow SpectateCamera to cycle through disabled players (dead bodies) when toggling targets.";
+            public const string SpectateDeadPlayersMode = "Mode for dead-player spectate switch: Always, LastChanceOnly, Disabled.";
         }
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpEnabled)]
@@ -154,13 +159,13 @@ namespace DeathHeadHopperFix.Modules.Config
         public static float DHHJumpForceDiminishingFactor = 0.9f;
 
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.DHHShopMaxItems, Min = -1f, Max = 12f)]
-        public static int DHHShopMaxItems = 5;
+        public static int DHHShopMaxItems = 6;
 
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.DHHShopSpawnChance, Min = 0.1f, Max = 1f)]
         public static float DHHShopSpawnChance = 0.5f;
 
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.ShopItemsSpawnChance, Min = 0.1f, Max = 1f)]
-        public static float ShopItemsSpawnChance = 0.5f;
+        public static float ShopItemsSpawnChance = 0.75f;
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceMode)]
         public static bool LastChangeMode = true;
@@ -179,6 +184,12 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerLevelSeconds, Min = 0f, Max = 60f)]
         public static float LastChanceTimerPerLevelSeconds = 5f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceLevelContextRoomWeight, Min = 0f, Max = 3f)]
+        public static float LastChanceLevelContextRoomWeight = 0.8f;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceLevelContextMonsterWeight, Min = 0f, Max = 3f)]
+        public static float LastChanceLevelContextMonsterWeight = 0.5f;
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceTimerPerFarthestMeterSeconds, Min = 0f, Max = 20f)]
         public static float LastChanceTimerPerFarthestMeterSeconds = 1.2f;
@@ -209,6 +220,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceLevelCurveFullGrowthLevel, Min = 2f, Max = 40f)]
         public static int LastChanceLevelCurveFullGrowthLevel = 20;
+
+        [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicMaxMinutesAtLevel, Min = 5f, Max = 60f)]
+        public static int LastChanceDynamicMaxMinutesAtLevel = 25;
 
         [FeatureConfigEntry(Sections.LastChance, Descriptions.LastChanceDynamicDiminishStartSeconds, Min = 0f, Max = 1800f)]
         public static int LastChanceDynamicDiminishStartSeconds = 240;
@@ -267,8 +281,11 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayers)]
         public static bool SpectateDeadPlayers = true;
 
+        [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayersMode, Options = new[] { "Always", "LastChanceOnly", "Disabled" })]
+        public static string SpectateDeadPlayersMode = "Always";
+
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
-        public static bool DebugLogging = true;
+        public static bool DebugLogging = false;
 
         //[FeatureConfigEntry(Sections.Debug, Descriptions.DisableBatteryModule)]
         public static bool DisableBatteryModule = false;

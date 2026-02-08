@@ -66,9 +66,6 @@ namespace DeathHeadHopperFix
             AllPlayersDeadGuard.EnsureEnabled();
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
-            PatchSpectateCameraStateNormal();
-            SpectateDeadPlayersModule.Apply(_harmony);
-
             // Local patches from this assembly, e.g. PlayerDeathHeadUpdatePatch.
             // NOTE: we no longer patch SpectateCamera.UpdateState/StateHead because they were fragile
             // across versions and produced IL compile errors.
@@ -115,32 +112,6 @@ namespace DeathHeadHopperFix
         }
 
 
-        private void PatchSpectateCameraStateNormal()
-        {
-            try
-            {
-                var method = AccessTools.Method(typeof(SpectateCamera), "StateNormal");
-                if (method == null)
-                {
-                    return;
-                }
-
-                var transpiler = typeof(SpectateCameraStateNormalPatch).GetMethod(
-                    nameof(SpectateCameraStateNormalPatch.Transpiler),
-                    BindingFlags.Static | BindingFlags.NonPublic);
-                if (transpiler == null)
-                {
-                    return;
-                }
-
-                _harmony?.Patch(method, transpiler: new HarmonyMethod(transpiler));
-            }
-            catch (Exception ex)
-            {
-                _log?.LogError(ex);
-            }
-        }
-
         private void TryPatchIfTargetAssembly(Assembly asm)
         {
             if (_patched) return;
@@ -158,6 +129,12 @@ namespace DeathHeadHopperFix
                 if (harmony == null)
                     throw new InvalidOperationException("Harmony instance is null.");
 
+                // Runtime-only target patches:
+                // These hooks are intentionally applied with harmony.Patch(...) instead of PatchAll.
+                // They target methods/types from the external DeathHeadHopper assembly, which is loaded
+                // dynamically and resolved via reflection at runtime. Because those target symbols are
+                // not compile-time-stable in this assembly, static [HarmonyPatch] declarations are not
+                // a reliable fit here.
                 PrefabModule.Apply(harmony, asm, _log);
                 AudioModule.Apply(harmony, asm, _log);
                 DHHShopModule.Apply(harmony, asm, _log);
@@ -226,7 +203,7 @@ namespace DeathHeadHopperFix
 
         private static bool AbilityEnergyHandler_PlayRechargeSound_Prefix(object __instance)
         {
-            if (SemiFunc.IsSpectating() || IsLocalPlayerDead())
+            if (SpectateContextHelper.IsSpectatingLocalDeathHead() || IsLocalPlayerDead())
                 return false;
 
             var avatar = GetAbilityEnergyHandlerPlayerAvatar(__instance);

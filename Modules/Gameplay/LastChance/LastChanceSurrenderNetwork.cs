@@ -10,6 +10,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     internal sealed class LastChanceSurrenderNetwork : MonoBehaviourPunCallbacks, IOnEventCallback
     {
         private const byte LastChanceSurrenderEventCode = 80;
+        private const byte LastChanceTimerStateEventCode = 81;
         private static LastChanceSurrenderNetwork? s_instance;
 
         internal static void EnsureCreated()
@@ -41,6 +42,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             PhotonNetwork.RaiseEvent(LastChanceSurrenderEventCode, actorNumber, options, SendOptions.SendReliable);
         }
 
+        internal static void NotifyTimerState(bool active, float secondsRemaining)
+        {
+            if (!PhotonNetwork.InRoom)
+            {
+                return;
+            }
+
+            EnsureCreated();
+            var options = new RaiseEventOptions
+            {
+                Receivers = ReceiverGroup.All
+            };
+
+            PhotonNetwork.RaiseEvent(
+                LastChanceTimerStateEventCode,
+                new object[] { active, secondsRemaining },
+                options,
+                SendOptions.SendReliable);
+        }
+
         public override void OnEnable()
         {
             base.OnEnable();
@@ -55,6 +76,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         public void OnEvent(EventData photonEvent)
         {
+            if (photonEvent.Code == LastChanceTimerStateEventCode)
+            {
+                if (photonEvent.CustomData is object[] timerPayload &&
+                    timerPayload.Length >= 2 &&
+                    timerPayload[0] is bool active &&
+                    timerPayload[1] is float remaining)
+                {
+                    LastChanceTimerController.ApplyNetworkTimerState(active, remaining);
+                }
+                return;
+            }
+
             if (photonEvent.Code != LastChanceSurrenderEventCode)
             {
                 return;

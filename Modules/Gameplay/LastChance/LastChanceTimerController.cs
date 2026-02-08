@@ -26,6 +26,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     internal static class LastChanceTimerController
     {
         private const string LogKey = "LastChance.Timer";
+        private const string TimerSecondAudioFileName = "TimerSecond.mp3";
+        private const string TimerWarningAudioPrimaryFileName = "TimeWarning.mp3";
+        private const string TimerWarningAudioFallbackFileName = "TimerWarning.mp3";
         private static float s_timerRemaining;
         private static bool s_active;
         private static int s_baseCurrency;
@@ -93,6 +96,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static Vector3 s_lastDirectionPathFrom;
         private static Vector3 s_lastDirectionPathTo;
         private static bool s_hasLastDirectionPathSample;
+        private static AudioSource? s_timerSecondAudioSource;
+        private static AudioClip? s_timerSecondAudioClip;
+        private static bool s_timerSecondAudioLoadAttempted;
+        private static int s_lastTimerSecondAudioPlayed = -1;
+        private static AudioSource? s_timerWarningAudioSource;
+        private static AudioClip? s_timerWarningAudioClip;
+        private static bool s_timerWarningAudioLoadAttempted;
+        private static int s_lastTimerWarningAudioPlayed = -1;
+        private static int s_lastNetworkTimerBroadcastSecond = -1;
+        private static bool s_timerSyncedFromHost;
         private static DynamicTimerInputs s_cachedDynamicTimerInputs;
         private static bool s_hasCachedDynamicTimerInputs;
 
@@ -128,30 +141,27 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 int requiredPlayers,
                 int levelNumber,
                 int aliveSearchMonsters,
-                float farthestDistanceMeters,
+                float totalDistanceMeters,
                 int playersBelowTruckThreshold,
                 float totalBelowTruckMeters,
-                float monstersAddedSeconds,
-                int longestShortestRoomPath)
+                int totalShortestRoomPathSteps)
             {
                 RequiredPlayers = requiredPlayers;
                 LevelNumber = levelNumber;
                 AliveSearchMonsters = aliveSearchMonsters;
-                FarthestDistanceMeters = farthestDistanceMeters;
+                TotalDistanceMeters = totalDistanceMeters;
                 PlayersBelowTruckThreshold = playersBelowTruckThreshold;
                 TotalBelowTruckMeters = totalBelowTruckMeters;
-                MonstersAddedSeconds = monstersAddedSeconds;
-                LongestShortestRoomPath = longestShortestRoomPath;
+                TotalShortestRoomPathSteps = totalShortestRoomPathSteps;
             }
 
             internal int RequiredPlayers { get; }
             internal int LevelNumber { get; }
             internal int AliveSearchMonsters { get; }
-            internal float FarthestDistanceMeters { get; }
+            internal float TotalDistanceMeters { get; }
             internal int PlayersBelowTruckThreshold { get; }
             internal float TotalBelowTruckMeters { get; }
-            internal float MonstersAddedSeconds { get; }
-            internal int LongestShortestRoomPath { get; }
+            internal int TotalShortestRoomPathSteps { get; }
         }
 
         internal static bool IsActive => s_active;
@@ -192,6 +202,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_active = false;
             s_currencyCaptured = false;
             s_timerRemaining = 0f;
+            s_timerSyncedFromHost = false;
             LastChanceTimerUI.Hide();
             AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
             LastChanceSaveDeleteState.ResetAutoDeleteBlock();
@@ -234,6 +245,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             UpdateTimer();
             UpdateSurrenderInput(allDead);
             UpdateIndicators(maxPlayers, allDead);
+            UpdatePlayersStatusUi(maxPlayers);
 
             if (CheckSurrenderFailure(maxPlayers))
             {
@@ -250,6 +262,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (s_timerRemaining <= 0f)
             {
+                if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient() && !s_timerSyncedFromHost)
+                {
+                    return;
+                }
                 HandleTimeout();
             }
         }
@@ -257,13 +273,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static void StartTimer(int maxPlayers)
         {
             s_active = true;
-            s_timerRemaining = GetInitialTimerSeconds(maxPlayers);
+            if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
+            {
+                s_timerRemaining = Mathf.Max(30f, GetConfiguredSeconds());
+                s_timerSyncedFromHost = false;
+            }
+            else
+            {
+                s_timerRemaining = GetInitialTimerSeconds(maxPlayers);
+                s_timerSyncedFromHost = true;
+            }
+            s_lastTimerSecondAudioPlayed = -1;
+            s_lastTimerWarningAudioPlayed = -1;
+            s_lastNetworkTimerBroadcastSecond = -1;
             s_currencyCaptured = false;
             s_indicatorNoneLoggedThisCycle = false;
             CaptureBaseCurrency();
             LastChanceSurrenderNetwork.EnsureCreated();
             LastChanceTimerUI.Show(SurrenderHintPrompt);
             s_jumpDistanceLogged = false;
+            BroadcastTimerStateIfHost(force: true);
 
             if (FeatureFlags.DebugLogging)
             {
@@ -279,6 +308,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static void UpdateTimer()
         {
             s_timerRemaining = Mathf.Max(0f, s_timerRemaining - Time.deltaTime);
+            BroadcastTimerStateIfHost(force: false);
+            TryPlayLastChanceTimerWarnings();
+            TryPlayLastChanceTimerSecondTick();
             LastChanceTimerUI.UpdateText(FormatTimerText(s_timerRemaining));
         }
 
@@ -296,6 +328,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             LastChanceTimerUI.Hide();
             s_active = false;
+            s_timerSyncedFromHost = false;
+            StopTimerSecondAudio();
+            BroadcastTimerStateIfHost(force: true);
 
             if (!SemiFunc.IsMasterClientOrSingleplayer())
             {
@@ -350,10 +385,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_active = false;
             s_currencyCaptured = false;
             s_timerRemaining = 0f;
+            s_timerSyncedFromHost = false;
+            StopTimerSecondAudio();
             LastChanceTimerUI.Hide();
             AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
             LastChanceSpectateHelper.ResetForceState();
             LastChanceSaveDeleteState.ResetAutoDeleteBlock();
+            BroadcastTimerStateIfHost(force: true);
         }
 
         private static bool HasRuntimeStateToReset()
@@ -536,6 +574,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             LastChanceTimerUI.Hide();
             s_timerRemaining = 0f;
             s_active = false;
+            s_timerSyncedFromHost = false;
+            StopTimerSecondAudio();
+            BroadcastTimerStateIfHost(force: true);
 
             LastChanceSaveDeleteState.AllowAutoDelete();
             AllPlayersDeadGuard.AllowVanillaAllPlayersDead();
@@ -553,6 +594,46 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             runMgr.ChangeLevel(false, true, RunManager.ChangeLevelType.Normal);
+        }
+
+        internal static void ApplyNetworkTimerState(bool active, float secondsRemaining)
+        {
+            if (!SemiFunc.IsMultiplayer() || SemiFunc.IsMasterClient())
+            {
+                return;
+            }
+
+            s_active = active;
+            s_timerSyncedFromHost = active;
+            s_timerRemaining = Mathf.Max(0f, secondsRemaining);
+            s_lastNetworkTimerBroadcastSecond = Mathf.CeilToInt(s_timerRemaining);
+
+            if (active)
+            {
+                LastChanceTimerUI.Show(SurrenderHintPrompt);
+                LastChanceTimerUI.UpdateText(FormatTimerText(s_timerRemaining));
+                return;
+            }
+
+            LastChanceTimerUI.Hide();
+            StopTimerSecondAudio();
+        }
+
+        private static void BroadcastTimerStateIfHost(bool force)
+        {
+            if (!SemiFunc.IsMultiplayer() || !SemiFunc.IsMasterClient())
+            {
+                return;
+            }
+
+            var wholeSeconds = Mathf.CeilToInt(s_timerRemaining);
+            if (!force && wholeSeconds == s_lastNetworkTimerBroadcastSecond)
+            {
+                return;
+            }
+
+            s_lastNetworkTimerBroadcastSecond = wholeSeconds;
+            LastChanceSurrenderNetwork.NotifyTimerState(s_active, s_timerRemaining);
         }
 
         private static void UpdateSurrenderInput(bool allDead)
@@ -686,13 +767,208 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             RegisterSurrenderedActor(actorNumber, false);
         }
 
+        private static void UpdatePlayersStatusUi(int maxPlayers)
+        {
+            if (!s_active)
+            {
+                return;
+            }
+
+            var snapshots = PlayerStateExtractionHelper.GetPlayersStateSnapshot();
+            var required = GetLastChanceNeededPlayers(maxPlayers);
+            LastChanceTimerUI.UpdatePlayerStates(snapshots, required);
+        }
+
+        internal static bool IsPlayerSurrenderedForData(PlayerAvatar? player)
+        {
+            return player != null && IsPlayerSurrendered(player);
+        }
+
         private static void ClearSurrenderState()
         {
             LastChanceSurrenderedPlayers.Clear();
             s_surrenderHoldTimer = 0f;
             s_localSurrendered = false;
+            StopTimerSecondAudio();
             LastChanceTimerUI.ResetSurrenderHint();
             ClearIndicatorsState();
+        }
+
+        private static void TryPlayLastChanceTimerSecondTick()
+        {
+            if (!s_active)
+                return;
+
+            var wholeSeconds = Mathf.CeilToInt(s_timerRemaining);
+            if (wholeSeconds > 10 || wholeSeconds <= 0)
+                return;
+            if (wholeSeconds == s_lastTimerSecondAudioPlayed)
+                return;
+
+            if (!TryEnsureTimerSecondAudioReady())
+                return;
+            if (s_timerSecondAudioSource == null || s_timerSecondAudioClip == null)
+                return;
+
+            s_timerSecondAudioSource.PlayOneShot(s_timerSecondAudioClip);
+            s_lastTimerSecondAudioPlayed = wholeSeconds;
+        }
+
+        private static void TryPlayLastChanceTimerWarnings()
+        {
+            if (!s_active)
+            {
+                return;
+            }
+
+            var wholeSeconds = Mathf.CeilToInt(s_timerRemaining);
+            var shouldPlay = wholeSeconds == 60 || wholeSeconds == 30;
+            if (!shouldPlay || wholeSeconds == s_lastTimerWarningAudioPlayed)
+            {
+                return;
+            }
+
+            if (!TryEnsureTimerWarningAudioReady())
+            {
+                return;
+            }
+
+            if (s_timerWarningAudioSource == null || s_timerWarningAudioClip == null)
+            {
+                return;
+            }
+
+            // 1:00 at normal speed, 0:30 at +50% speed.
+            s_timerWarningAudioSource.pitch = wholeSeconds == 30 ? 1.5f : 1f;
+            s_timerWarningAudioSource.PlayOneShot(s_timerWarningAudioClip);
+            s_lastTimerWarningAudioPlayed = wholeSeconds;
+        }
+
+        private static bool TryEnsureTimerSecondAudioReady()
+        {
+            if (s_timerSecondAudioClip == null && !s_timerSecondAudioLoadAttempted)
+            {
+                s_timerSecondAudioLoadAttempted = true;
+                if (!AudioAssetLoader.TryLoadAudioClip(
+                        TimerSecondAudioFileName,
+                        AudioAssetLoader.GetDefaultAssetsDirectory(),
+                        out var clip,
+                        out var resolvedPath) || clip == null)
+                {
+                    if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.TimerSecond.LoadFail", 30))
+                    {
+                        var baseDir = AudioAssetLoader.GetDefaultAssetsDirectory();
+                        Debug.LogWarning($"[LastChance] Failed to load timer tick audio. file={TimerSecondAudioFileName} baseDir={baseDir}");
+                    }
+
+                    return false;
+                }
+
+                s_timerSecondAudioClip = clip;
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.TimerSecond.Loaded", 30))
+                {
+                    Debug.Log($"[LastChance] Loaded timer tick audio from: {resolvedPath}");
+                }
+            }
+
+            if (s_timerSecondAudioClip == null)
+                return false;
+
+            if (s_timerSecondAudioSource == null)
+            {
+                var go = new GameObject("DHHFix.LastChanceTimerSecondAudio");
+                UnityEngine.Object.DontDestroyOnLoad(go);
+                var src = go.AddComponent<AudioSource>();
+                src.playOnAwake = false;
+                src.loop = false;
+                src.spatialBlend = 0f;
+                src.volume = 1f;
+                s_timerSecondAudioSource = src;
+            }
+
+            return s_timerSecondAudioSource != null;
+        }
+
+        private static bool TryEnsureTimerWarningAudioReady()
+        {
+            if (s_timerWarningAudioClip == null && !s_timerWarningAudioLoadAttempted)
+            {
+                s_timerWarningAudioLoadAttempted = true;
+                if (!TryLoadTimerWarningClip(out var clip, out var resolvedPath) || clip == null)
+                {
+                    if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.TimerWarning.LoadFail", 30))
+                    {
+                        var baseDir = AudioAssetLoader.GetDefaultAssetsDirectory();
+                        Debug.LogWarning(
+                            $"[LastChance] Failed to load timer warning audio. files={TimerWarningAudioPrimaryFileName},{TimerWarningAudioFallbackFileName} baseDir={baseDir}");
+                    }
+
+                    return false;
+                }
+
+                s_timerWarningAudioClip = clip;
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.TimerWarning.Loaded", 30))
+                {
+                    Debug.Log($"[LastChance] Loaded timer warning audio from: {resolvedPath}");
+                }
+            }
+
+            if (s_timerWarningAudioClip == null)
+            {
+                return false;
+            }
+
+            if (s_timerWarningAudioSource == null)
+            {
+                var go = new GameObject("DHHFix.LastChanceTimerWarningAudio");
+                UnityEngine.Object.DontDestroyOnLoad(go);
+                var src = go.AddComponent<AudioSource>();
+                src.playOnAwake = false;
+                src.loop = false;
+                src.spatialBlend = 0f;
+                src.volume = 1f;
+                src.pitch = 1f;
+                s_timerWarningAudioSource = src;
+            }
+
+            return s_timerWarningAudioSource != null;
+        }
+
+        private static bool TryLoadTimerWarningClip(out AudioClip? clip, out string resolvedPath)
+        {
+            clip = null;
+            resolvedPath = string.Empty;
+
+            if (AudioAssetLoader.TryLoadAudioClip(
+                TimerWarningAudioPrimaryFileName,
+                AudioAssetLoader.GetDefaultAssetsDirectory(),
+                out clip,
+                out resolvedPath))
+            {
+                return true;
+            }
+
+            return AudioAssetLoader.TryLoadAudioClip(
+                TimerWarningAudioFallbackFileName,
+                AudioAssetLoader.GetDefaultAssetsDirectory(),
+                out clip,
+                out resolvedPath);
+        }
+
+        private static void StopTimerSecondAudio()
+        {
+            s_lastTimerSecondAudioPlayed = -1;
+            if (s_timerSecondAudioSource != null)
+            {
+                s_timerSecondAudioSource.Stop();
+            }
+
+            s_lastTimerWarningAudioPlayed = -1;
+            if (s_timerWarningAudioSource != null)
+            {
+                s_timerWarningAudioSource.Stop();
+                s_timerWarningAudioSource.pitch = 1f;
+            }
         }
 
         private static void UpdateIndicators(int maxPlayers, bool allDead)
@@ -724,7 +1000,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             var directionEnabled = mode == LastChanceIndicatorMode.Direction;
-            UpdateSingleIndicator(IndicatorKind.Direction, directionEnabled, InputKey.Interact, maxPlayers);
+            UpdateSingleIndicator(IndicatorKind.Direction, directionEnabled, InputKey.Inventory2, maxPlayers);
             AbilityModule.RefreshDirectionSlotVisuals();
         }
 
@@ -826,6 +1102,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void ApplyIndicatorPenalty(IndicatorKind kind, int maxPlayers)
         {
+            if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
+            {
+                return;
+            }
+
             var penalty = CalculateIndicatorPenaltySeconds(maxPlayers);
             if (penalty <= 0f)
             {
@@ -833,6 +1114,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             s_timerRemaining = Mathf.Max(0f, s_timerRemaining - penalty);
+            BroadcastTimerStateIfHost(force: true);
             LastChanceTimerUI.UpdateText(FormatTimerText(s_timerRemaining));
         }
 
@@ -851,8 +1133,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static float EstimateDifficulty01(DynamicTimerInputs inputs)
         {
             var levelFactor = Mathf.Clamp01((inputs.LevelNumber - 1f) / 20f);
-            var distanceFactor = Mathf.Clamp01(inputs.FarthestDistanceMeters / 180f);
-            var roomFactor = Mathf.Clamp01(inputs.LongestShortestRoomPath / 14f);
+            var distanceFactor = Mathf.Clamp01(inputs.TotalDistanceMeters / 300f);
+            var roomFactor = Mathf.Clamp01(inputs.TotalShortestRoomPathSteps / 28f);
             var altitudeFactor = Mathf.Clamp01(inputs.TotalBelowTruckMeters / 25f);
             var monsterFactor = Mathf.Clamp01(inputs.AliveSearchMonsters / 10f);
             var weighted = levelFactor * 0.2f + distanceFactor * 0.35f + roomFactor * 0.2f + altitudeFactor * 0.1f + monsterFactor * 0.15f;
@@ -1477,19 +1759,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var inputs = CollectDynamicTimerInputs(maxPlayers);
             CacheDynamicTimerInputs(inputs);
             var rawAddedSeconds = CalculateRawAddedSeconds(inputs);
-            var levelCurveMultiplier = GetLevelCurveMultiplier(inputs.LevelNumber);
-            var levelScaledAddedSeconds = rawAddedSeconds * levelCurveMultiplier;
-            var reducedAddedSeconds = ApplyDiminishing(levelScaledAddedSeconds);
-            var finalSeconds = Mathf.Clamp(baseSeconds + reducedAddedSeconds, 30f, maxSeconds);
+            var growthCapSeconds = GetLevelGrowthCapSeconds(baseSeconds, maxSeconds, inputs.LevelNumber);
+            var finalSeconds = Mathf.Clamp(baseSeconds + rawAddedSeconds, 30f, growthCapSeconds);
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.DynamicTimer", 30))
             {
                 Debug.Log(
                     $"[LastChance] DynamicTimer: base={baseSeconds:F1}s level={inputs.LevelNumber} required={inputs.RequiredPlayers} " +
-                    $"farthest={inputs.FarthestDistanceMeters:F1}m belowPlayers={inputs.PlayersBelowTruckThreshold} belowMeters={inputs.TotalBelowTruckMeters:F2} " +
-                    $"aliveMonsters={inputs.AliveSearchMonsters} monstersAdd={inputs.MonstersAddedSeconds:F1}s " +
-                    $"maxRoomPath={inputs.LongestShortestRoomPath} rawAdd={rawAddedSeconds:F1}s levelCurve={levelCurveMultiplier:F3} " +
-                    $"scaledAdd={levelScaledAddedSeconds:F1}s reducedAdd={reducedAddedSeconds:F1}s final={finalSeconds:F1}s cap={maxSeconds:F1}s");
+                    $"totalDistance={inputs.TotalDistanceMeters:F1}m belowPlayers={inputs.PlayersBelowTruckThreshold} belowMeters={inputs.TotalBelowTruckMeters:F2} " +
+                    $"aliveMonsters={inputs.AliveSearchMonsters} totalRoomSteps={inputs.TotalShortestRoomPathSteps} rawAdd={rawAddedSeconds:F1}s " +
+                    $"levelCap={growthCapSeconds:F1}s final={finalSeconds:F1}s hardCap={maxSeconds:F1}s");
             }
 
             return finalSeconds;
@@ -1530,7 +1809,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var requiredPlayers = Mathf.Max(1, GetLastChanceNeededPlayers(maxPlayers));
             var levelNumber = GetCurrentLevelNumber();
             var aliveSearchMonsters = LastChanceMonstersSearchModule.GetAliveSearchMonsterCount();
-            var monstersAddedSeconds = CalculateMonsterAddedSeconds(aliveSearchMonsters);
             var records = PlayerTruckDistanceHelper.GetDistancesFromTruck();
             if (records.Length == 0)
             {
@@ -1541,28 +1819,27 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                     0f,
                     0,
                     0f,
-                    monstersAddedSeconds,
                     0);
             }
 
             var selected = SelectRequiredPlayers(records, requiredPlayers);
             var belowThreshold = Mathf.Min(0f, FeatureFlags.LastChanceBelowTruckThresholdMeters);
-            var farthestDistanceMeters = 0f;
+            var totalDistanceMeters = 0f;
             var playersBelowTruckThreshold = 0;
             var totalBelowTruckMeters = 0f;
-            var longestShortestRoomPath = 0;
+            var totalShortestRoomPathSteps = 0;
 
             for (var i = 0; i < selected.Count; i++)
             {
                 var record = selected[i];
                 if (record.HasValidPath && record.NavMeshDistance >= 0f)
                 {
-                    farthestDistanceMeters = Mathf.Max(farthestDistanceMeters, record.NavMeshDistance);
+                    totalDistanceMeters += record.NavMeshDistance;
                 }
 
                 if (record.ShortestRoomPathToTruck >= 0)
                 {
-                    longestShortestRoomPath = Mathf.Max(longestShortestRoomPath, record.ShortestRoomPathToTruck);
+                    totalShortestRoomPathSteps += record.ShortestRoomPathToTruck;
                 }
 
                 if (record.HeightDelta <= belowThreshold)
@@ -1576,11 +1853,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 requiredPlayers,
                 levelNumber,
                 aliveSearchMonsters,
-                farthestDistanceMeters,
+                totalDistanceMeters,
                 playersBelowTruckThreshold,
                 totalBelowTruckMeters,
-                monstersAddedSeconds,
-                longestShortestRoomPath);
+                totalShortestRoomPathSteps);
         }
 
         private static List<PlayerTruckDistanceHelper.PlayerTruckDistance> SelectRequiredPlayers(
@@ -1593,11 +1869,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 sorted.Add(records[i]);
             }
 
-            sorted.Sort((left, right) => ScoreTimerDifficulty(left).CompareTo(ScoreTimerDifficulty(right)));
-            if (FeatureFlags.LastChanceTimerUseHardestRequiredPlayers)
-            {
-                sorted.Reverse();
-            }
+            sorted.Sort((left, right) => ScoreTimerDifficulty(right).CompareTo(ScoreTimerDifficulty(left)));
             var take = Mathf.Clamp(requiredPlayers, 1, sorted.Count);
             if (take >= sorted.Count)
             {
@@ -1650,70 +1922,45 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         {
             var added = 0f;
             added += inputs.RequiredPlayers * FeatureFlags.LastChanceTimerPerRequiredPlayerSeconds;
-            added += inputs.LevelNumber * FeatureFlags.LastChanceTimerPerLevelSeconds;
-            added += inputs.FarthestDistanceMeters * FeatureFlags.LastChanceTimerPerFarthestMeterSeconds;
+            added += inputs.TotalDistanceMeters * FeatureFlags.LastChanceTimerPerFarthestMeterSeconds;
             added += inputs.PlayersBelowTruckThreshold * FeatureFlags.LastChanceTimerPerBelowTruckPlayerSeconds;
             added += inputs.TotalBelowTruckMeters * FeatureFlags.LastChanceTimerPerBelowTruckMeterSeconds;
-            added += inputs.LongestShortestRoomPath * FeatureFlags.LastChanceTimerPerRoomStepSeconds;
-            added += inputs.MonstersAddedSeconds;
+            added += inputs.TotalShortestRoomPathSteps * FeatureFlags.LastChanceTimerPerRoomStepSeconds;
+            var monsterSeconds = inputs.AliveSearchMonsters * Mathf.Max(0f, FeatureFlags.LastChanceTimerPerMonsterSeconds);
+            if (FeatureFlags.LastChanceMonstersSearchEnabled)
+            {
+                // MonstersSearch ON makes disabled players valid targets: add extra pressure on timer.
+                monsterSeconds *= 1.5f;
+            }
+            added += monsterSeconds;
+            added *= CalculateLevelContributionMultiplier(inputs);
             return Mathf.Max(0f, added);
         }
 
-        private static float CalculateMonsterAddedSeconds(int aliveSearchMonsters)
+        private static float CalculateLevelContributionMultiplier(DynamicTimerInputs inputs)
         {
-            if (!FeatureFlags.LastChanceMonstersSearchEnabled || aliveSearchMonsters <= 0)
-            {
-                return 0f;
-            }
+            var perLevelPercent = Mathf.Max(0f, FeatureFlags.LastChanceTimerPerLevelSeconds) * 0.01f;
+            var levelMultiplier = 1f + (Mathf.Max(1, inputs.LevelNumber) - 1f) * perLevelPercent;
+            var roomBase = Mathf.Max(1f, inputs.RequiredPlayers * 14f);
+            var roomFactor = Mathf.Clamp01(inputs.TotalShortestRoomPathSteps / roomBase);
+            var monsterFactor = Mathf.Clamp01(inputs.AliveSearchMonsters / 10f);
+            var roomWeight = Mathf.Max(0f, FeatureFlags.LastChanceLevelContextRoomWeight);
+            var monsterWeight = Mathf.Max(0f, FeatureFlags.LastChanceLevelContextMonsterWeight);
+            var contextMultiplier = 1f + (roomFactor * roomWeight) + (monsterFactor * monsterWeight);
 
-            var raw = aliveSearchMonsters * Mathf.Max(0f, FeatureFlags.LastChanceTimerPerMonsterSeconds);
-            var start = Mathf.Max(0f, FeatureFlags.LastChanceTimerMonsterDiminishStart);
-            var range = Mathf.Max(1f, FeatureFlags.LastChanceTimerMonsterDiminishRange);
-            var reduction = Mathf.Clamp01(FeatureFlags.LastChanceTimerMonsterDiminishReduction);
-            return ApplyDiminishing(raw, start, range, reduction);
+            return Mathf.Max(1f, levelMultiplier * contextMultiplier);
         }
 
-        private static float ApplyDiminishing(float rawAddedSeconds)
+        private static float GetLevelGrowthCapSeconds(float baseSeconds, float maxSeconds, int levelNumber)
         {
-            var start = Mathf.Max(0f, FeatureFlags.LastChanceDynamicDiminishStartSeconds);
-            var range = Mathf.Max(1f, FeatureFlags.LastChanceDynamicDiminishRangeSeconds);
-            var reduction = Mathf.Clamp01(FeatureFlags.LastChanceDynamicDiminishReduction);
-            return ApplyDiminishing(rawAddedSeconds, start, range, reduction);
-        }
-
-        private static float ApplyDiminishing(float rawAddedSeconds, float start, float range, float reduction)
-        {
-            if (rawAddedSeconds <= 0f)
+            if (maxSeconds <= baseSeconds)
             {
-                return 0f;
+                return baseSeconds;
             }
 
-            if (rawAddedSeconds <= start || reduction <= 0f)
-            {
-                return rawAddedSeconds;
-            }
-
-            var overflow = rawAddedSeconds - start;
-            var compressedOverflow = (overflow * range) / (overflow + range);
-            var reducedOverflow = Mathf.Lerp(overflow, compressedOverflow, reduction);
-            return start + reducedOverflow;
-        }
-
-        private static float GetLevelCurveMultiplier(int levelNumber)
-        {
-            if (!FeatureFlags.LastChanceLevelCurveEnabled)
-            {
-                return 1f;
-            }
-
-            var minMultiplier = Mathf.Clamp(FeatureFlags.LastChanceLevelCurveMinMultiplier, 0.01f, 1f);
-            var maxMultiplier = Mathf.Clamp(FeatureFlags.LastChanceLevelCurveMaxMultiplier, minMultiplier, 3f);
-            var exponent = Mathf.Clamp(FeatureFlags.LastChanceLevelCurveExponent, 0.1f, 5f);
-            var fullGrowthLevel = Mathf.Max(2, FeatureFlags.LastChanceLevelCurveFullGrowthLevel);
-
-            var normalized = Mathf.Clamp01((Mathf.Max(1, levelNumber) - 1f) / (fullGrowthLevel - 1f));
-            var curved = Mathf.Pow(normalized, exponent);
-            return Mathf.Lerp(minMultiplier, maxMultiplier, curved);
+            var maxAtLevel = Mathf.Max(2, FeatureFlags.LastChanceDynamicMaxMinutesAtLevel);
+            var normalized = Mathf.Clamp01((Mathf.Max(1, levelNumber) - 1f) / (maxAtLevel - 1f));
+            return Mathf.Lerp(baseSeconds, maxSeconds, normalized);
         }
 
         private static string FormatTimerText(float secondsRemaining)

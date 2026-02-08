@@ -298,7 +298,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                     {
                         if (it is UnityEngine.Object uo)
                         {
-                            var itemKey = ItemHelpers.GetItemAssetName(uo) ?? uo.name;
+                            // Keep original DHH behavior strict: match only by itemAssetName, not display/object name.
+                            var itemKey = TryGetStrictItemAssetName(uo);
                             if (!string.IsNullOrWhiteSpace(itemKey) && ShopItemsDictContains(shopItemsDict, itemKey))
                             {
                                 dhhPotential.Add(it);
@@ -565,6 +566,27 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 return true;
             var normalized = NormalizePrefabKey(key);
             return dict.Contains(normalized);
+        }
+
+        private static string? TryGetStrictItemAssetName(UnityEngine.Object itemObj)
+        {
+            try
+            {
+                var type = itemObj.GetType();
+                var prop = type.GetProperty("itemAssetName", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (prop != null && prop.PropertyType == typeof(string))
+                    return (string?)prop.GetValue(itemObj, null);
+
+                var field = type.GetField("itemAssetName", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (field != null && field.FieldType == typeof(string))
+                    return (string?)field.GetValue(itemObj);
+            }
+            catch
+            {
+                // ignore
+            }
+
+            return null;
         }
 
         private static void TryRegisterItemWithRepolib(UnityEngine.Object itemObj)

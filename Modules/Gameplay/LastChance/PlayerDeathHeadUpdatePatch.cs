@@ -89,16 +89,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             ___physGrabObject.GrabStarted(grabber);
             ___physGrabObject.GrabEnded(grabber);
 
-            if (FeatureFlags.BatteryJumpEnabled && !DHHBatteryHelper.HasRecentJumpConsumption())
-            {
-                var spectate = SpectateCamera.instance;
-                if (spectate != null)
-                {
-                    var consumption = DHHBatteryHelper.GetEffectiveBatteryJumpUsage();
-                    var reference = DHHBatteryHelper.GetJumpThreshold();
-                    DHHBatteryHelper.ApplyConsumption(spectate, consumption, reference);
-                }
-            }
+            // Battery consumption is centralized in BatteryJumpModule (head jump event listener).
+            // Keep this patch responsible only for LastChance jump movement/allowance.
         }
     }
 }

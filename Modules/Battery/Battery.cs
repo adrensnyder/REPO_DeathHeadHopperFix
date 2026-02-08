@@ -24,6 +24,9 @@ namespace DeathHeadHopperFix.Modules.Battery
             ?.GetField("m_HeadJumpEvent", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private static readonly Type? s_eyeHandlerType = AccessTools.TypeByName("DeathHeadHopper.DeathHead.Handlers.EyeHandler");
         private static readonly FieldInfo? s_eyeNegativeConditionsField = s_eyeHandlerType?.GetField("eyeNegativeConditions", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static readonly FieldInfo? s_controllerDeathHeadField = AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController")
+            ?.GetField("deathHead", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static readonly FieldInfo? s_playerDeathHeadAvatarField = AccessTools.Field(typeof(PlayerDeathHead), "playerAvatar");
 
         private object? _controllerInstance;
         private UnityEvent? _jumpEvent;
@@ -42,6 +45,7 @@ namespace DeathHeadHopperFix.Modules.Battery
         private bool _overrideSpectatedCleared;
         private float _energyWarningAccumulator;
         private bool _inactiveStateApplied;
+        private PlayerAvatar? _ownerAvatar;
 
         private void Awake()
         {
@@ -86,7 +90,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
 
             _photonView = GetComponent<PhotonView>();
-            _isOwner = _photonView == null || _photonView.IsMine;
+            _isOwner = IsLocallyOwned();
 
             SetupEyeWarningCondition();
         }
@@ -103,6 +107,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private void Update()
         {
+            _isOwner = IsLocallyOwned();
             if (!_isOwner)
                 return;
 
@@ -291,6 +296,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private void OnHeadJump()
         {
+            _isOwner = IsLocallyOwned();
             if (!_isOwner)
                 return;
 
@@ -321,6 +327,38 @@ namespace DeathHeadHopperFix.Modules.Battery
                 if (!LogLimiter.ShouldLog("DHHBattery.JumpConsumed", 120))
                     return;
             }
+        }
+
+        private bool IsLocallyOwned()
+        {
+            if (!SemiFunc.IsMultiplayer())
+                return true;
+
+            if (_photonView != null)
+                return _photonView.IsMine;
+
+            var avatar = ResolveOwnerAvatar();
+            if (avatar?.photonView != null)
+                return avatar.photonView.IsMine;
+
+            return false;
+        }
+
+        private PlayerAvatar? ResolveOwnerAvatar()
+        {
+            if (_ownerAvatar != null)
+                return _ownerAvatar;
+
+            var controller = _controllerInstance;
+            if (controller == null || s_controllerDeathHeadField == null || s_playerDeathHeadAvatarField == null)
+                return null;
+
+            var deathHead = s_controllerDeathHeadField.GetValue(controller);
+            if (deathHead == null)
+                return null;
+
+            _ownerAvatar = s_playerDeathHeadAvatarField.GetValue(deathHead) as PlayerAvatar;
+            return _ownerAvatar;
         }
 
         internal void NotifyJumpBlocked(float currentEnergy, float reference, bool? readyFlag)
