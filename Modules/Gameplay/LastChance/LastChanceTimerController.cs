@@ -210,7 +210,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return 0f;
             }
 
-            return CalculateIndicatorPenaltySeconds(maxPlayers);
+            return CalculateIndicatorPenaltySeconds();
         }
 
         internal static void OnLevelLoaded()
@@ -1399,7 +1399,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void ApplyIndicatorPenaltyHost(int maxPlayers)
         {
-            var penalty = CalculateIndicatorPenaltySeconds(maxPlayers);
+            var penalty = CalculateIndicatorPenaltySeconds();
             if (penalty <= 0f)
             {
                 return;
@@ -1410,9 +1410,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             LastChanceTimerUI.UpdateText(FormatTimerText(s_timerRemaining));
         }
 
-        private static float CalculateIndicatorPenaltySeconds(int maxPlayers)
+        private static float CalculateIndicatorPenaltySeconds()
         {
-            _ = maxPlayers;
             var maxPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyMaxSeconds);
             var minPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyMinSeconds);
             if (minPenalty > maxPenalty)

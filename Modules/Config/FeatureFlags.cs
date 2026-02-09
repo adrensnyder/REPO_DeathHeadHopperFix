@@ -50,7 +50,6 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceTimerSeconds = "LastChance timer duration in seconds (integer, 30s steps).";
             public const string LastChanceDynamicTimerEnabled = "Enable dynamic LastChance timer scaling from base timer and run context metrics.";
             public const string LastChanceTimerPerRequiredPlayerSeconds = "Extra seconds added per required player that must reach the truck.";
-            public const string LastChanceTimerPerLevelSeconds = "Percent growth per level for the timer dynamic multiplier (5 = +5% each level, capped by MaxMinutesAtLevel).";
             public const string LastChanceLevelContextRoomWeight = "Extra multiplier weight applied to level contribution from room-path difficulty (0 disables room context).";
             public const string LastChanceLevelContextMonsterWeight = "Extra multiplier weight applied to level contribution from active search monsters (0 disables monster context).";
             public const string LastChanceTimerPerFarthestMeterSeconds = "Extra seconds added per meter of total required-player distance to truck.";
@@ -183,9 +182,6 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChanceTimer, Descriptions.LastChanceTimerPerRequiredPlayerSeconds, Min = 0f, Max = 120f)]
         public static float LastChanceTimerPerRequiredPlayerSeconds = 8f;
-
-        [FeatureConfigEntry(Sections.LastChanceTimer, Descriptions.LastChanceTimerPerLevelSeconds, Min = 0f, Max = 60f)]
-        public static float LastChanceTimerPerLevelSeconds = 2f;
 
         [FeatureConfigEntry(Sections.LastChanceTimer, Descriptions.LastChanceLevelContextRoomWeight, Min = 0f, Max = 3f)]
         public static float LastChanceLevelContextRoomWeight = 0.5f;
