@@ -11,12 +11,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     {
         private static bool s_blockAutoDelete = true;
 
-        internal static bool BlockAutoDelete
-        {
-            get => s_blockAutoDelete;
-            set => s_blockAutoDelete = value;
-        }
-
         internal static bool ShouldBlockAutoDelete()
         {
             if (!FeatureFlags.LastChangeMode || !LastChanceTimerController.IsActive)
@@ -47,7 +41,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     [HarmonyPatch(typeof(StatsManager), "SaveFileDelete")]
     internal static class StatsManagerSaveFileDeleteLastChancePatch
     {
-        private const string LogKey = "LastChance.SaveDelete.Blocked";
         [ThreadStatic]
         private static bool s_allowManualDelete;
 
@@ -69,7 +62,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return true;
             }
 
-            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog(LogKey, 120))
+            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.SaveDelete.Blocked", 120))
             {
                 UnityEngine.Debug.Log($"[LastChance] Blocked auto delete '{saveFileName}'.");
             }

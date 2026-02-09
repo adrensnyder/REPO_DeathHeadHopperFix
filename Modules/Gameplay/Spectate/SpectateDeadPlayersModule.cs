@@ -59,6 +59,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         [HarmonyPrefix]
         private static bool PlayerSwitchPrefix(SpectateCamera __instance, bool _next)
         {
+            if (ShouldBlockPlayerSwitchForLastChance())
+            {
+                return false;
+            }
+
             if (__instance == null)
             {
                 return true;
@@ -201,10 +206,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
         [HarmonyPatch(typeof(SpectateCamera), "StateNormal")]
         [HarmonyPostfix]
-        private static void StateNormalPostfix()
+        private static void StateNormalPostfix(SpectateCamera __instance)
         {
             if (s_playerAvatarSpectatePointField == null || s_stateNormalPatchedPlayer == null)
             {
+                HandleLastChanceStateNormalPostfix(__instance);
                 return;
             }
 
@@ -215,6 +221,31 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
             s_stateNormalPatchedPlayer = null;
             s_stateNormalOriginalSpectatePoint = null;
+            HandleLastChanceStateNormalPostfix(__instance);
+        }
+
+        [HarmonyPatch(typeof(SpectateCamera), "UpdateState")]
+        [HarmonyPrefix]
+        private static bool UpdateStatePrefix(SpectateCamera __instance, SpectateCamera.State _state)
+        {
+            if (!FeatureFlags.LastChangeMode || __instance == null)
+            {
+                return true;
+            }
+
+            if (_state != SpectateCamera.State.Head)
+            {
+                return true;
+            }
+
+            // During LastChance keep vanilla Head state disabled, even if disabled flags flicker.
+            if (LastChance.LastChanceTimerController.IsActive)
+            {
+                return false;
+            }
+
+            // Fallback: if all players are disabled outside active timer setup, keep old behavior.
+            return !LastChance.LastChanceSpectateHelper.AllPlayersDisabled();
         }
 
         private static bool ShouldSkipSpectateTarget(PlayerAvatar player)
@@ -418,6 +449,62 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
             s_stateNormalOrbitProxy = go.transform;
             return s_stateNormalOrbitProxy;
+        }
+
+        private static void HandleLastChanceStateNormalPostfix(SpectateCamera __instance)
+        {
+            if (!FeatureFlags.LastChangeMode)
+            {
+                return;
+            }
+
+            if (!LastChance.LastChanceTimerController.IsActive)
+            {
+                LastChance.LastChanceSpectateHelper.ResetForceState();
+                return;
+            }
+
+            if (!LastChance.LastChanceSpectateHelper.AllPlayersDisabled())
+            {
+                LastChance.LastChanceSpectateHelper.ResetForceState();
+                return;
+            }
+
+            if (LastChance.LastChanceSpectateHelper.ShouldForceLocalDeathHeadSpectate())
+            {
+                if (__instance != null)
+                {
+                    LastChance.LastChanceSpectateHelper.EnsureSpectatePlayerLocal(__instance);
+                }
+                LastChance.LastChanceSpectateHelper.ForceDeathHeadSpectateIfPossible();
+            }
+
+            LastChance.LastChanceSpectateHelper.DebugLogState(__instance);
+        }
+
+        private static bool ShouldBlockPlayerSwitchForLastChance()
+        {
+            if (!FeatureFlags.LastChangeMode)
+            {
+                return false;
+            }
+
+            if (LastChance.LastChanceSpectateHelper.IsManualSwitchInputDown())
+            {
+                return false;
+            }
+
+            if (!LastChance.LastChanceTimerController.IsActive)
+            {
+                return false;
+            }
+
+            if (!LastChance.LastChanceSpectateHelper.AllPlayersDisabled())
+            {
+                return false;
+            }
+
+            return true;
         }
     }
 }
