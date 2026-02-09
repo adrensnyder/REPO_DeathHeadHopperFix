@@ -31,6 +31,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string RechargeStaminaOnlyStationary = "When true, the death-head only recharges while standing still, matching vanilla stamina guard behavior.";
             public const string ChargeAbilityStaminaCost = "Charge ability custom stamina cost (always read). How much player stamina the vanilla Charge ability consumes when executed.";
             public const string ChargeAbilityCooldown = "Cooldown in seconds before Charge can be used again.";
+            public const string ChargeAbilityHoldSeconds = "Seconds to hold slot1 Charge to reach 100% power. Release before this value to launch at proportional power.";
             public const string DHHChargeStrengthBaseValue = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Default values mirror vanilla ChargeHandler.ResetState: DHHFunc.StatWithDiminishingReturns(baseStrength(12f), ChargeStrengthIncrease, AbilityLevel, 10, 0.75f). Base impact strength used to compute the Charge ability hit force.";
             public const string DHHChargeStrengthIncreasePerLevel = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Strength increase applied each ability level before diminishing returns.";
             public const string DHHChargeStrengthThresholdLevel = "Strength upgrade custom tunables (used only when DHHEnableCustomDHHValues is true). Ability level threshold where extra strength gain starts to shrink.";
@@ -110,6 +111,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.ChargeAbility, Descriptions.ChargeAbilityCooldown, Min = 1f, Max = 20f)]
         public static int ChargeAbilityCooldown = 6;
+
+        [FeatureConfigEntry(Sections.ChargeAbility, Descriptions.ChargeAbilityHoldSeconds, Min = 0.2f, Max = 5f)]
+        public static float ChargeAbilityHoldSeconds = 2f;
 
         [FeatureConfigEntry(Sections.ChargeVanilla, Descriptions.DHHChargeStrengthBaseValue, Min = 1f, Max = 100f)]
         public static int DHHChargeStrengthBaseValue = 12;

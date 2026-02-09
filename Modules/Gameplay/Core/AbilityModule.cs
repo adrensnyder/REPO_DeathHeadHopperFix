@@ -28,6 +28,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         private static float s_directionActivationProgress;
 
         private const int DirectionIndicatorSlotIndex = 1;
+        private const int ChargeAbilitySlotIndex = 0;
         private const string DirectionIconFileName = "Direction.png";
 
         internal static void ApplyAbilitySpotLabelOverlay(Harmony harmony, Assembly asm)
@@ -185,6 +186,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                     continue;
 
                 SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
+            }
+        }
+
+        internal static void SetChargeSlotActivationProgress(float progress01)
+        {
+            if (FeatureFlags.DisableAbilityPatches)
+                return;
+
+            if (s_trackedSpots.Count == 0)
+                return;
+
+            var clamped = Mathf.Clamp01(progress01);
+            foreach (var spot in s_trackedSpots)
+            {
+                if (!IsSpotUsable(spot))
+                    continue;
+                if (GetAbilityIndex(spot) != ChargeAbilitySlotIndex)
+                    continue;
+
+                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, clamped);
             }
         }
 

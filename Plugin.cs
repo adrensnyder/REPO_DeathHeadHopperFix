@@ -55,10 +55,27 @@ namespace DeathHeadHopperFix
         private static MethodInfo? s_chargeHandlerAbilityLevelGetter;
         private static FieldInfo? s_chargeHandlerImpactDetectorField;
         private static FieldInfo? s_chargeHandlerControllerField;
+        private static FieldInfo? s_chargeHandlerMaxBouncesField;
+        private static FieldInfo? s_chargeHandlerWindupTimerField;
+        private static FieldInfo? s_chargeHandlerWindupTimeField;
+        private static FieldInfo? s_chargeHandlerEnemiesHitField;
+        private static MethodInfo? s_chargeHandlerEndChargeMethod;
+        private static MethodInfo? s_chargeHandlerStateGetter;
         private static FieldInfo? s_deathHeadControllerAudioHandlerField;
         private static MethodInfo? s_audioHandlerStopWindupMethod;
         private static FieldInfo? s_impactDetectorPhysGrabObjectField;
         private static FieldInfo? s_cachedPhysGrabObjectGrabbedField;
+        private static MethodInfo? s_chargeAbilityOnAbilityUpPrefixMethod;
+        private static MethodInfo? s_stunHandlerStunDurationGetter;
+        private static FieldInfo? s_stunHandlerChargeHandlerField;
+        private static readonly Dictionary<int, ChargeHoldState> s_chargeHoldStates = new();
+
+        private sealed class ChargeHoldState
+        {
+            public float StartTime;
+            public bool IsHolding;
+            public float LaunchScale = 1f;
+        }
 
         private void Awake()
         {
@@ -163,6 +180,8 @@ namespace DeathHeadHopperFix
                 AbilityModule.ApplyAbilitySpotLabelOverlay(harmony, asm);
                 AbilityModule.ApplyAbilityManagerHooks(harmony, asm);
                 PatchChargeAbilityGettersIfPossible(harmony, asm);
+                PatchChargeAbilityHoldReleaseIfPossible(harmony, asm);
+                PatchStunHandlerHoldScalingIfPossible(harmony, asm);
 
                 _patched = true;
                 _log?.LogInfo("Patches applied successfully.");
@@ -471,8 +490,14 @@ namespace DeathHeadHopperFix
             var windupPrefix = typeof(Plugin).GetMethod(nameof(ChargeHandler_ChargeWindup_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
             if (mWindup != null && windupPrefix != null)
                 harmony.Patch(mWindup, prefix: new HarmonyMethod(windupPrefix));
+            var windupPostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_ChargeWindup_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mWindup != null && windupPostfix != null)
+                harmony.Patch(mWindup, postfix: new HarmonyMethod(windupPostfix));
 
             var mReset = AccessTools.Method(chargeHandlerType, "ResetState", Type.EmptyTypes);
+            var mFixedUpdate = AccessTools.Method(chargeHandlerType, "FixedUpdate", Type.EmptyTypes);
+            var mCancelCharge = AccessTools.Method(chargeHandlerType, "CancelCharge", Type.EmptyTypes);
+            var mEnemyHit = AccessTools.Method(chargeHandlerType, "EnemyHit");
             if (s_chargeHandlerChargeStrengthField == null)
             {
                 s_chargeHandlerChargeStrengthField = AccessTools.Field(chargeHandlerType, "chargeStrength");
@@ -485,6 +510,12 @@ namespace DeathHeadHopperFix
             {
                 s_chargeHandlerControllerField = AccessTools.Field(chargeHandlerType, "controller");
             }
+            s_chargeHandlerMaxBouncesField ??= AccessTools.Field(chargeHandlerType, "maxBounces");
+            s_chargeHandlerWindupTimerField ??= AccessTools.Field(chargeHandlerType, "windupTimer");
+            s_chargeHandlerWindupTimeField ??= AccessTools.Field(chargeHandlerType, "windupTime");
+            s_chargeHandlerEnemiesHitField ??= AccessTools.Field(chargeHandlerType, "enemiesHit");
+            s_chargeHandlerEndChargeMethod ??= AccessTools.Method(chargeHandlerType, "EndCharge", Type.EmptyTypes);
+            s_chargeHandlerStateGetter ??= AccessTools.PropertyGetter(chargeHandlerType, "State");
             var resetPostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_ResetState_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             if (mReset != null && resetPostfix != null)
                 harmony.Patch(mReset, postfix: new HarmonyMethod(resetPostfix));
@@ -492,6 +523,15 @@ namespace DeathHeadHopperFix
             var endChargePostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_EndCharge_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             if (mEndCharge != null && endChargePostfix != null)
                 harmony.Patch(mEndCharge, postfix: new HarmonyMethod(endChargePostfix));
+            var fixedUpdatePostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_FixedUpdate_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mFixedUpdate != null && fixedUpdatePostfix != null)
+                harmony.Patch(mFixedUpdate, postfix: new HarmonyMethod(fixedUpdatePostfix));
+            var cancelPostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_CancelCharge_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mCancelCharge != null && cancelPostfix != null)
+                harmony.Patch(mCancelCharge, postfix: new HarmonyMethod(cancelPostfix));
+            var enemyHitPrefix = typeof(Plugin).GetMethod(nameof(ChargeHandler_EnemyHit_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mEnemyHit != null && enemyHitPrefix != null)
+                harmony.Patch(mEnemyHit, prefix: new HarmonyMethod(enemyHitPrefix));
         }
 
         private static void PatchJumpHandlerJumpForceIfPossible(Harmony harmony, Assembly asm)
@@ -553,6 +593,185 @@ namespace DeathHeadHopperFix
             return true;
         }
 
+        private static void ChargeHandler_ChargeWindup_Postfix(object __instance)
+        {
+            if (__instance == null)
+                return;
+
+            if (!IsChargeState(__instance, "Windup"))
+                return;
+
+            var id = GetUnityObjectInstanceId(__instance);
+            if (id == 0)
+                return;
+
+            var state = GetOrCreateChargeHoldState(id);
+            state.StartTime = Time.time;
+            state.IsHolding = true;
+            state.LaunchScale = 1f;
+            AbilityModule.SetChargeSlotActivationProgress(0f);
+        }
+
+        private static void ChargeHandler_FixedUpdate_Postfix(object __instance)
+        {
+            if (__instance == null)
+                return;
+
+            var id = GetUnityObjectInstanceId(__instance);
+            if (id == 0 || !s_chargeHoldStates.TryGetValue(id, out var state))
+                return;
+
+            if (!IsChargeState(__instance, "Windup"))
+                return;
+
+            var holdSeconds = Mathf.Max(0.2f, FeatureFlags.ChargeAbilityHoldSeconds);
+            var progress = Mathf.Clamp01((Time.time - state.StartTime) / holdSeconds);
+            AbilityModule.SetChargeSlotActivationProgress(progress);
+
+            if (!state.IsHolding)
+                return;
+
+            if (s_chargeHandlerWindupTimerField != null && s_chargeHandlerWindupTimeField != null)
+            {
+                var windupTime = s_chargeHandlerWindupTimeField.GetValue(__instance) is float wt ? wt : 1.8f;
+                s_chargeHandlerWindupTimerField.SetValue(__instance, Mathf.Max(0.01f, windupTime));
+            }
+        }
+
+        private static void PatchChargeAbilityHoldReleaseIfPossible(Harmony harmony, Assembly asm)
+        {
+            var tChargeAbility = asm.GetType("DeathHeadHopper.Abilities.Charge.ChargeAbility", throwOnError: false);
+            if (tChargeAbility == null)
+                return;
+
+            var mOnAbilityUp = AccessTools.Method(tChargeAbility, "OnAbilityUp", Type.EmptyTypes);
+            if (mOnAbilityUp == null)
+                return;
+
+            s_chargeAbilityOnAbilityUpPrefixMethod ??= typeof(Plugin).GetMethod(nameof(ChargeAbility_OnAbilityUp_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (s_chargeAbilityOnAbilityUpPrefixMethod == null)
+                return;
+
+            harmony.Patch(mOnAbilityUp, prefix: new HarmonyMethod(s_chargeAbilityOnAbilityUpPrefixMethod));
+        }
+
+        private static void PatchStunHandlerHoldScalingIfPossible(Harmony harmony, Assembly asm)
+        {
+            var tStunHandler = asm.GetType("DeathHeadHopper.DeathHead.Handlers.StunHandler", throwOnError: false);
+            if (tStunHandler == null)
+                return;
+
+            s_stunHandlerChargeHandlerField ??= AccessTools.Field(tStunHandler, "chargeHandler");
+            s_stunHandlerStunDurationGetter ??= AccessTools.PropertyGetter(tStunHandler, "StunDuration");
+            if (s_stunHandlerStunDurationGetter == null)
+                return;
+
+            var prefix = typeof(Plugin).GetMethod(nameof(StunHandler_StunDuration_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (prefix == null)
+                return;
+
+            harmony.Patch(s_stunHandlerStunDurationGetter, prefix: new HarmonyMethod(prefix));
+        }
+
+        private static void ChargeHandler_CancelCharge_Postfix(object __instance)
+        {
+            ClearChargeHoldState(__instance);
+        }
+
+        private static bool ChargeHandler_EnemyHit_Prefix(object __instance)
+        {
+            if (__instance == null)
+                return true;
+            if (s_chargeHandlerEnemiesHitField == null || s_chargeHandlerEndChargeMethod == null || s_chargeHandlerAbilityLevelGetter == null)
+                return true;
+
+            var id = GetUnityObjectInstanceId(__instance);
+            if (id == 0 || !s_chargeHoldStates.TryGetValue(id, out var holdState))
+                return true;
+
+            if (s_chargeHandlerEnemiesHitField.GetValue(__instance) is not int enemiesHit)
+                return true;
+
+            enemiesHit++;
+            s_chargeHandlerEnemiesHitField.SetValue(__instance, enemiesHit);
+
+            var levelObj = s_chargeHandlerAbilityLevelGetter.Invoke(__instance, null);
+            var abilityLevel = levelObj is int v ? v : 0;
+            var vanillaMax = Mathf.FloorToInt(EvaluateStatWithDiminishingReturns(1f, 0.5f, abilityLevel, 20, 0.9f).FinalValue);
+            var scaledMax = Mathf.Max(1, Mathf.RoundToInt(vanillaMax * Mathf.Clamp01(holdState.LaunchScale)));
+            if (enemiesHit >= scaledMax)
+            {
+                s_chargeHandlerEndChargeMethod.Invoke(__instance, null);
+            }
+
+            return false;
+        }
+
+        private static bool StunHandler_StunDuration_Prefix(object __instance, ref float __result)
+        {
+            if (__instance == null)
+                return true;
+            if (s_stunHandlerChargeHandlerField == null || s_chargeHandlerAbilityLevelGetter == null)
+                return true;
+
+            var chargeHandler = s_stunHandlerChargeHandlerField.GetValue(__instance);
+            if (chargeHandler == null)
+                return true;
+
+            var id = GetUnityObjectInstanceId(chargeHandler);
+            if (id == 0 || !s_chargeHoldStates.TryGetValue(id, out var holdState))
+                return true;
+
+            var levelObj = s_chargeHandlerAbilityLevelGetter.Invoke(chargeHandler, null);
+            var abilityLevel = levelObj is int v ? v : 0;
+            var vanillaStun = 5f + (1f * abilityLevel);
+            __result = vanillaStun * Mathf.Clamp01(holdState.LaunchScale);
+            return false;
+        }
+
+        private static void ChargeAbility_OnAbilityUp_Prefix()
+        {
+            TryReleaseHeldCharge();
+        }
+
+        private static void TryReleaseHeldCharge()
+        {
+            var chargeHandler = GetLocalChargeHandler();
+            if (chargeHandler == null)
+                return;
+
+            if (!IsChargeState(chargeHandler, "Windup"))
+                return;
+
+            var id = GetUnityObjectInstanceId(chargeHandler);
+            if (id == 0 || !s_chargeHoldStates.TryGetValue(id, out var state))
+                return;
+            if (!state.IsHolding)
+                return;
+
+            var holdSeconds = Mathf.Max(0.2f, FeatureFlags.ChargeAbilityHoldSeconds);
+            var scale = Mathf.Clamp01((Time.time - state.StartTime) / holdSeconds);
+            state.IsHolding = false;
+            state.LaunchScale = scale;
+
+            if (s_chargeHandlerChargeStrengthField != null && s_chargeHandlerChargeStrengthField.GetValue(chargeHandler) is float chargeStrength)
+            {
+                s_chargeHandlerChargeStrengthField.SetValue(chargeHandler, chargeStrength * scale);
+            }
+
+            if (s_chargeHandlerMaxBouncesField != null && s_chargeHandlerMaxBouncesField.GetValue(chargeHandler) is float maxBounces)
+            {
+                s_chargeHandlerMaxBouncesField.SetValue(chargeHandler, Mathf.Max(0f, maxBounces * scale));
+            }
+
+            if (s_chargeHandlerWindupTimerField != null)
+            {
+                s_chargeHandlerWindupTimerField.SetValue(chargeHandler, -1f);
+            }
+
+            AbilityModule.SetChargeSlotActivationProgress(0f);
+        }
+
         private static bool IsChargeHandlerHeadGrabbed(object chargeHandler)
         {
             var impactDetector = GetChargeImpactDetector(chargeHandler);
@@ -571,6 +790,66 @@ namespace DeathHeadHopperFix
             }
 
             return grabbedField != null && grabbedField.GetValue(physGrabObject) is bool grabbed && grabbed;
+        }
+
+        private static int GetUnityObjectInstanceId(object obj)
+        {
+            return obj is UnityEngine.Object unityObj ? unityObj.GetInstanceID() : 0;
+        }
+
+        private static ChargeHoldState GetOrCreateChargeHoldState(int id)
+        {
+            if (!s_chargeHoldStates.TryGetValue(id, out var state))
+            {
+                state = new ChargeHoldState();
+                s_chargeHoldStates[id] = state;
+            }
+
+            return state;
+        }
+
+        private static bool IsChargeState(object chargeHandler, string stateName)
+        {
+            if (chargeHandler == null)
+                return false;
+
+            if (s_chargeHandlerStateGetter == null || s_chargeHandlerStateGetter.DeclaringType != chargeHandler.GetType())
+            {
+                s_chargeHandlerStateGetter = AccessTools.PropertyGetter(chargeHandler.GetType(), "State");
+            }
+
+            if (s_chargeHandlerStateGetter == null)
+                return false;
+
+            var stateValue = s_chargeHandlerStateGetter.Invoke(chargeHandler, null);
+            return stateValue != null && string.Equals(stateValue.ToString(), stateName, StringComparison.Ordinal);
+        }
+
+        private static object? GetLocalChargeHandler()
+        {
+            var avatar = PlayerAvatar.instance;
+            if (avatar?.playerDeathHead == null)
+                return null;
+
+            var controller = avatar.playerDeathHead.GetComponent("DeathHeadController");
+            if (controller == null)
+                return null;
+
+            var chargeHandlerField = AccessTools.Field(controller.GetType(), "chargeHandler");
+            return chargeHandlerField?.GetValue(controller);
+        }
+
+        private static void ClearChargeHoldState(object? chargeHandler)
+        {
+            if (chargeHandler == null)
+                return;
+
+            var id = GetUnityObjectInstanceId(chargeHandler);
+            if (id != 0)
+            {
+                s_chargeHoldStates.Remove(id);
+            }
+            AbilityModule.SetChargeSlotActivationProgress(0f);
         }
 
         private static object? GetChargeImpactDetector(object chargeHandler)
@@ -603,6 +882,7 @@ namespace DeathHeadHopperFix
         private static void ChargeHandler_ResetState_Postfix(object __instance)
         {
             StopChargeWindupLoop(__instance);
+            ClearChargeHoldState(__instance);
             if (__instance == null || s_chargeHandlerChargeStrengthField == null || s_chargeHandlerAbilityLevelGetter == null)
                 return;
 
@@ -623,6 +903,7 @@ namespace DeathHeadHopperFix
         private static void ChargeHandler_EndCharge_Postfix(object __instance)
         {
             StopChargeWindupLoop(__instance);
+            ClearChargeHoldState(__instance);
         }
 
         private static void StopChargeWindupLoop(object? chargeHandler)
