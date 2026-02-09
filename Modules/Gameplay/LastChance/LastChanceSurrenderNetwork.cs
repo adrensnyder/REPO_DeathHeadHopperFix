@@ -1,6 +1,7 @@
 #nullable enable
 
 using ExitGames.Client.Photon;
+using DeathHeadHopperFix.Modules.Utilities;
 using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
@@ -13,7 +14,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private const byte LastChanceTimerStateEventCode = 81;
         private const byte LastChanceDirectionPenaltyRequestEventCode = 82;
         private const byte LastChanceUiStateEventCode = 83;
+        private const byte LastChancePlayerTruckHintEventCode = 84;
         private static LastChanceSurrenderNetwork? s_instance;
+        private static float s_lastTruckHintSentAt;
+        private static int s_lastTruckHintRoomHash;
+        private static int s_lastTruckHintLevelStamp = -1;
+        private const float TruckHintBroadcastIntervalSeconds = 0.5f;
 
         internal static void EnsureCreated()
         {
@@ -104,6 +110,42 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 SendOptions.SendReliable);
         }
 
+        internal static void TryBroadcastLocalPlayerTruckHint()
+        {
+            if (!PhotonNetwork.InRoom || SemiFunc.IsMasterClient() || PhotonNetwork.LocalPlayer == null)
+            {
+                return;
+            }
+
+            EnsureCreated();
+            if (!PlayerTruckDistanceHelper.TryBuildLocalPlayerTruckHint(out var roomHash, out var heightDelta, out var levelStamp))
+            {
+                return;
+            }
+
+            var roomChanged = roomHash != s_lastTruckHintRoomHash || levelStamp != s_lastTruckHintLevelStamp;
+            var dueByTime = Time.unscaledTime - s_lastTruckHintSentAt >= TruckHintBroadcastIntervalSeconds;
+            if (!roomChanged && !dueByTime)
+            {
+                return;
+            }
+
+            var options = new RaiseEventOptions
+            {
+                Receivers = ReceiverGroup.MasterClient
+            };
+
+            PhotonNetwork.RaiseEvent(
+                LastChancePlayerTruckHintEventCode,
+                new object[] { PhotonNetwork.LocalPlayer.ActorNumber, roomHash, heightDelta, levelStamp },
+                options,
+                SendOptions.SendUnreliable);
+
+            s_lastTruckHintSentAt = Time.unscaledTime;
+            s_lastTruckHintRoomHash = roomHash;
+            s_lastTruckHintLevelStamp = levelStamp;
+        }
+
         public override void OnEnable()
         {
             base.OnEnable();
@@ -164,6 +206,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                     uiPayload[1] is object[] states)
                 {
                     LastChanceTimerController.ApplyNetworkUiState(required, states, photonEvent.Sender);
+                }
+                return;
+            }
+
+            if (photonEvent.Code == LastChancePlayerTruckHintEventCode)
+            {
+                if (photonEvent.CustomData is object[] hintPayload &&
+                    hintPayload.Length >= 4 &&
+                    hintPayload[0] is int hintActorNumber &&
+                    hintPayload[1] is int roomHash &&
+                    hintPayload[2] is float heightDelta &&
+                    hintPayload[3] is int levelStamp)
+                {
+                    PlayerTruckDistanceHelper.ApplyRemotePlayerHint(hintActorNumber, roomHash, heightDelta, levelStamp);
                 }
                 return;
             }

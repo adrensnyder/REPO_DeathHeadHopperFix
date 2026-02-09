@@ -124,6 +124,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool s_hasCachedDynamicTimerInputs;
         private static string? s_lastTruckStateDebugMessage;
         private const float UiStateBroadcastIntervalSeconds = 0.2f;
+        private static bool s_activationProfilePending;
+        private static float s_activationProfileStartedAt;
+        private static DynamicTimerProfileSnapshot s_lastDynamicTimerProfile;
+        private static bool s_hasDynamicTimerProfile;
+        private static ActivationStartPhaseProfileSnapshot s_lastActivationStartPhaseProfile;
+        private static bool s_hasActivationStartPhaseProfile;
+        private static bool s_assetsPrewarmedForSession;
 
         private readonly struct NetworkUiPlayerState
         {
@@ -192,6 +199,82 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             internal int TotalShortestRoomPathSteps { get; }
         }
 
+        private readonly struct DynamicTimerProfileSnapshot
+        {
+            internal DynamicTimerProfileSnapshot(
+                float totalMs,
+                float monstersMs,
+                float recordsMs,
+                float selectMs,
+                float heightRefreshMs,
+                float aggregateMs,
+                int recordsCount,
+                int selectedCount,
+                int requiredPlayers,
+                int levelNumber,
+                int aliveMonsters)
+            {
+                TotalMs = totalMs;
+                MonstersMs = monstersMs;
+                RecordsMs = recordsMs;
+                SelectMs = selectMs;
+                HeightRefreshMs = heightRefreshMs;
+                AggregateMs = aggregateMs;
+                RecordsCount = recordsCount;
+                SelectedCount = selectedCount;
+                RequiredPlayers = requiredPlayers;
+                LevelNumber = levelNumber;
+                AliveMonsters = aliveMonsters;
+            }
+
+            internal float TotalMs { get; }
+            internal float MonstersMs { get; }
+            internal float RecordsMs { get; }
+            internal float SelectMs { get; }
+            internal float HeightRefreshMs { get; }
+            internal float AggregateMs { get; }
+            internal int RecordsCount { get; }
+            internal int SelectedCount { get; }
+            internal int RequiredPlayers { get; }
+            internal int LevelNumber { get; }
+            internal int AliveMonsters { get; }
+        }
+
+        private readonly struct ActivationStartPhaseProfileSnapshot
+        {
+            internal ActivationStartPhaseProfileSnapshot(
+                float totalMs,
+                float setActiveMs,
+                float initialTimerMs,
+                float captureCurrencyMs,
+                float ensureNetworkMs,
+                float showUiMs,
+                float clearStateMs,
+                float broadcastMs,
+                float debugExtrasMs)
+            {
+                TotalMs = totalMs;
+                SetActiveMs = setActiveMs;
+                InitialTimerMs = initialTimerMs;
+                CaptureCurrencyMs = captureCurrencyMs;
+                EnsureNetworkMs = ensureNetworkMs;
+                ShowUiMs = showUiMs;
+                ClearStateMs = clearStateMs;
+                BroadcastMs = broadcastMs;
+                DebugExtrasMs = debugExtrasMs;
+            }
+
+            internal float TotalMs { get; }
+            internal float SetActiveMs { get; }
+            internal float InitialTimerMs { get; }
+            internal float CaptureCurrencyMs { get; }
+            internal float EnsureNetworkMs { get; }
+            internal float ShowUiMs { get; }
+            internal float ClearStateMs { get; }
+            internal float BroadcastMs { get; }
+            internal float DebugExtrasMs { get; }
+        }
+
         internal static bool IsActive => s_active;
         internal static bool IsSuppressedForRoom => s_suppressedForRoom;
         internal static bool IsDirectionIndicatorUiVisible =>
@@ -221,6 +304,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             ClearSurrenderState();
             ClearCachedDynamicTimerInputs();
             ClearLastChanceHostRuntimeOverrides();
+            ClearActivationProfileState();
+            s_assetsPrewarmedForSession = false;
+            LastChanceTimerUI.DestroyUi();
 
             if (!s_active)
             {
@@ -267,9 +353,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            if (SemiFunc.IsMultiplayer())
+            {
+                LastChanceSurrenderNetwork.TryBroadcastLocalPlayerTruckHint();
+            }
+
             var allDead = AllPlayersDeadGuard.AllPlayersDisabled();
             if (!allDead)
             {
+                PrewarmLastChanceAssets();
                 // Pre-warm heavy distance/path data before LastChance starts to reduce activation hitch.
                 if (!SemiFunc.IsMultiplayer() || SemiFunc.IsMasterClient())
                 {
@@ -288,7 +380,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (!s_active)
             {
+                BeginActivationProfile();
                 StartTimer(maxPlayers);
+                EmitActivationProfileSummary();
             }
 
             UpdateTimer();
@@ -321,7 +415,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void StartTimer(int maxPlayers)
         {
+            var profileEnabled = FeatureFlags.DebugLogging && s_activationProfilePending;
+            var profileStart = profileEnabled ? Time.realtimeSinceStartup : 0f;
+            var afterSetActive = profileStart;
+            var afterInitialTimer = profileStart;
+            var afterCaptureCurrency = profileStart;
+            var afterEnsureNetwork = profileStart;
+            var afterShowUi = profileStart;
+            var afterClearState = profileStart;
+            var afterBroadcast = profileStart;
+
             SetLastChanceActive(true);
+            if (profileEnabled)
+            {
+                afterSetActive = Time.realtimeSinceStartup;
+            }
+
             if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
             {
                 s_timerRemaining = Mathf.Max(30f, GetConfiguredSeconds());
@@ -332,21 +441,50 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 s_timerRemaining = GetInitialTimerSeconds(maxPlayers);
                 s_timerSyncedFromHost = true;
             }
+            if (profileEnabled)
+            {
+                afterInitialTimer = Time.realtimeSinceStartup;
+            }
+
             s_lastTimerSecondAudioPlayed = -1;
             s_lastTimerWarningAudioPlayed = -1;
             s_lastNetworkTimerBroadcastSecond = -1;
             s_currencyCaptured = false;
             s_indicatorNoneLoggedThisCycle = false;
             CaptureBaseCurrency();
+            if (profileEnabled)
+            {
+                afterCaptureCurrency = Time.realtimeSinceStartup;
+            }
+
             LastChanceSurrenderNetwork.EnsureCreated();
+            if (profileEnabled)
+            {
+                afterEnsureNetwork = Time.realtimeSinceStartup;
+            }
+
             LastChanceTimerUI.Show(SurrenderHintPrompt);
+            if (profileEnabled)
+            {
+                afterShowUi = Time.realtimeSinceStartup;
+            }
+
             s_surrenderDistanceLogged = false;
             s_hasNetworkUiState = false;
             s_networkUiRequiredOnTruck = 0;
             s_networkUiStatesByActor.Clear();
             s_lastUiStateBroadcastAt = 0f;
             s_lastUiStateHash = 0;
+            if (profileEnabled)
+            {
+                afterClearState = Time.realtimeSinceStartup;
+            }
+
             BroadcastTimerStateIfHost(force: true);
+            if (profileEnabled)
+            {
+                afterBroadcast = Time.realtimeSinceStartup;
+            }
 
             if (FeatureFlags.DebugLogging)
             {
@@ -356,6 +494,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog(LogKey, 30))
             {
                 Debug.Log($"[LastChance] Timer started: {s_timerRemaining:F1}s");
+            }
+
+            if (profileEnabled)
+            {
+                var profileEnd = Time.realtimeSinceStartup;
+                s_lastActivationStartPhaseProfile = new ActivationStartPhaseProfileSnapshot(
+                    (profileEnd - profileStart) * 1000f,
+                    (afterSetActive - profileStart) * 1000f,
+                    (afterInitialTimer - afterSetActive) * 1000f,
+                    (afterCaptureCurrency - afterInitialTimer) * 1000f,
+                    (afterEnsureNetwork - afterCaptureCurrency) * 1000f,
+                    (afterShowUi - afterEnsureNetwork) * 1000f,
+                    (afterClearState - afterShowUi) * 1000f,
+                    (afterBroadcast - afterClearState) * 1000f,
+                    (profileEnd - afterBroadcast) * 1000f);
+                s_hasActivationStartPhaseProfile = true;
             }
         }
 
@@ -430,6 +584,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             ClearSurrenderState();
             ClearCachedDynamicTimerInputs();
+            ClearActivationProfileState();
 
             if (!s_active)
             {
@@ -1233,6 +1388,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 s_timerWarningAudioSource.Stop();
                 s_timerWarningAudioSource.pitch = 1f;
             }
+        }
+
+        private static void PrewarmLastChanceAssets()
+        {
+            if (s_assetsPrewarmedForSession)
+            {
+                return;
+            }
+
+            LastChanceTimerUI.PrewarmAssets();
+            _ = TryEnsureTimerSecondAudioReady();
+            _ = TryEnsureTimerWarningAudioReady();
+            s_assetsPrewarmedForSession = true;
+
+            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.Prewarm", 30))
+            {
+                Debug.Log("[LastChance] Prewarmed UI sprites and timer audio assets.");
+            }
+        }
+
+        internal static void PrewarmGlobalAssetsAtBoot()
+        {
+            LastChanceTimerUI.PrewarmAssets();
+            _ = TryEnsureTimerSecondAudioReady();
+            _ = TryEnsureTimerWarningAudioReady();
+            s_assetsPrewarmedForSession = true;
         }
 
         private static void UpdateIndicators(int maxPlayers, bool allDead)
@@ -2091,6 +2272,56 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_hasCachedDynamicTimerInputs = false;
         }
 
+        private static void CacheDynamicTimerProfile(DynamicTimerProfileSnapshot profile)
+        {
+            s_lastDynamicTimerProfile = profile;
+            s_hasDynamicTimerProfile = true;
+        }
+
+        private static void BeginActivationProfile()
+        {
+            if (!FeatureFlags.DebugLogging || s_activationProfilePending)
+            {
+                return;
+            }
+
+            s_activationProfilePending = true;
+            s_activationProfileStartedAt = Time.realtimeSinceStartup;
+            s_hasDynamicTimerProfile = false;
+            s_hasActivationStartPhaseProfile = false;
+            PlayerTruckDistanceHelper.BeginActivationProfiling();
+        }
+
+        private static void EmitActivationProfileSummary()
+        {
+            if (!s_activationProfilePending || !FeatureFlags.DebugLogging)
+            {
+                return;
+            }
+
+            s_activationProfilePending = false;
+            var activationMs = (Time.realtimeSinceStartup - s_activationProfileStartedAt) * 1000f;
+            var helperSummary = PlayerTruckDistanceHelper.EndActivationProfilingSummary();
+            var dynamicSummary = s_hasDynamicTimerProfile
+                ? $"dynamic=total={s_lastDynamicTimerProfile.TotalMs:F1}ms monsters={s_lastDynamicTimerProfile.MonstersMs:F1}ms records={s_lastDynamicTimerProfile.RecordsMs:F1}ms select={s_lastDynamicTimerProfile.SelectMs:F1}ms heightRefresh={s_lastDynamicTimerProfile.HeightRefreshMs:F1}ms aggregate={s_lastDynamicTimerProfile.AggregateMs:F1}ms records={s_lastDynamicTimerProfile.RecordsCount} selected={s_lastDynamicTimerProfile.SelectedCount} required={s_lastDynamicTimerProfile.RequiredPlayers} level={s_lastDynamicTimerProfile.LevelNumber} aliveMonsters={s_lastDynamicTimerProfile.AliveMonsters}"
+                : "dynamic=not-collected";
+            var startPhaseSummary = s_hasActivationStartPhaseProfile
+                ? $"start=total={s_lastActivationStartPhaseProfile.TotalMs:F1}ms setActive={s_lastActivationStartPhaseProfile.SetActiveMs:F1}ms initialTimer={s_lastActivationStartPhaseProfile.InitialTimerMs:F1}ms captureCurrency={s_lastActivationStartPhaseProfile.CaptureCurrencyMs:F1}ms ensureNetwork={s_lastActivationStartPhaseProfile.EnsureNetworkMs:F1}ms showUi={s_lastActivationStartPhaseProfile.ShowUiMs:F1}ms clearState={s_lastActivationStartPhaseProfile.ClearStateMs:F1}ms broadcast={s_lastActivationStartPhaseProfile.BroadcastMs:F1}ms debugExtras={s_lastActivationStartPhaseProfile.DebugExtrasMs:F1}ms"
+                : "start=not-collected";
+
+            Debug.Log($"[LastChance] ActivationProfile: window={activationMs:F1}ms {startPhaseSummary} {dynamicSummary} helper={helperSummary}");
+        }
+
+        private static void ClearActivationProfileState()
+        {
+            s_activationProfilePending = false;
+            s_activationProfileStartedAt = 0f;
+            s_hasDynamicTimerProfile = false;
+            s_lastDynamicTimerProfile = default;
+            s_hasActivationStartPhaseProfile = false;
+            s_lastActivationStartPhaseProfile = default;
+        }
+
         private static float GetDynamicTimerCapSeconds()
         {
             var capMinutes = Mathf.Clamp(FeatureFlags.LastChanceDynamicMaxMinutes, 5, 20);
@@ -2099,12 +2330,48 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static DynamicTimerInputs CollectDynamicTimerInputs(int maxPlayers)
         {
+            var profileEnabled = FeatureFlags.DebugLogging;
+            var profileStart = profileEnabled ? Time.realtimeSinceStartup : 0f;
+            var profileAfterMonsters = profileStart;
+            var profileAfterRecords = profileStart;
+            var profileAfterSelect = profileStart;
+            var profileAfterHeightRefresh = profileStart;
             var requiredPlayers = Mathf.Max(1, GetLastChanceNeededPlayers(maxPlayers));
             var levelNumber = GetCurrentLevelNumber();
             var aliveSearchMonsters = LastChanceMonstersSearchModule.GetAliveSearchMonsterCount();
-            var records = PlayerTruckDistanceHelper.GetDistancesFromTruck();
+            if (profileEnabled)
+            {
+                profileAfterMonsters = Time.realtimeSinceStartup;
+            }
+
+            var records = PlayerTruckDistanceHelper.GetDistancesFromTruck(
+                PlayerTruckDistanceHelper.DistanceQueryFields.All);
+            if (profileEnabled)
+            {
+                profileAfterRecords = Time.realtimeSinceStartup;
+            }
+
             if (records.Length == 0)
             {
+                if (profileEnabled)
+                {
+                    var totalMs = (Time.realtimeSinceStartup - profileStart) * 1000f;
+                    var monstersMs = (profileAfterMonsters - profileStart) * 1000f;
+                    var recordsMs = (profileAfterRecords - profileAfterMonsters) * 1000f;
+                    CacheDynamicTimerProfile(new DynamicTimerProfileSnapshot(
+                        totalMs,
+                        monstersMs,
+                        recordsMs,
+                        0f,
+                        0f,
+                        0f,
+                        0,
+                        0,
+                        requiredPlayers,
+                        levelNumber,
+                        aliveSearchMonsters));
+                }
+
                 return new DynamicTimerInputs(
                     requiredPlayers,
                     levelNumber,
@@ -2116,6 +2383,38 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             var selected = SelectRequiredPlayers(records, requiredPlayers);
+            if (profileEnabled)
+            {
+                profileAfterSelect = Time.realtimeSinceStartup;
+            }
+
+            // Height is the most time-sensitive variable: refresh only this field for selected players.
+            // Nav/path data stays cached unless room context changes.
+            var selectedPlayers = new List<PlayerAvatar>(selected.Count);
+            for (var i = 0; i < selected.Count; i++)
+            {
+                var player = selected[i].PlayerAvatar;
+                if (player != null)
+                {
+                    selectedPlayers.Add(player);
+                }
+            }
+
+            if (selectedPlayers.Count > 0)
+            {
+                var refreshedSelected = PlayerTruckDistanceHelper.GetDistancesFromTruck(
+                    PlayerTruckDistanceHelper.DistanceQueryFields.Height,
+                    selectedPlayers);
+                if (refreshedSelected.Length > 0)
+                {
+                    selected = SelectRequiredPlayers(refreshedSelected, requiredPlayers);
+                }
+            }
+            if (profileEnabled)
+            {
+                profileAfterHeightRefresh = Time.realtimeSinceStartup;
+            }
+
             var belowThreshold = Mathf.Min(0f, FeatureFlags.LastChanceBelowTruckThresholdMeters);
             var totalDistanceMeters = 0f;
             var playersBelowTruckThreshold = 0;
@@ -2140,6 +2439,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                     playersBelowTruckThreshold++;
                     totalBelowTruckMeters += Mathf.Max(0f, belowThreshold - record.HeightDelta);
                 }
+            }
+
+            if (profileEnabled)
+            {
+                var profileEnd = Time.realtimeSinceStartup;
+                var totalMs = (profileEnd - profileStart) * 1000f;
+                var monstersMs = (profileAfterMonsters - profileStart) * 1000f;
+                var recordsMs = (profileAfterRecords - profileAfterMonsters) * 1000f;
+                var selectMs = (profileAfterSelect - profileAfterRecords) * 1000f;
+                var heightRefreshMs = (profileAfterHeightRefresh - profileAfterSelect) * 1000f;
+                var aggregateMs = (profileEnd - profileAfterHeightRefresh) * 1000f;
+                CacheDynamicTimerProfile(new DynamicTimerProfileSnapshot(
+                    totalMs,
+                    monstersMs,
+                    recordsMs,
+                    selectMs,
+                    heightRefreshMs,
+                    aggregateMs,
+                    records.Length,
+                    selected.Count,
+                    requiredPlayers,
+                    levelNumber,
+                    aliveSearchMonsters));
             }
 
             return new DynamicTimerInputs(

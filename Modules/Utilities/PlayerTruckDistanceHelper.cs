@@ -1,17 +1,31 @@
-﻿#nullable enable
+#nullable enable
 
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
+using Photon.Pun;
 using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Utilities
 {
     internal static class PlayerTruckDistanceHelper
     {
-        private const float CacheTtlSeconds = 0.9f;
+        private const float HeightCacheTtlSeconds = 2f;
+
+        [Flags]
+        internal enum DistanceQueryFields
+        {
+            None = 0,
+            Height = 1 << 0,
+            NavMeshDistance = 1 << 1,
+            RoomPath = 1 << 2,
+            All = Height | NavMeshDistance | RoomPath
+        }
+
         internal readonly struct PlayerTruckDistance
         {
             internal PlayerTruckDistance(PlayerAvatar playerAvatar, float navMeshDistance, float heightDelta, int shortestRoomPathToTruck, int totalMapRooms, bool hasValidPath)
@@ -30,6 +44,19 @@ namespace DeathHeadHopperFix.Modules.Utilities
             internal int ShortestRoomPathToTruck { get; }
             internal int TotalMapRooms { get; }
             internal bool HasValidPath { get; }
+        }
+
+        private sealed class CachedPlayerDistance
+        {
+            internal float NavMeshDistance = -1f;
+            internal float HeightDelta;
+            internal int ShortestRoomPathToTruck = -1;
+            internal int TotalMapRooms = -1;
+            internal bool HasValidPath;
+            internal int RoomHash;
+            internal float HeightUpdatedAt = float.NegativeInfinity;
+            internal int LevelStamp;
+            internal Vector3 LastKnownWorldPosition;
         }
 
         private static readonly Type? s_levelGeneratorType = AccessTools.TypeByName("LevelGenerator");
@@ -71,21 +98,73 @@ namespace DeathHeadHopperFix.Modules.Utilities
             new[] { typeof(Vector3), typeof(Vector3), typeof(int), s_navMeshPathType },
             null);
         private static readonly PropertyInfo? s_navMeshPathCornersProperty = s_navMeshPathType?.GetProperty("corners");
-        private static PlayerTruckDistance[]? s_cachedDistances;
-        private static float s_cachedAtTime;
-        private static int s_cachedSignature;
+
         private static object? s_cachedGraphLevelGenerator;
         private static int s_cachedGraphPointCount;
         private static Dictionary<object, HashSet<object>>? s_cachedRoomGraph;
+        private static readonly Dictionary<int, CachedPlayerDistance> s_playerCache = new();
+        private static readonly Dictionary<int, RemotePlayerHint> s_remoteHints = new();
+        private static object? s_cachedLevelGeneratorForPlayers;
+        private static Vector3 s_cachedTruckPosition;
+        private static bool s_hasCachedTruckPosition;
+        private static int s_cachedLevelPointsCount;
+        private static bool s_activationProfilingEnabled;
+        private static ActivationProfileStats s_activationProfileStats;
+
+        private readonly struct RemotePlayerHint
+        {
+            internal RemotePlayerHint(int roomHash, float heightDelta, int levelStamp, float updatedAt)
+            {
+                RoomHash = roomHash;
+                HeightDelta = heightDelta;
+                LevelStamp = levelStamp;
+                UpdatedAt = updatedAt;
+            }
+
+            internal int RoomHash { get; }
+            internal float HeightDelta { get; }
+            internal int LevelStamp { get; }
+            internal float UpdatedAt { get; }
+        }
+
+        private struct ActivationProfileStats
+        {
+            internal int Calls;
+            internal int PlayersProcessed;
+            internal int NavRefreshCount;
+            internal int RoomRefreshCount;
+            internal int RemoteHintUsedCount;
+            internal float TotalMs;
+            internal float SetupMs;
+            internal float LoopMs;
+            internal float MaxCallMs;
+        }
 
         internal static void PrimeDistancesCache()
         {
-            _ = GetDistancesFromTruck();
+            _ = GetDistancesFromTruck(DistanceQueryFields.NavMeshDistance | DistanceQueryFields.RoomPath);
         }
 
         internal static PlayerTruckDistance[] GetDistancesFromTruck()
         {
-            if (s_levelGeneratorInstanceField == null)
+            return GetDistancesFromTruck(DistanceQueryFields.All, null, false);
+        }
+
+        internal static PlayerTruckDistance[] GetDistancesFromTruck(
+            DistanceQueryFields fields,
+            ICollection<PlayerAvatar>? players = null,
+            bool forceRefresh = false)
+        {
+            var profileEnabled = FeatureFlags.DebugLogging;
+            var profileStart = profileEnabled ? Time.realtimeSinceStartup : 0f;
+            var profileAfterSetup = profileStart;
+            var profileLoopStart = profileStart;
+            var navRefreshCount = 0;
+            var roomRefreshCount = 0;
+            var remoteHintUsedCount = 0;
+            var processedPlayers = 0;
+
+            if (fields == DistanceQueryFields.None || s_levelGeneratorInstanceField == null)
             {
                 return Array.Empty<PlayerTruckDistance>();
             }
@@ -108,15 +187,54 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return Array.Empty<PlayerTruckDistance>();
             }
 
-            var signature = ComputeSignature(director.PlayerList);
-            var age = Time.unscaledTime - s_cachedAtTime;
-            if (s_cachedDistances != null && s_cachedSignature == signature && age >= 0f && age <= CacheTtlSeconds)
+            var levelPointsCount = allLevelPoints?.Count ?? 0;
+            if (!ReferenceEquals(s_cachedLevelGeneratorForPlayers, levelGenerator) ||
+                !s_hasCachedTruckPosition ||
+                Vector3.SqrMagnitude(s_cachedTruckPosition - truckPosition) > 0.0001f ||
+                s_cachedLevelPointsCount != levelPointsCount)
             {
-                return s_cachedDistances;
+                s_playerCache.Clear();
+                s_remoteHints.Clear();
+                s_cachedLevelGeneratorForPlayers = levelGenerator;
+                s_cachedTruckPosition = truckPosition;
+                s_cachedLevelPointsCount = levelPointsCount;
+                s_hasCachedTruckPosition = true;
             }
 
-            var roomGraph = GetOrBuildRoomGraph(levelGenerator, allLevelPoints);
-            var totalMapRooms = roomGraph.Count > 0 ? roomGraph.Count : -1;
+            HashSet<int>? allowedKeys = null;
+            if (players != null)
+            {
+                allowedKeys = new HashSet<int>();
+                foreach (var player in players)
+                {
+                    if (player == null)
+                    {
+                        continue;
+                    }
+
+                    allowedKeys.Add(GetPlayerKey(player));
+                }
+
+                if (allowedKeys.Count == 0)
+                {
+                    return Array.Empty<PlayerTruckDistance>();
+                }
+            }
+
+            var needsRoomPath = (fields & DistanceQueryFields.RoomPath) != 0;
+            var needsNavPath = (fields & DistanceQueryFields.NavMeshDistance) != 0;
+            var needsHeight = (fields & DistanceQueryFields.Height) != 0;
+            var roomGraph = (needsRoomPath || needsNavPath)
+                ? GetOrBuildRoomGraph(levelGenerator, allLevelPoints)
+                : null;
+            var totalMapRooms = roomGraph != null && roomGraph.Count > 0 ? roomGraph.Count : -1;
+            var levelStamp = RunManager.instance != null ? RunManager.instance.levelsCompleted : 0;
+            if (profileEnabled)
+            {
+                profileAfterSetup = Time.realtimeSinceStartup;
+                profileLoopStart = profileAfterSetup;
+            }
+
             var distances = new List<PlayerTruckDistance>(director.PlayerList.Count);
             foreach (var player in director.PlayerList)
             {
@@ -125,50 +243,219 @@ namespace DeathHeadHopperFix.Modules.Utilities
                     continue;
                 }
 
+                var playerKey = GetPlayerKey(player);
+                if (allowedKeys != null && !allowedKeys.Contains(playerKey))
+                {
+                    continue;
+                }
+
+                if (!s_playerCache.TryGetValue(playerKey, out var cached))
+                {
+                    cached = new CachedPlayerDistance();
+                    s_playerCache[playerKey] = cached;
+                }
+
                 var worldPosition = GetPlayerWorldPosition(player);
-                var heightDelta = worldPosition.y - truckPosition.y;
-                var navDistance = -1f;
-                var hasPath = TryGetPlayerNavMeshPosition(player, worldPosition, out var navMeshStart) &&
-                              TryCalculatePathDistance(navMeshStart, truckPosition, out navDistance);
-                var shortestRoomPathToTruck = ResolveShortestRoomPathToTruck(player, truckPoint, roomGraph);
+                cached.LastKnownWorldPosition = worldPosition;
+                var actorNumber = player.photonView?.Owner?.ActorNumber ?? 0;
+                s_remoteHints.TryGetValue(actorNumber, out var remoteHint);
+                var shouldUseRemoteHint =
+                    SemiFunc.IsMasterClientOrSingleplayer() &&
+                    SemiFunc.IsMultiplayer() &&
+                    actorNumber > 0 &&
+                    PhotonNetwork.LocalPlayer != null &&
+                    actorNumber != PhotonNetwork.LocalPlayer.ActorNumber &&
+                    remoteHint.LevelStamp == levelStamp;
+
+                List<object>? playerRooms = null;
+                var roomHash = cached.RoomHash;
+                if (shouldUseRemoteHint)
+                {
+                    roomHash = remoteHint.RoomHash;
+                    remoteHintUsedCount++;
+                }
+                else if (needsRoomPath || needsNavPath)
+                {
+                    playerRooms = GetPlayerRooms(player);
+                    roomHash = ComputeRoomsHash(playerRooms);
+                }
+
+                var roomChanged = roomHash != cached.RoomHash;
+                var levelChanged = cached.LevelStamp != levelStamp;
+
+                if (needsHeight)
+                {
+                    var heightAge = Time.unscaledTime - cached.HeightUpdatedAt;
+                    if (forceRefresh || levelChanged || heightAge < 0f || heightAge > HeightCacheTtlSeconds)
+                    {
+                        if (shouldUseRemoteHint && (Time.unscaledTime - remoteHint.UpdatedAt) <= HeightCacheTtlSeconds)
+                        {
+                            cached.HeightDelta = remoteHint.HeightDelta;
+                            cached.HeightUpdatedAt = remoteHint.UpdatedAt;
+                        }
+                        else
+                        {
+                            cached.HeightDelta = worldPosition.y - truckPosition.y;
+                            cached.HeightUpdatedAt = Time.unscaledTime;
+                        }
+                    }
+                }
+
+                if (needsNavPath && (forceRefresh || levelChanged || roomChanged))
+                {
+                    var navDistance = -1f;
+                    var hasPath = TryGetPlayerNavMeshPosition(player, worldPosition, out var navMeshStart) &&
+                                  TryCalculatePathDistance(navMeshStart, truckPosition, out navDistance);
+                    cached.NavMeshDistance = hasPath ? navDistance : -1f;
+                    cached.HasValidPath = hasPath;
+                    navRefreshCount++;
+                }
+
+                if (needsRoomPath && (forceRefresh || levelChanged || roomChanged))
+                {
+                    playerRooms ??= GetPlayerRooms(player);
+                    cached.ShortestRoomPathToTruck = ResolveShortestRoomPathToTruck(playerRooms ?? new List<object>(), truckPoint, roomGraph);
+                    roomRefreshCount++;
+                }
+
+                if (needsRoomPath || needsNavPath)
+                {
+                    cached.TotalMapRooms = totalMapRooms;
+                }
+
+                cached.RoomHash = roomHash;
+                cached.LevelStamp = levelStamp;
 
                 distances.Add(new PlayerTruckDistance(
                     player,
-                    hasPath ? navDistance : -1f,
-                    heightDelta,
-                    shortestRoomPathToTruck,
-                    totalMapRooms,
-                    hasPath));
+                    cached.NavMeshDistance,
+                    cached.HeightDelta,
+                    cached.ShortestRoomPathToTruck,
+                    cached.TotalMapRooms,
+                    cached.HasValidPath));
+                processedPlayers++;
             }
 
-            var result = distances.ToArray();
-            s_cachedDistances = result;
-            s_cachedSignature = signature;
-            s_cachedAtTime = Time.unscaledTime;
-            return result;
+            if (profileEnabled && s_activationProfilingEnabled)
+            {
+                var profileEnd = Time.realtimeSinceStartup;
+                var totalMs = (profileEnd - profileStart) * 1000f;
+                var setupMs = (profileAfterSetup - profileStart) * 1000f;
+                var loopMs = (profileEnd - profileLoopStart) * 1000f;
+                s_activationProfileStats.Calls++;
+                s_activationProfileStats.PlayersProcessed += processedPlayers;
+                s_activationProfileStats.NavRefreshCount += navRefreshCount;
+                s_activationProfileStats.RoomRefreshCount += roomRefreshCount;
+                s_activationProfileStats.RemoteHintUsedCount += remoteHintUsedCount;
+                s_activationProfileStats.TotalMs += totalMs;
+                s_activationProfileStats.SetupMs += setupMs;
+                s_activationProfileStats.LoopMs += loopMs;
+                s_activationProfileStats.MaxCallMs = Mathf.Max(s_activationProfileStats.MaxCallMs, totalMs);
+            }
+
+            return distances.ToArray();
         }
 
-        private static int ComputeSignature(IList<PlayerAvatar> players)
+        internal static void ApplyRemotePlayerHint(int actorNumber, int roomHash, float heightDelta, int levelStamp)
+        {
+            if (actorNumber <= 0)
+            {
+                return;
+            }
+
+            s_remoteHints[actorNumber] = new RemotePlayerHint(roomHash, heightDelta, levelStamp, Time.unscaledTime);
+        }
+
+        internal static bool TryBuildLocalPlayerTruckHint(out int roomHash, out float heightDelta, out int levelStamp)
+        {
+            roomHash = 0;
+            heightDelta = 0f;
+            levelStamp = RunManager.instance != null ? RunManager.instance.levelsCompleted : 0;
+
+            if (!PhotonNetwork.InRoom || PhotonNetwork.LocalPlayer == null || s_levelGeneratorInstanceField == null)
+            {
+                return false;
+            }
+
+            var levelGenerator = s_levelGeneratorInstanceField.GetValue(null);
+            if (levelGenerator == null)
+            {
+                return false;
+            }
+
+            var allLevelPoints = GetAllLevelPoints(levelGenerator);
+            if (!TryGetTruckTarget(levelGenerator, allLevelPoints, out var truckPosition, out _))
+            {
+                return false;
+            }
+
+            var director = GameDirector.instance;
+            if (director?.PlayerList == null || director.PlayerList.Count == 0)
+            {
+                return false;
+            }
+
+            var localActor = PhotonNetwork.LocalPlayer.ActorNumber;
+            PlayerAvatar? localPlayer = null;
+            for (var i = 0; i < director.PlayerList.Count; i++)
+            {
+                var candidate = director.PlayerList[i];
+                if (candidate == null)
+                {
+                    continue;
+                }
+
+                if ((candidate.photonView?.Owner?.ActorNumber ?? 0) == localActor)
+                {
+                    localPlayer = candidate;
+                    break;
+                }
+            }
+
+            if (localPlayer == null)
+            {
+                return false;
+            }
+
+            var rooms = GetPlayerRooms(localPlayer);
+            roomHash = ComputeRoomsHash(rooms);
+            var position = GetPlayerWorldPosition(localPlayer);
+            heightDelta = position.y - truckPosition.y;
+            return true;
+        }
+
+        internal static void BeginActivationProfiling()
+        {
+            s_activationProfileStats = default;
+            s_activationProfilingEnabled = true;
+        }
+
+        internal static string EndActivationProfilingSummary()
+        {
+            s_activationProfilingEnabled = false;
+            return
+                $"calls={s_activationProfileStats.Calls} total={s_activationProfileStats.TotalMs:F1}ms setup={s_activationProfileStats.SetupMs:F1}ms loop={s_activationProfileStats.LoopMs:F1}ms maxCall={s_activationProfileStats.MaxCallMs:F1}ms players={s_activationProfileStats.PlayersProcessed} navRefresh={s_activationProfileStats.NavRefreshCount} roomRefresh={s_activationProfileStats.RoomRefreshCount} remoteHints={s_activationProfileStats.RemoteHintUsedCount}";
+        }
+
+        private static int GetPlayerKey(PlayerAvatar player)
+        {
+            var actor = player.photonView?.Owner?.ActorNumber ?? 0;
+            if (actor != 0)
+            {
+                return actor;
+            }
+
+            return player.GetInstanceID();
+        }
+
+        private static int ComputeRoomsHash(List<object> rooms)
         {
             unchecked
             {
                 var hash = 17;
-                var runManager = RunManager.instance;
-                hash = (hash * 31) + (runManager != null ? runManager.levelsCompleted : 0);
-                for (var i = 0; i < players.Count; i++)
+                for (var i = 0; i < rooms.Count; i++)
                 {
-                    var p = players[i];
-                    if (p == null)
-                    {
-                        continue;
-                    }
-
-                    var actor = p.photonView?.Owner?.ActorNumber ?? 0;
-                    var pos = GetPlayerWorldPosition(p);
-                    hash = (hash * 31) + actor;
-                    hash = (hash * 31) + Mathf.RoundToInt(pos.x);
-                    hash = (hash * 31) + Mathf.RoundToInt(pos.y);
-                    hash = (hash * 31) + Mathf.RoundToInt(pos.z);
+                    hash = (hash * 31) + RuntimeHelpers.GetHashCode(rooms[i]);
                 }
 
                 return hash;
@@ -284,9 +571,9 @@ namespace DeathHeadHopperFix.Modules.Utilities
             return false;
         }
 
-        private static int ResolveShortestRoomPathToTruck(PlayerAvatar player, object? truckPoint, Dictionary<object, HashSet<object>> roomGraph)
+        private static int ResolveShortestRoomPathToTruck(List<object> playerRooms, object? truckPoint, Dictionary<object, HashSet<object>>? roomGraph)
         {
-            if (truckPoint == null || roomGraph.Count == 0)
+            if (truckPoint == null || roomGraph == null || roomGraph.Count == 0)
             {
                 return -1;
             }
@@ -297,7 +584,6 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return -1;
             }
 
-            var playerRooms = GetPlayerRooms(player);
             if (playerRooms.Count == 0)
             {
                 return -1;
@@ -376,7 +662,9 @@ namespace DeathHeadHopperFix.Modules.Utilities
             foreach (var room in currentRooms)
             {
                 if (room != null)
+                {
                     results.Add(room);
+                }
             }
 
             return results;
@@ -446,7 +734,10 @@ namespace DeathHeadHopperFix.Modules.Utilities
         private static object? GetLevelPointRoom(object levelPoint)
         {
             if (levelPoint == null || s_levelPointRoomField == null)
+            {
                 return null;
+            }
+
             return s_levelPointRoomField.GetValue(levelPoint);
         }
 

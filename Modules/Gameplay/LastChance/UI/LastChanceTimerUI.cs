@@ -145,6 +145,52 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
             RefreshVisibility(force: true);
         }
 
+        internal static void Prewarm(string defaultHintText)
+        {
+            Show(defaultHintText);
+            Hide();
+            ResetSurrenderHint();
+        }
+
+        internal static void PrewarmAssets()
+        {
+            EnsureSpritesLoaded();
+        }
+
+        internal static void DestroyUi()
+        {
+            try
+            {
+                if (s_label is Component component && component != null)
+                {
+                    var go = component.gameObject;
+                    if (go != null)
+                    {
+                        UnityEngine.Object.Destroy(go);
+                    }
+                }
+            }
+            catch
+            {
+                // Scene unload can invalidate Unity objects between checks.
+            }
+
+            s_label = null;
+            s_rect = null;
+            s_hintLabel = null;
+            s_hintRect = null;
+            s_lastTimerText = string.Empty;
+            s_lastHintText = string.Empty;
+            s_isVisible = false;
+            s_cachedUiParent = null;
+            s_playersRoot = null;
+            s_playerSlots.Clear();
+            s_truckRoot = null;
+            s_truckIconImage = null;
+            s_truckCounterLabel = null;
+            s_lastTruckCounterText = string.Empty;
+        }
+
         internal static void UpdateText(string text)
         {
             if (s_label == null)
@@ -529,6 +575,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
 
         private static bool ShouldBeVisibleNow()
         {
+            if (!LastChance.LastChanceTimerController.IsActive)
+            {
+                return false;
+            }
+
             if (GetPreferredUiParentCached() == null)
             {
                 return false;

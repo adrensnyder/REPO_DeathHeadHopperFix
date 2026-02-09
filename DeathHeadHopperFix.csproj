@@ -16,6 +16,9 @@
 		<Deterministic>false</Deterministic>
 		<ThunderstoreZipFileName>AdrenSnyder-DeathHeadHopperFix-$(Version).zip</ThunderstoreZipFileName>
 	</PropertyGroup>
+	<ItemGroup>
+	  <None Include="Modules\Utilities\PlayerTruckDistanceHelper.cs" />
+	</ItemGroup>
 
 
 	<ItemGroup>

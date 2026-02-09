@@ -41,6 +41,7 @@ namespace DeathHeadHopperFix
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
             _harmony.PatchAll(typeof(Plugin).Assembly);
+            LastChanceTimerController.PrewarmGlobalAssetsAtBoot();
 
             DHHApiGuardModule.DetectGameApiChanges();
             ApplyEarlyPatches();
