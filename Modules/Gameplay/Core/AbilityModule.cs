@@ -189,7 +189,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
         }
 
-        internal static void SetChargeSlotActivationProgress(float progress01)
+        internal static void SetChargeSlotActivationProgress(float progress01, float releaseThreshold01 = 0f)
         {
             if (FeatureFlags.DisableAbilityPatches)
                 return;
@@ -198,6 +198,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 return;
 
             var clamped = Mathf.Clamp01(progress01);
+            var threshold = Mathf.Clamp01(releaseThreshold01);
+            var canReleaseActivate = clamped >= threshold;
             foreach (var spot in s_trackedSpots)
             {
                 if (!IsSpotUsable(spot))
@@ -205,7 +207,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 if (GetAbilityIndex(spot) != ChargeAbilitySlotIndex)
                     continue;
 
-                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, clamped);
+                SlotVisualOverrides.ApplyChargeActivationProgress(spot, clamped, canReleaseActivate);
             }
         }
 
@@ -768,6 +770,54 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 // Reuse cooldown mask as "arming" fill (reverse of cooldown drain), but tint green.
                 s_imageFillAmountProp?.SetValue(cooldownImage, clamped);
                 s_imageColorProp?.SetValue(cooldownImage, new Color(0.2f, 1f, 0.2f, baseColor.a));
+
+                if (s_behaviourEnabledProp != null && typeof(Behaviour).IsAssignableFrom(imageType))
+                {
+                    s_behaviourEnabledProp.SetValue(cooldownImage, true);
+                }
+            }
+
+            internal static void ApplyChargeActivationProgress(object spot, float progress01, bool canReleaseActivate)
+            {
+                if (spot == null)
+                    return;
+
+                var type = spot.GetType();
+                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                if (cooldownImage == null)
+                    return;
+
+                var imageType = cooldownImage.GetType();
+                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != imageType)
+                {
+                    s_imageColorProp = imageType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
+                }
+                if (s_imageFillAmountProp == null || s_imageFillAmountProp.DeclaringType != imageType)
+                {
+                    s_imageFillAmountProp = imageType.GetProperty("fillAmount", BindingFlags.Instance | BindingFlags.Public);
+                }
+
+                if (!s_cooldownIconBaseColors.TryGetValue(cooldownImage, out var baseColor))
+                {
+                    baseColor = s_imageColorProp?.GetValue(cooldownImage) is Color c ? c : Color.white;
+                    s_cooldownIconBaseColors[cooldownImage] = baseColor;
+                }
+
+                var clamped = Mathf.Clamp01(progress01);
+                if (clamped <= 0f)
+                {
+                    s_imageFillAmountProp?.SetValue(cooldownImage, 0f);
+                    s_imageColorProp?.SetValue(cooldownImage, baseColor);
+                    return;
+                }
+
+                // Slot1 charge hold: red while below minimum hold threshold, green when release will activate.
+                var tint = canReleaseActivate
+                    ? new Color(0.2f, 1f, 0.2f, baseColor.a)
+                    : new Color(1f, 0.2f, 0.2f, baseColor.a);
+                s_imageFillAmountProp?.SetValue(cooldownImage, clamped);
+                s_imageColorProp?.SetValue(cooldownImage, tint);
 
                 if (s_behaviourEnabledProp != null && typeof(Behaviour).IsAssignableFrom(imageType))
                 {

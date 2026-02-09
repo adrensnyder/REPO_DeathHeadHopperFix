@@ -60,6 +60,7 @@ namespace DeathHeadHopperFix
         private static FieldInfo? s_chargeHandlerWindupTimeField;
         private static FieldInfo? s_chargeHandlerEnemiesHitField;
         private static MethodInfo? s_chargeHandlerEndChargeMethod;
+        private static MethodInfo? s_chargeHandlerCancelChargeMethod;
         private static MethodInfo? s_chargeHandlerStateGetter;
         private static FieldInfo? s_deathHeadControllerAudioHandlerField;
         private static MethodInfo? s_audioHandlerStopWindupMethod;
@@ -515,6 +516,7 @@ namespace DeathHeadHopperFix
             s_chargeHandlerWindupTimeField ??= AccessTools.Field(chargeHandlerType, "windupTime");
             s_chargeHandlerEnemiesHitField ??= AccessTools.Field(chargeHandlerType, "enemiesHit");
             s_chargeHandlerEndChargeMethod ??= AccessTools.Method(chargeHandlerType, "EndCharge", Type.EmptyTypes);
+            s_chargeHandlerCancelChargeMethod ??= AccessTools.Method(chargeHandlerType, "CancelCharge", Type.EmptyTypes);
             s_chargeHandlerStateGetter ??= AccessTools.PropertyGetter(chargeHandlerType, "State");
             var resetPostfix = typeof(Plugin).GetMethod(nameof(ChargeHandler_ResetState_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             if (mReset != null && resetPostfix != null)
@@ -626,7 +628,8 @@ namespace DeathHeadHopperFix
 
             var holdSeconds = Mathf.Max(0.2f, FeatureFlags.ChargeAbilityHoldSeconds);
             var progress = Mathf.Clamp01((Time.time - state.StartTime) / holdSeconds);
-            AbilityModule.SetChargeSlotActivationProgress(progress);
+            var requiredScale = GetMinimumChargeReleaseScale(__instance);
+            AbilityModule.SetChargeSlotActivationProgress(progress, requiredScale);
 
             if (!state.IsHolding)
                 return;
@@ -729,28 +732,39 @@ namespace DeathHeadHopperFix
             return false;
         }
 
-        private static void ChargeAbility_OnAbilityUp_Prefix()
+        private static bool ChargeAbility_OnAbilityUp_Prefix()
         {
-            TryReleaseHeldCharge();
+            return TryReleaseHeldCharge();
         }
 
-        private static void TryReleaseHeldCharge()
+        private static bool TryReleaseHeldCharge()
         {
             var chargeHandler = GetLocalChargeHandler();
             if (chargeHandler == null)
-                return;
+                return true;
 
             if (!IsChargeState(chargeHandler, "Windup"))
-                return;
+                return true;
 
             var id = GetUnityObjectInstanceId(chargeHandler);
             if (id == 0 || !s_chargeHoldStates.TryGetValue(id, out var state))
-                return;
+                return true;
             if (!state.IsHolding)
-                return;
+                return true;
 
             var holdSeconds = Mathf.Max(0.2f, FeatureFlags.ChargeAbilityHoldSeconds);
             var scale = Mathf.Clamp01((Time.time - state.StartTime) / holdSeconds);
+            var requiredScale = GetMinimumChargeReleaseScale(chargeHandler);
+            if (scale < requiredScale)
+            {
+                state.IsHolding = false;
+                state.LaunchScale = 0f;
+                AbilityModule.SetChargeSlotActivationProgress(0f);
+                StopChargeWindupLoop(chargeHandler);
+                s_chargeHandlerCancelChargeMethod?.Invoke(chargeHandler, null);
+                return false;
+            }
+
             state.IsHolding = false;
             state.LaunchScale = scale;
 
@@ -770,6 +784,48 @@ namespace DeathHeadHopperFix
             }
 
             AbilityModule.SetChargeSlotActivationProgress(0f);
+            return true;
+        }
+
+        private static float GetMinimumChargeReleaseScale(object chargeHandler)
+        {
+            if (chargeHandler == null)
+                return 0f;
+
+            var required = 0f;
+
+            if (s_chargeHandlerChargeStrengthField?.GetValue(chargeHandler) is float chargeStrength)
+            {
+                required = Mathf.Max(required, RequiredScaleForMinimumOne(chargeStrength));
+            }
+
+            if (s_chargeHandlerMaxBouncesField?.GetValue(chargeHandler) is float maxBounces)
+            {
+                required = Mathf.Max(required, RequiredScaleForMinimumOne(maxBounces));
+            }
+
+            if (s_chargeHandlerAbilityLevelGetter != null)
+            {
+                var levelObj = s_chargeHandlerAbilityLevelGetter.Invoke(chargeHandler, null);
+                var abilityLevel = levelObj is int v ? v : 0;
+                var enemiesBase = Mathf.FloorToInt(EvaluateStatWithDiminishingReturns(1f, 0.5f, abilityLevel, 20, 0.9f).FinalValue);
+                var stunBase = 5f + (1f * abilityLevel);
+
+                required = Mathf.Max(required, RequiredScaleForMinimumOne(enemiesBase));
+                required = Mathf.Max(required, RequiredScaleForMinimumOne(stunBase));
+            }
+
+            if (float.IsNaN(required) || float.IsInfinity(required))
+                return 1f;
+
+            return Mathf.Clamp01(required);
+        }
+
+        private static float RequiredScaleForMinimumOne(float baseValue)
+        {
+            if (baseValue <= 0f)
+                return float.PositiveInfinity;
+            return 1f / baseValue;
         }
 
         private static bool IsChargeHandlerHeadGrabbed(object chargeHandler)

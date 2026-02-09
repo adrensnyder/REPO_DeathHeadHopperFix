@@ -119,6 +119,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool s_suppressedForRoom;
         private static bool s_suppressedLogEmitted;
         private static bool s_lastChanceBatteryOverrideApplied;
+        private static bool s_lastChancePreviousBatteryJumpEnabled;
         private static DynamicTimerInputs s_cachedDynamicTimerInputs;
         private static bool s_hasCachedDynamicTimerInputs;
         private static string? s_lastTruckStateDebugMessage;
@@ -2293,7 +2294,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            s_lastChancePreviousBatteryJumpEnabled = FeatureFlags.BatteryJumpEnabled;
+            FeatureFlags.BatteryJumpEnabled = false;
             ConfigManager.SetHostRuntimeOverride(BatteryJumpEnabledKey, bool.FalseString);
+            ConfigSyncManager.RequestHostSnapshotBroadcast();
             s_lastChanceBatteryOverrideApplied = true;
         }
 
@@ -2304,7 +2308,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            FeatureFlags.BatteryJumpEnabled = s_lastChancePreviousBatteryJumpEnabled;
             ConfigManager.ClearHostRuntimeOverride(BatteryJumpEnabledKey);
+            ConfigSyncManager.RequestHostSnapshotBroadcast();
             s_lastChanceBatteryOverrideApplied = false;
         }
     }
