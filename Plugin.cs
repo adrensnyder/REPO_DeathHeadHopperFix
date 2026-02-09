@@ -97,6 +97,7 @@ namespace DeathHeadHopperFix
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
             LastChanceTimerController.OnLevelLoaded();
+            ConfigSyncManager.RequestHostSnapshotBroadcast();
         }
 
         private void Update()

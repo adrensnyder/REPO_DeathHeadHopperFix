@@ -13,6 +13,10 @@ using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 {
+    // RunManager.Update is intentionally patched in two places:
+    // 1) this postfix drives LastChance runtime/timer state every frame,
+    // 2) AllPlayersDeadGuard transpiles the same method to intercept vanilla allPlayersDead writes.
+    // Keep them separate: timer state and vanilla all-dead suppression are different concerns.
     [HarmonyPatch(typeof(RunManager), "Update")]
     internal static class RunManagerUpdateLastChanceTimerPatch
     {
@@ -236,6 +240,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         internal static void Tick()
         {
             if (!FeatureFlags.LastChangeMode)
+            {
+                ResetState();
+                return;
+            }
+
+            if (!CompatibilityGate.IsFeatureUsable(ModFeatureGate.LastChanceCluster))
             {
                 ResetState();
                 return;

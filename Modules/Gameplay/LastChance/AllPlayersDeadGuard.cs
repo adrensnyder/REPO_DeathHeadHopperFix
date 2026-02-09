@@ -40,6 +40,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             _harmony = new Harmony("DeathHeadHopperFix.Gameplay.AllPlayersDeadGuard");
+            // This transpiler intentionally coexists with RunManagerUpdateLastChanceTimerPatch.Postfix.
+            // It owns only the guard of vanilla allPlayersDead assignment flow.
             _harmony.Patch(
                 AccessTools.Method(typeof(RunManager), "Update"),
                 transpiler: new HarmonyMethod(typeof(AllPlayersDeadGuard), nameof(UpdateTranspiler)));
@@ -75,6 +77,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool ChangeLevelPrefix(RunManager __instance, bool _completedLevel, bool _levelFailed, RunManager.ChangeLevelType _changeLevelType)
         {
             if (!FeatureFlags.LastChangeMode)
+            {
+                return true;
+            }
+
+            if (!CompatibilityGate.IsFeatureUsable(ModFeatureGate.LastChanceCluster))
             {
                 return true;
             }
@@ -157,6 +164,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return false;
 
             if (!FeatureFlags.LastChangeMode)
+                return true;
+
+            if (!CompatibilityGate.IsFeatureUsable(ModFeatureGate.LastChanceCluster))
                 return true;
 
             if (LastChanceTimerController.IsSuppressedForRoom)

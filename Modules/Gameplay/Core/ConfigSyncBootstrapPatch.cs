@@ -11,6 +11,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         [HarmonyPostfix]
         private static void Postfix()
         {
+            CompatibilityGate.EnsureCreated();
             ConfigSyncManager.EnsureCreated();
         }
     }

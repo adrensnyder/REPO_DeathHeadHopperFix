@@ -13,12 +13,7 @@ namespace DeathHeadHopperFix.Modules.Config
     internal sealed class ConfigSyncManager : MonoBehaviourPunCallbacks, IOnEventCallback
     {
         private const byte ConfigSyncEventCode = 79;
-        private const float RuntimeReconcileIntervalSeconds = 0.75f;
-        private const float RuntimeRebroadcastIntervalSeconds = 5f;
         private static ConfigSyncManager? s_instance;
-        private float _nextRuntimeReconcileAt;
-        private float _nextRuntimeRebroadcastAt;
-        private int _lastSnapshotHash;
 
         internal static void EnsureCreated()
         {
@@ -37,9 +32,7 @@ namespace DeathHeadHopperFix.Modules.Config
             base.OnEnable();
             PhotonNetwork.AddCallbackTarget(this);
             ConfigManager.HostControlledChanged += OnHostControlledChanged;
-            _nextRuntimeReconcileAt = 0f;
-            _nextRuntimeRebroadcastAt = 0f;
-            _lastSnapshotHash = 0;
+            CompatibilityGate.HostApprovalChanged += OnHostControlledChanged;
             TrySendSnapshot();
         }
 
@@ -48,6 +41,7 @@ namespace DeathHeadHopperFix.Modules.Config
             base.OnDisable();
             PhotonNetwork.RemoveCallbackTarget(this);
             ConfigManager.HostControlledChanged -= OnHostControlledChanged;
+            CompatibilityGate.HostApprovalChanged -= OnHostControlledChanged;
         }
 
         private void OnHostControlledChanged()
@@ -86,38 +80,8 @@ namespace DeathHeadHopperFix.Modules.Config
             }
         }
 
-        private void Update()
+        internal static void RequestHostSnapshotBroadcast()
         {
-            if (!PhotonNetwork.IsMasterClient || !PhotonNetwork.InRoom)
-            {
-                return;
-            }
-
-            if (Time.unscaledTime < _nextRuntimeReconcileAt)
-            {
-                return;
-            }
-
-            _nextRuntimeReconcileAt = Time.unscaledTime + RuntimeReconcileIntervalSeconds;
-            var snapshot = ConfigManager.SnapshotHostControlled();
-            if (snapshot.Count == 0)
-            {
-                return;
-            }
-
-            var hash = ComputeSnapshotHash(snapshot);
-            if (hash == _lastSnapshotHash)
-            {
-                if (Time.unscaledTime >= _nextRuntimeRebroadcastAt)
-                {
-                    _nextRuntimeRebroadcastAt = Time.unscaledTime + RuntimeRebroadcastIntervalSeconds;
-                    TrySendSnapshot();
-                }
-                return;
-            }
-
-            _lastSnapshotHash = hash;
-            _nextRuntimeRebroadcastAt = Time.unscaledTime + RuntimeRebroadcastIntervalSeconds;
             TrySendSnapshot();
         }
 
@@ -152,22 +116,6 @@ namespace DeathHeadHopperFix.Modules.Config
             };
 
             PhotonNetwork.RaiseEvent(ConfigSyncEventCode, payload, options, SendOptions.SendReliable);
-        }
-
-        private static int ComputeSnapshotHash(Dictionary<string, string> snapshot)
-        {
-            unchecked
-            {
-                var hash = 17;
-                var keys = new List<string>(snapshot.Keys);
-                keys.Sort(StringComparer.Ordinal);
-                foreach (var key in keys)
-                {
-                    hash = (hash * 31) + StringComparer.Ordinal.GetHashCode(key);
-                    hash = (hash * 31) + StringComparer.Ordinal.GetHashCode(snapshot[key] ?? string.Empty);
-                }
-                return hash;
-            }
         }
 
         public void OnEvent(EventData photonEvent)

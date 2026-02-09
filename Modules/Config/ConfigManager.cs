@@ -40,6 +40,7 @@ namespace DeathHeadHopperFix.Modules.Config
         private static readonly Dictionary<string, RangeF> s_floatRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, RangeI> s_intRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, FieldInfo> s_hostControlledFields = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> s_hostRuntimeOverrides = new(StringComparer.Ordinal);
 
         internal static event Action? HostControlledChanged;
 
@@ -235,6 +236,12 @@ namespace DeathHeadHopperFix.Modules.Config
             var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var kvp in s_hostControlledFields)
             {
+                if (s_hostRuntimeOverrides.TryGetValue(kvp.Key, out var overrideValue))
+                {
+                    snapshot[kvp.Key] = overrideValue;
+                    continue;
+                }
+
                 var field = kvp.Value;
                 var value = field.GetValue(null);
                 snapshot[kvp.Key] = SerializeValue(value, field.FieldType);
@@ -263,11 +270,57 @@ namespace DeathHeadHopperFix.Modules.Config
                     continue;
                 }
 
+                if (s_hostRuntimeOverrides.TryGetValue(key, out var overrideValue))
+                {
+                    snapshot[key] = overrideValue;
+                    continue;
+                }
+
                 var value = field.GetValue(null);
                 snapshot[key] = SerializeValue(value, field.FieldType);
             }
 
             return snapshot;
+        }
+
+        internal static void SetHostRuntimeOverride(string key, string serializedValue)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            var normalized = key.Trim();
+            if (!s_hostControlledFields.ContainsKey(normalized))
+            {
+                return;
+            }
+
+            var value = serializedValue ?? string.Empty;
+            if (s_hostRuntimeOverrides.TryGetValue(normalized, out var current) &&
+                string.Equals(current, value, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            s_hostRuntimeOverrides[normalized] = value;
+            HostControlledChanged?.Invoke();
+        }
+
+        internal static void ClearHostRuntimeOverride(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            var normalized = key.Trim();
+            if (!s_hostRuntimeOverrides.Remove(normalized))
+            {
+                return;
+            }
+
+            HostControlledChanged?.Invoke();
         }
 
         internal static void ApplyHostSnapshot(Dictionary<string, string> snapshot)
