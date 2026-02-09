@@ -3,6 +3,7 @@
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
+using Photon.Pun;
 using System;
 using System.Collections.Generic;
 using System.Reflection;
@@ -437,12 +438,13 @@ namespace DeathHeadHopperFix
 
         private static bool JumpHandler_Update_Prefix(MonoBehaviour __instance)
         {
-            if (!FeatureFlags.BatteryJumpEnabled)
-                return true;
             if (__instance == null || _jumpHandlerJumpBufferField == null)
                 return true;
 
             if (_jumpHandlerJumpBufferField.GetValue(__instance) is not float buffer || buffer <= 0f)
+                return true;
+
+            if (!FeatureFlags.BatteryJumpEnabled)
                 return true;
 
             var module = __instance.gameObject.GetComponent<BatteryJumpModule>();

@@ -14,8 +14,10 @@ namespace DeathHeadHopperFix.Modules.Config
     {
         private const byte ConfigSyncEventCode = 79;
         private const float RuntimeReconcileIntervalSeconds = 0.75f;
+        private const float RuntimeRebroadcastIntervalSeconds = 5f;
         private static ConfigSyncManager? s_instance;
         private float _nextRuntimeReconcileAt;
+        private float _nextRuntimeRebroadcastAt;
         private int _lastSnapshotHash;
 
         internal static void EnsureCreated()
@@ -36,6 +38,7 @@ namespace DeathHeadHopperFix.Modules.Config
             PhotonNetwork.AddCallbackTarget(this);
             ConfigManager.HostControlledChanged += OnHostControlledChanged;
             _nextRuntimeReconcileAt = 0f;
+            _nextRuntimeRebroadcastAt = 0f;
             _lastSnapshotHash = 0;
             TrySendSnapshot();
         }
@@ -105,10 +108,16 @@ namespace DeathHeadHopperFix.Modules.Config
             var hash = ComputeSnapshotHash(snapshot);
             if (hash == _lastSnapshotHash)
             {
+                if (Time.unscaledTime >= _nextRuntimeRebroadcastAt)
+                {
+                    _nextRuntimeRebroadcastAt = Time.unscaledTime + RuntimeRebroadcastIntervalSeconds;
+                    TrySendSnapshot();
+                }
                 return;
             }
 
             _lastSnapshotHash = hash;
+            _nextRuntimeRebroadcastAt = Time.unscaledTime + RuntimeRebroadcastIntervalSeconds;
             TrySendSnapshot();
         }
 

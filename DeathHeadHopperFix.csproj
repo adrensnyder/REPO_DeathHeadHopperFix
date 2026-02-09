@@ -104,15 +104,16 @@
 		<PackageReference Include="System.Memory" Version="4.5.5" />
 	</ItemGroup>
 
-	<Target Name="PostBuildThunderstoreManifest" AfterTargets="PostBuildEvent" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix')">
-		<Copy SourceFiles="$(TargetPath)" DestinationFolder="Thunderstore\AdrenSnyder-DeathHeadHopperFix" />
+	<Target Name="PostBuildThunderstoreManifest" AfterTargets="PostBuildEvent" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix\plugins\')">
+		<Copy SourceFiles="$(TargetPath)" DestinationFolder="Thunderstore\AdrenSnyder-DeathHeadHopperFix\plugins" />
 		<Message Text="Copied $(TargetFileName) to Thunderstore manifest folder" Importance="high" />
 	</Target>
-
-	<!--<Target Name="PostBuildThunderstoreZip" AfterTargets="Build" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix')">
+	
+	
+	<Target Name="PostBuildThunderstoreZip" AfterTargets="Build" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix')">
 		<Exec Command="powershell -NoProfile -Command &quot;Compress-Archive -Path 'Thunderstore\AdrenSnyder-DeathHeadHopperFix\*' -DestinationPath 'Thunderstore\$(ThunderstoreZipFileName)' -Force&quot;" />
 		<Message Text="Created Thunderstore\$(ThunderstoreZipFileName)" Importance="high" />
-	</Target>-->
+	</Target>
 	
 
 </Project>

@@ -11,6 +11,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
 {
     internal static class PlayerTruckDistanceHelper
     {
+        private const float CacheTtlSeconds = 0.9f;
         internal readonly struct PlayerTruckDistance
         {
             internal PlayerTruckDistance(PlayerAvatar playerAvatar, float navMeshDistance, float heightDelta, int shortestRoomPathToTruck, int totalMapRooms, bool hasValidPath)
@@ -70,6 +71,17 @@ namespace DeathHeadHopperFix.Modules.Utilities
             new[] { typeof(Vector3), typeof(Vector3), typeof(int), s_navMeshPathType },
             null);
         private static readonly PropertyInfo? s_navMeshPathCornersProperty = s_navMeshPathType?.GetProperty("corners");
+        private static PlayerTruckDistance[]? s_cachedDistances;
+        private static float s_cachedAtTime;
+        private static int s_cachedSignature;
+        private static object? s_cachedGraphLevelGenerator;
+        private static int s_cachedGraphPointCount;
+        private static Dictionary<object, HashSet<object>>? s_cachedRoomGraph;
+
+        internal static void PrimeDistancesCache()
+        {
+            _ = GetDistancesFromTruck();
+        }
 
         internal static PlayerTruckDistance[] GetDistancesFromTruck()
         {
@@ -96,7 +108,14 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 return Array.Empty<PlayerTruckDistance>();
             }
 
-            var roomGraph = BuildRoomGraph(allLevelPoints);
+            var signature = ComputeSignature(director.PlayerList);
+            var age = Time.unscaledTime - s_cachedAtTime;
+            if (s_cachedDistances != null && s_cachedSignature == signature && age >= 0f && age <= CacheTtlSeconds)
+            {
+                return s_cachedDistances;
+            }
+
+            var roomGraph = GetOrBuildRoomGraph(levelGenerator, allLevelPoints);
             var totalMapRooms = roomGraph.Count > 0 ? roomGraph.Count : -1;
             var distances = new List<PlayerTruckDistance>(director.PlayerList.Count);
             foreach (var player in director.PlayerList)
@@ -122,7 +141,55 @@ namespace DeathHeadHopperFix.Modules.Utilities
                     hasPath));
             }
 
-            return distances.ToArray();
+            var result = distances.ToArray();
+            s_cachedDistances = result;
+            s_cachedSignature = signature;
+            s_cachedAtTime = Time.unscaledTime;
+            return result;
+        }
+
+        private static int ComputeSignature(IList<PlayerAvatar> players)
+        {
+            unchecked
+            {
+                var hash = 17;
+                var runManager = RunManager.instance;
+                hash = (hash * 31) + (runManager != null ? runManager.levelsCompleted : 0);
+                for (var i = 0; i < players.Count; i++)
+                {
+                    var p = players[i];
+                    if (p == null)
+                    {
+                        continue;
+                    }
+
+                    var actor = p.photonView?.Owner?.ActorNumber ?? 0;
+                    var pos = GetPlayerWorldPosition(p);
+                    hash = (hash * 31) + actor;
+                    hash = (hash * 31) + Mathf.RoundToInt(pos.x);
+                    hash = (hash * 31) + Mathf.RoundToInt(pos.y);
+                    hash = (hash * 31) + Mathf.RoundToInt(pos.z);
+                }
+
+                return hash;
+            }
+        }
+
+        private static Dictionary<object, HashSet<object>> GetOrBuildRoomGraph(object levelGenerator, List<object>? allLevelPoints)
+        {
+            var pointCount = allLevelPoints?.Count ?? 0;
+            if (s_cachedRoomGraph != null &&
+                ReferenceEquals(levelGenerator, s_cachedGraphLevelGenerator) &&
+                s_cachedGraphPointCount == pointCount)
+            {
+                return s_cachedRoomGraph;
+            }
+
+            var graph = BuildRoomGraph(allLevelPoints);
+            s_cachedGraphLevelGenerator = levelGenerator;
+            s_cachedGraphPointCount = pointCount;
+            s_cachedRoomGraph = graph;
+            return graph;
         }
 
         private static bool TryGetTruckTarget(object levelGenerator, List<object>? allLevelPoints, out Vector3 truckPosition, out object? truckPoint)

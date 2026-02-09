@@ -243,6 +243,33 @@ namespace DeathHeadHopperFix.Modules.Config
             return snapshot;
         }
 
+        internal static Dictionary<string, string> SnapshotHostControlledKeys(IEnumerable<string> keys)
+        {
+            var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (keys == null)
+            {
+                return snapshot;
+            }
+
+            foreach (var key in keys)
+            {
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                if (!s_hostControlledFields.TryGetValue(key, out var field))
+                {
+                    continue;
+                }
+
+                var value = field.GetValue(null);
+                snapshot[key] = SerializeValue(value, field.FieldType);
+            }
+
+            return snapshot;
+        }
+
         internal static void ApplyHostSnapshot(Dictionary<string, string> snapshot)
         {
             if (snapshot == null)

@@ -81,7 +81,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static readonly HashSet<int> LastChanceSurrenderedPlayers = new();
         private static float s_surrenderHoldTimer;
         private static bool s_localSurrendered;
-        private static bool s_jumpDistanceLogged;
+        private static bool s_surrenderDistanceLogged;
         private static float s_directionCooldownUntil;
         private static float s_directionActiveUntil;
         private static bool s_directionActive;
@@ -106,8 +106,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static int s_lastTimerWarningAudioPlayed = -1;
         private static int s_lastNetworkTimerBroadcastSecond = -1;
         private static bool s_timerSyncedFromHost;
+        private static bool s_hasNetworkUiState;
+        private static int s_networkUiRequiredOnTruck;
+        private static readonly Dictionary<int, NetworkUiPlayerState> s_networkUiStatesByActor = new();
+        private static float s_lastUiStateBroadcastAt;
+        private static int s_lastUiStateHash;
+        private static bool s_suppressedForRoom;
+        private static bool s_suppressedLogEmitted;
         private static DynamicTimerInputs s_cachedDynamicTimerInputs;
         private static bool s_hasCachedDynamicTimerInputs;
+        private static string? s_lastTruckStateDebugMessage;
+        private const float UiStateBroadcastIntervalSeconds = 0.2f;
+
+        private readonly struct NetworkUiPlayerState
+        {
+            internal NetworkUiPlayerState(bool isInTruck, bool isSurrendered)
+            {
+                IsInTruck = isInTruck;
+                IsSurrendered = isSurrendered;
+            }
+
+            internal bool IsInTruck { get; }
+            internal bool IsSurrendered { get; }
+        }
 
         private static readonly Type? s_levelGeneratorType = AccessTools.TypeByName("LevelGenerator");
         private static readonly FieldInfo? s_levelGeneratorInstanceField = s_levelGeneratorType == null ? null : AccessTools.Field(s_levelGeneratorType, "Instance");
@@ -165,6 +186,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
 
         internal static bool IsActive => s_active;
+        internal static bool IsSuppressedForRoom => s_suppressedForRoom;
         internal static bool IsDirectionIndicatorUiVisible =>
             s_active &&
             AllPlayersDeadGuard.AllPlayersDisabled() &&
@@ -187,6 +209,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         internal static void OnLevelLoaded()
         {
+            s_suppressedForRoom = false;
+            s_suppressedLogEmitted = false;
             ClearSurrenderState();
             ClearCachedDynamicTimerInputs();
 
@@ -217,6 +241,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            if (s_suppressedForRoom)
+            {
+                ForceStopRuntimeState();
+                return;
+            }
+
             if (!IsValidRunContext())
             {
                 ResetState();
@@ -226,6 +256,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var allDead = AllPlayersDeadGuard.AllPlayersDisabled();
             if (!allDead)
             {
+                // Pre-warm heavy distance/path data before LastChance starts to reduce activation hitch.
+                if (!SemiFunc.IsMultiplayer() || SemiFunc.IsMasterClient())
+                {
+                    PlayerTruckDistanceHelper.PrimeDistancesCache();
+                }
                 ResetState();
                 return;
             }
@@ -291,7 +326,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             CaptureBaseCurrency();
             LastChanceSurrenderNetwork.EnsureCreated();
             LastChanceTimerUI.Show(SurrenderHintPrompt);
-            s_jumpDistanceLogged = false;
+            s_surrenderDistanceLogged = false;
+            s_hasNetworkUiState = false;
+            s_networkUiRequiredOnTruck = 0;
+            s_networkUiStatesByActor.Clear();
+            s_lastUiStateBroadcastAt = 0f;
+            s_lastUiStateHash = 0;
             BroadcastTimerStateIfHost(force: true);
 
             if (FeatureFlags.DebugLogging)
@@ -386,11 +426,60 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_currencyCaptured = false;
             s_timerRemaining = 0f;
             s_timerSyncedFromHost = false;
+            s_hasNetworkUiState = false;
+            s_networkUiRequiredOnTruck = 0;
+            s_networkUiStatesByActor.Clear();
+            s_lastUiStateBroadcastAt = 0f;
+            s_lastUiStateHash = 0;
             StopTimerSecondAudio();
             LastChanceTimerUI.Hide();
             AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
             LastChanceSpectateHelper.ResetForceState();
             LastChanceSaveDeleteState.ResetAutoDeleteBlock();
+            BroadcastTimerStateIfHost(force: true);
+        }
+
+        internal static void SuppressForCurrentRoom(string reason)
+        {
+            s_suppressedForRoom = true;
+            ForceStopRuntimeState();
+
+            if (FeatureFlags.DebugLogging && !s_suppressedLogEmitted && LogLimiter.ShouldLog("LastChance.Suppress", 10))
+            {
+                s_suppressedLogEmitted = true;
+                Debug.Log(reason);
+            }
+        }
+
+        internal static void ClearRoomSuppression()
+        {
+            s_suppressedForRoom = false;
+            s_suppressedLogEmitted = false;
+        }
+
+        private static void ForceStopRuntimeState()
+        {
+            if (!HasRuntimeStateToReset())
+            {
+                return;
+            }
+
+            ClearSurrenderState();
+            ClearCachedDynamicTimerInputs();
+            s_active = false;
+            s_currencyCaptured = false;
+            s_timerRemaining = 0f;
+            s_timerSyncedFromHost = false;
+            s_hasNetworkUiState = false;
+            s_networkUiRequiredOnTruck = 0;
+            s_networkUiStatesByActor.Clear();
+            s_lastUiStateBroadcastAt = 0f;
+            s_lastUiStateHash = 0;
+            StopTimerSecondAudio();
+            LastChanceTimerUI.Hide();
+            LastChanceSpectateHelper.ResetForceState();
+            LastChanceSaveDeleteState.AllowAutoDelete();
+            AllPlayersDeadGuard.AllowVanillaAllPlayersDead();
             BroadcastTimerStateIfHost(force: true);
         }
 
@@ -658,7 +747,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (s_surrenderHoldTimer <= 0f)
             {
-                TryLogTruckDistancesForJump();
+                TryLogTruckDistancesForSurrender();
             }
 
             s_surrenderHoldTimer += Time.deltaTime;
@@ -695,18 +784,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 s_surrenderHoldTimer = 0f;
                 LastChanceTimerUI.ResetSurrenderHint();
             }
-            s_jumpDistanceLogged = false;
+            s_surrenderDistanceLogged = false;
         }
 
-        private static void TryLogTruckDistancesForJump()
+        private static void TryLogTruckDistancesForSurrender()
         {
-            if (!FeatureFlags.LastChangeMode || !FeatureFlags.DebugLogging || s_jumpDistanceLogged)
+            if (!FeatureFlags.LastChangeMode || !FeatureFlags.DebugLogging || s_surrenderDistanceLogged)
             {
                 return;
             }
 
             LastChanceTruckDistanceLogger.LogDistances();
-            s_jumpDistanceLogged = true;
+            s_surrenderDistanceLogged = true;
         }
 
         private static int GetLocalActorNumber()
@@ -774,9 +863,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
+            {
+                if (!s_hasNetworkUiState)
+                {
+                    return;
+                }
+
+                var localSnapshots = PlayerStateExtractionHelper.GetPlayersStateSnapshot();
+                var authoritativeSnapshots = BuildUiSnapshotsFromNetwork(localSnapshots);
+                LastChanceTimerUI.UpdatePlayerStates(authoritativeSnapshots, Mathf.Max(1, s_networkUiRequiredOnTruck));
+                return;
+            }
+
             var snapshots = PlayerStateExtractionHelper.GetPlayersStateSnapshot();
             var required = GetLastChanceNeededPlayers(maxPlayers);
             LastChanceTimerUI.UpdatePlayerStates(snapshots, required);
+            TryBroadcastUiStateIfHost(snapshots, required);
         }
 
         internal static bool IsPlayerSurrenderedForData(PlayerAvatar? player)
@@ -789,9 +892,156 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             LastChanceSurrenderedPlayers.Clear();
             s_surrenderHoldTimer = 0f;
             s_localSurrendered = false;
+            s_hasNetworkUiState = false;
+            s_networkUiRequiredOnTruck = 0;
+            s_networkUiStatesByActor.Clear();
+            s_lastUiStateBroadcastAt = 0f;
+            s_lastUiStateHash = 0;
             StopTimerSecondAudio();
             LastChanceTimerUI.ResetSurrenderHint();
             ClearIndicatorsState();
+        }
+
+        internal static void ApplyNetworkUiState(int requiredOnTruck, object[] statesPayload, int senderActorNumber)
+        {
+            if (!SemiFunc.IsMultiplayer())
+            {
+                return;
+            }
+
+            var masterActor = PhotonNetwork.MasterClient?.ActorNumber ?? -1;
+            if (masterActor <= 0 || senderActorNumber != masterActor)
+            {
+                return;
+            }
+
+            s_networkUiStatesByActor.Clear();
+            for (var i = 0; i < statesPayload.Length; i++)
+            {
+                if (statesPayload[i] is not object[] row || row.Length < 3)
+                {
+                    continue;
+                }
+
+                if (row[0] is not int actorNumber || actorNumber <= 0)
+                {
+                    continue;
+                }
+
+                if (row[1] is not bool isInTruck || row[2] is not bool isSurrendered)
+                {
+                    continue;
+                }
+
+                s_networkUiStatesByActor[actorNumber] = new NetworkUiPlayerState(isInTruck, isSurrendered);
+            }
+
+            s_networkUiRequiredOnTruck = Mathf.Max(1, requiredOnTruck);
+            s_hasNetworkUiState = true;
+        }
+
+        private static List<PlayerStateExtractionHelper.PlayerStateSnapshot> BuildUiSnapshotsFromNetwork(
+            List<PlayerStateExtractionHelper.PlayerStateSnapshot> localSnapshots)
+        {
+            if (localSnapshots == null || localSnapshots.Count == 0)
+            {
+                return localSnapshots ?? new List<PlayerStateExtractionHelper.PlayerStateSnapshot>(0);
+            }
+
+            var merged = new List<PlayerStateExtractionHelper.PlayerStateSnapshot>(localSnapshots.Count);
+            for (var i = 0; i < localSnapshots.Count; i++)
+            {
+                var snapshot = localSnapshots[i];
+                if (snapshot.ActorNumber > 0 && s_networkUiStatesByActor.TryGetValue(snapshot.ActorNumber, out var networkState))
+                {
+                    merged.Add(new PlayerStateExtractionHelper.PlayerStateSnapshot(
+                        snapshot.ActorNumber,
+                        snapshot.SteamIdShort,
+                        snapshot.Name,
+                        snapshot.Color,
+                        snapshot.IsAlive,
+                        snapshot.IsDead,
+                        networkState.IsInTruck,
+                        networkState.IsSurrendered,
+                        snapshot.SourceOrder));
+                }
+                else
+                {
+                    merged.Add(snapshot);
+                }
+            }
+
+            return merged;
+        }
+
+        private static void TryBroadcastUiStateIfHost(
+            List<PlayerStateExtractionHelper.PlayerStateSnapshot> snapshots,
+            int requiredOnTruck)
+        {
+            if (!SemiFunc.IsMultiplayer() || !SemiFunc.IsMasterClient())
+            {
+                return;
+            }
+
+            if (Time.time < s_lastUiStateBroadcastAt + UiStateBroadcastIntervalSeconds)
+            {
+                return;
+            }
+
+            var hash = ComputeUiStateHash(snapshots, requiredOnTruck);
+            if (hash == s_lastUiStateHash && s_lastUiStateBroadcastAt > 0f)
+            {
+                return;
+            }
+
+            var payload = BuildUiStatePayload(snapshots);
+            LastChanceSurrenderNetwork.NotifyUiState(Mathf.Max(1, requiredOnTruck), payload);
+            s_lastUiStateHash = hash;
+            s_lastUiStateBroadcastAt = Time.time;
+        }
+
+        private static object[] BuildUiStatePayload(List<PlayerStateExtractionHelper.PlayerStateSnapshot> snapshots)
+        {
+            if (snapshots == null || snapshots.Count == 0)
+            {
+                return Array.Empty<object>();
+            }
+
+            var rows = new List<object>(snapshots.Count);
+            for (var i = 0; i < snapshots.Count; i++)
+            {
+                var s = snapshots[i];
+                if (s.ActorNumber <= 0)
+                {
+                    continue;
+                }
+
+                rows.Add(new object[] { s.ActorNumber, s.IsInTruck, s.IsSurrendered });
+            }
+
+            return rows.ToArray();
+        }
+
+        private static int ComputeUiStateHash(List<PlayerStateExtractionHelper.PlayerStateSnapshot> snapshots, int requiredOnTruck)
+        {
+            unchecked
+            {
+                var hash = requiredOnTruck * 397;
+                if (snapshots == null)
+                {
+                    return hash;
+                }
+
+                for (var i = 0; i < snapshots.Count; i++)
+                {
+                    var s = snapshots[i];
+                    hash = (hash * 31) + s.ActorNumber;
+                    hash = (hash * 31) + (s.IsInTruck ? 1 : 0);
+                    hash = (hash * 31) + (s.IsSurrendered ? 1 : 0);
+                }
+
+                return hash;
+            }
         }
 
         private static void TryPlayLastChanceTimerSecondTick()
@@ -1104,9 +1354,38 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         {
             if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
             {
+                LastChanceSurrenderNetwork.NotifyDirectionPenaltyRequest();
                 return;
             }
 
+            ApplyIndicatorPenaltyHost(maxPlayers);
+        }
+
+        internal static void HandleDirectionPenaltyRequest(int senderActorNumber)
+        {
+            if (!SemiFunc.IsMultiplayer() || !SemiFunc.IsMasterClient())
+            {
+                return;
+            }
+
+            if (!s_active || !AllPlayersDeadGuard.AllPlayersDisabled())
+            {
+                return;
+            }
+
+            // Sender is currently informational; host computes authoritative penalty and syncs timer.
+            _ = senderActorNumber;
+            var maxPlayers = GetRunPlayerCount();
+            if (maxPlayers <= 0)
+            {
+                return;
+            }
+
+            ApplyIndicatorPenaltyHost(maxPlayers);
+        }
+
+        private static void ApplyIndicatorPenaltyHost(int maxPlayers)
+        {
             var penalty = CalculateIndicatorPenaltySeconds(maxPlayers);
             if (penalty <= 0f)
             {
@@ -1120,25 +1399,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static float CalculateIndicatorPenaltySeconds(int maxPlayers)
         {
-            var inputs = GetDynamicTimerInputsForRuntime(maxPlayers);
-            var difficulty = EstimateDifficulty01(inputs);
-            var easyPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyEasySeconds);
-            var hardPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyHardSeconds);
+            _ = maxPlayers;
+            var maxPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyMaxSeconds);
+            var minPenalty = Mathf.Max(0f, FeatureFlags.LastChanceIndicatorDirectionPenaltyMinSeconds);
+            if (minPenalty > maxPenalty)
+            {
+                (minPenalty, maxPenalty) = (maxPenalty, minPenalty);
+            }
 
-            var maxPenalty = Mathf.Max(easyPenalty, hardPenalty);
-            var minPenalty = Mathf.Min(easyPenalty, hardPenalty);
-            return Mathf.Lerp(maxPenalty, minPenalty, difficulty);
-        }
+            // Static timer mode: always use maximum penalty.
+            if (!FeatureFlags.LastChanceDynamicTimerEnabled)
+            {
+                return maxPenalty;
+            }
 
-        private static float EstimateDifficulty01(DynamicTimerInputs inputs)
-        {
-            var levelFactor = Mathf.Clamp01((inputs.LevelNumber - 1f) / 20f);
-            var distanceFactor = Mathf.Clamp01(inputs.TotalDistanceMeters / 300f);
-            var roomFactor = Mathf.Clamp01(inputs.TotalShortestRoomPathSteps / 28f);
-            var altitudeFactor = Mathf.Clamp01(inputs.TotalBelowTruckMeters / 25f);
-            var monsterFactor = Mathf.Clamp01(inputs.AliveSearchMonsters / 10f);
-            var weighted = levelFactor * 0.2f + distanceFactor * 0.35f + roomFactor * 0.2f + altitudeFactor * 0.1f + monsterFactor * 0.15f;
-            return Mathf.Clamp01(weighted);
+            var level = GetCurrentLevelNumber();
+            var maxAtLevel = Mathf.Max(2, FeatureFlags.LastChanceDynamicMaxMinutesAtLevel);
+            var normalized = Mathf.Clamp01((Mathf.Max(1, level) - 1f) / (maxAtLevel - 1f));
+            return Mathf.Lerp(maxPenalty, minPenalty, normalized);
         }
 
         private static void TickActiveIndicator(IndicatorKind kind)
@@ -1564,17 +1842,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void DebugTruckState(bool allDead)
         {
-            if (!FeatureFlags.DebugLogging || !FeatureFlags.LastChangeMode || !FeatureFlags.BatteryJumpEnabled)
+            if (!FeatureFlags.DebugLogging || !FeatureFlags.LastChangeMode)
             {
                 return;
             }
 
             if (!allDead)
-            {
-                return;
-            }
-
-            if (!LogLimiter.ShouldLog("LastChance.TruckState", 30))
             {
                 return;
             }
@@ -1621,6 +1894,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 message += $" {name}(deadHead,roomInTruck={dhRoomInTruck},inTruck={dhInTruck})";
             }
 
+            if (string.Equals(s_lastTruckStateDebugMessage, message, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            s_lastTruckStateDebugMessage = message;
             Debug.Log(message);
         }
 
@@ -1759,8 +2038,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var inputs = CollectDynamicTimerInputs(maxPlayers);
             CacheDynamicTimerInputs(inputs);
             var rawAddedSeconds = CalculateRawAddedSeconds(inputs);
-            var growthCapSeconds = GetLevelGrowthCapSeconds(baseSeconds, maxSeconds, inputs.LevelNumber);
-            var finalSeconds = Mathf.Clamp(baseSeconds + rawAddedSeconds, 30f, growthCapSeconds);
+            var dynamicSeconds = baseSeconds + rawAddedSeconds;
+            var levelFloorSeconds = GetLevelFloorSeconds(inputs.LevelNumber, maxSeconds);
+            var finalSeconds = Mathf.Clamp(Mathf.Max(dynamicSeconds, levelFloorSeconds), 30f, maxSeconds);
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("LastChance.DynamicTimer", 30))
             {
@@ -1768,7 +2048,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                     $"[LastChance] DynamicTimer: base={baseSeconds:F1}s level={inputs.LevelNumber} required={inputs.RequiredPlayers} " +
                     $"totalDistance={inputs.TotalDistanceMeters:F1}m belowPlayers={inputs.PlayersBelowTruckThreshold} belowMeters={inputs.TotalBelowTruckMeters:F2} " +
                     $"aliveMonsters={inputs.AliveSearchMonsters} totalRoomSteps={inputs.TotalShortestRoomPathSteps} rawAdd={rawAddedSeconds:F1}s " +
-                    $"levelCap={growthCapSeconds:F1}s final={finalSeconds:F1}s hardCap={maxSeconds:F1}s");
+                    $"dynamic={dynamicSeconds:F1}s levelFloor={levelFloorSeconds:F1}s final={finalSeconds:F1}s hardCap={maxSeconds:F1}s");
             }
 
             return finalSeconds;
@@ -1910,7 +2190,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             try
             {
-                return Mathf.Max(1, Convert.ToInt32(runMgr.levelCurrent));
+                // Use actual run progression level (same semantic shown as LEVEL N in UI).
+                return Mathf.Max(1, runMgr.levelsCompleted + 1);
             }
             catch
             {
@@ -1930,7 +2211,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (FeatureFlags.LastChanceMonstersSearchEnabled)
             {
                 // MonstersSearch ON makes disabled players valid targets: add extra pressure on timer.
-                monsterSeconds *= 1.5f;
+                monsterSeconds *= 1.2f;
             }
             added += monsterSeconds;
             added *= CalculateLevelContributionMultiplier(inputs);
@@ -1939,28 +2220,31 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static float CalculateLevelContributionMultiplier(DynamicTimerInputs inputs)
         {
-            var perLevelPercent = Mathf.Max(0f, FeatureFlags.LastChanceTimerPerLevelSeconds) * 0.01f;
-            var levelMultiplier = 1f + (Mathf.Max(1, inputs.LevelNumber) - 1f) * perLevelPercent;
+            var maxAtLevel = Mathf.Max(2, FeatureFlags.LastChanceDynamicMaxMinutesAtLevel);
+            var effectiveLevel = Mathf.Min(Mathf.Max(1, inputs.LevelNumber), maxAtLevel);
+            var normalized = (effectiveLevel - 1f) / (maxAtLevel - 1f);
+
+            // Keep early-level dynamic bonus small (L1 ~55% of raw), then ramp to 100% by target level.
+            var levelScale = Mathf.Lerp(0.55f, 1f, normalized);
             var roomBase = Mathf.Max(1f, inputs.RequiredPlayers * 14f);
             var roomFactor = Mathf.Clamp01(inputs.TotalShortestRoomPathSteps / roomBase);
             var monsterFactor = Mathf.Clamp01(inputs.AliveSearchMonsters / 10f);
             var roomWeight = Mathf.Max(0f, FeatureFlags.LastChanceLevelContextRoomWeight);
             var monsterWeight = Mathf.Max(0f, FeatureFlags.LastChanceLevelContextMonsterWeight);
             var contextMultiplier = 1f + (roomFactor * roomWeight) + (monsterFactor * monsterWeight);
+            var contextScale = Mathf.Lerp(1f, contextMultiplier, normalized);
 
-            return Mathf.Max(1f, levelMultiplier * contextMultiplier);
+            return Mathf.Max(0.1f, levelScale * contextScale);
         }
 
-        private static float GetLevelGrowthCapSeconds(float baseSeconds, float maxSeconds, int levelNumber)
+        private static float GetLevelFloorSeconds(int levelNumber, float maxSeconds)
         {
-            if (maxSeconds <= baseSeconds)
-            {
-                return baseSeconds;
-            }
-
             var maxAtLevel = Mathf.Max(2, FeatureFlags.LastChanceDynamicMaxMinutesAtLevel);
-            var normalized = Mathf.Clamp01((Mathf.Max(1, levelNumber) - 1f) / (maxAtLevel - 1f));
-            return Mathf.Lerp(baseSeconds, maxSeconds, normalized);
+            var effectiveLevel = Mathf.Min(Mathf.Max(1, levelNumber), maxAtLevel);
+            var normalized = (effectiveLevel - 1f) / (maxAtLevel - 1f);
+            var baseSeconds = GetConfiguredSeconds();
+            var floorSeconds = Mathf.Lerp(baseSeconds, maxSeconds, normalized);
+            return Mathf.Clamp(floorSeconds, 30f, maxSeconds);
         }
 
         private static string FormatTimerText(float secondsRemaining)

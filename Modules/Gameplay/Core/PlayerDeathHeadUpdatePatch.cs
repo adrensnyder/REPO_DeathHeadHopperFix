@@ -1,20 +1,19 @@
-﻿using System.Reflection;
-using HarmonyLib;
-using UnityEngine;
+using System.Reflection;
 using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
+using HarmonyLib;
+using UnityEngine;
 
 #nullable enable
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.Core
 {
     [HarmonyPatch(typeof(PlayerDeathHead), "Update")]
     internal static class PlayerDeathHeadUpdatePatch
     {
         private static readonly FieldInfo s_triggeredField = AccessTools.Field(typeof(PlayerDeathHead), "triggered");
         private static readonly FieldInfo s_spectatePlayerField = AccessTools.Field(typeof(SpectateCamera), "player");
-
-        private static float _jumpTimer = 1f;
+        private static float s_jumpTimer = 1f;
 
         [HarmonyPrefix]
         private static void Prefix(PlayerDeathHead __instance, PhysGrabObject ___physGrabObject)
@@ -29,44 +28,40 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (s_triggeredField == null || s_triggeredField.GetValue(__instance) is not bool triggered || !triggered)
                 return;
 
-            ((Component)avatar).transform.position = ((Component)___physGrabObject).transform.position;
+            avatar.transform.position = ___physGrabObject.transform.position;
 
             if (SemiFunc.InputMovementX() != 0f || SemiFunc.InputMovementY() != 0f)
             {
-                // Avoid TargetExceptions by skipping SetValue when SpectateCamera.instance is null.
                 if (s_spectatePlayerField != null && SpectateCamera.instance != null)
                     s_spectatePlayerField.SetValue(SpectateCamera.instance, avatar);
             }
 
-            if (_jumpTimer > 0f)
+            if (s_jumpTimer > 0f)
             {
-                _jumpTimer -= Time.deltaTime;
+                s_jumpTimer -= Time.deltaTime;
                 return;
             }
 
             if (!SemiFunc.InputHold(InputKey.Jump))
                 return;
 
-            _jumpTimer = 1f;
-
+            s_jumpTimer = 1f;
             var cam = Camera.main;
             if (cam == null)
                 return;
 
-            Vector3 forward = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
-            Vector3 right = Vector3.Cross(Vector3.up, forward);
-
-            Vector3 dir = Vector3.zero;
-            float mx = SemiFunc.InputMovementX();
-            float my = SemiFunc.InputMovementY();
+            var forward = Vector3.ProjectOnPlane(cam.transform.forward, Vector3.up).normalized;
+            var right = Vector3.Cross(Vector3.up, forward);
+            var dir = Vector3.zero;
+            var mx = SemiFunc.InputMovementX();
+            var my = SemiFunc.InputMovementY();
 
             if (my > 0f) dir += forward;
             if (my < 0f) dir -= forward;
             if (mx < 0f) dir -= right;
             if (mx > 0f) dir += right;
 
-            dir += Vector3.up;
-            dir = dir.normalized * 4.8f;
+            dir = (dir + Vector3.up).normalized * 4.8f;
 
             if (FeatureFlags.BatteryJumpEnabled)
             {
@@ -85,12 +80,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 grabber.physGrabPointPullerPosition - dir,
                 Vector3.zero,
                 Vector3.zero);
-
             ___physGrabObject.GrabStarted(grabber);
             ___physGrabObject.GrabEnded(grabber);
 
-            // Battery consumption is centralized in BatteryJumpModule (head jump event listener).
-            // Keep this patch responsible only for LastChance jump movement/allowance.
+            if (FeatureFlags.BatteryJumpEnabled && !DHHBatteryHelper.HasRecentJumpConsumption())
+            {
+                var spectate = SpectateCamera.instance;
+                if (spectate != null)
+                {
+                    var usage = DHHBatteryHelper.GetEffectiveBatteryJumpUsage();
+                    var reference = DHHBatteryHelper.GetJumpThreshold();
+                    DHHBatteryHelper.ApplyConsumption(spectate, usage, reference);
+                }
+            }
         }
     }
 }

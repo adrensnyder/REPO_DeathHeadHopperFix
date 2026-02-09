@@ -79,6 +79,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return true;
             }
 
+            if (LastChanceTimerController.IsSuppressedForRoom)
+            {
+                return true;
+            }
+
             // LastChance must never intercept Arena/Shop flow.
             if (SemiFunc.RunIsArena() || SemiFunc.RunIsShop())
             {
@@ -152,6 +157,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return false;
 
             if (!FeatureFlags.LastChangeMode)
+                return true;
+
+            if (LastChanceTimerController.IsSuppressedForRoom)
                 return true;
 
             // Preserve vanilla all-dead behavior in Arena/Shop.

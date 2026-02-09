@@ -11,6 +11,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     {
         private const byte LastChanceSurrenderEventCode = 80;
         private const byte LastChanceTimerStateEventCode = 81;
+        private const byte LastChanceDirectionPenaltyRequestEventCode = 82;
+        private const byte LastChanceUiStateEventCode = 83;
         private static LastChanceSurrenderNetwork? s_instance;
 
         internal static void EnsureCreated()
@@ -62,6 +64,46 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 SendOptions.SendReliable);
         }
 
+        internal static void NotifyDirectionPenaltyRequest()
+        {
+            if (!PhotonNetwork.InRoom)
+            {
+                return;
+            }
+
+            EnsureCreated();
+            var options = new RaiseEventOptions
+            {
+                Receivers = ReceiverGroup.MasterClient
+            };
+
+            PhotonNetwork.RaiseEvent(
+                LastChanceDirectionPenaltyRequestEventCode,
+                null,
+                options,
+                SendOptions.SendReliable);
+        }
+
+        internal static void NotifyUiState(int requiredOnTruck, object[] playerStatesPayload)
+        {
+            if (!PhotonNetwork.InRoom)
+            {
+                return;
+            }
+
+            EnsureCreated();
+            var options = new RaiseEventOptions
+            {
+                Receivers = ReceiverGroup.All
+            };
+
+            PhotonNetwork.RaiseEvent(
+                LastChanceUiStateEventCode,
+                new object[] { requiredOnTruck, playerStatesPayload },
+                options,
+                SendOptions.SendReliable);
+        }
+
         public override void OnEnable()
         {
             base.OnEnable();
@@ -74,6 +116,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             PhotonNetwork.RemoveCallbackTarget(this);
         }
 
+        public override void OnMasterClientSwitched(Player newMasterClient)
+        {
+            base.OnMasterClientSwitched(newMasterClient);
+
+            LastChanceTimerController.SuppressForCurrentRoom(
+                "[LastChance] Master client switched; disabling LastChance and related runtime features for room safety.");
+        }
+
+        public override void OnJoinedRoom()
+        {
+            base.OnJoinedRoom();
+            LastChanceTimerController.ClearRoomSuppression();
+        }
+
+        public override void OnLeftRoom()
+        {
+            base.OnLeftRoom();
+            LastChanceTimerController.ClearRoomSuppression();
+        }
+
         public void OnEvent(EventData photonEvent)
         {
             if (photonEvent.Code == LastChanceTimerStateEventCode)
@@ -84,6 +146,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                     timerPayload[1] is float remaining)
                 {
                     LastChanceTimerController.ApplyNetworkTimerState(active, remaining);
+                }
+                return;
+            }
+
+            if (photonEvent.Code == LastChanceDirectionPenaltyRequestEventCode)
+            {
+                LastChanceTimerController.HandleDirectionPenaltyRequest(photonEvent.Sender);
+                return;
+            }
+
+            if (photonEvent.Code == LastChanceUiStateEventCode)
+            {
+                if (photonEvent.CustomData is object[] uiPayload &&
+                    uiPayload.Length >= 2 &&
+                    uiPayload[0] is int required &&
+                    uiPayload[1] is object[] states)
+                {
+                    LastChanceTimerController.ApplyNetworkUiState(required, states, photonEvent.Sender);
                 }
                 return;
             }

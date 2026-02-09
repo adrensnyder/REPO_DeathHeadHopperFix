@@ -29,15 +29,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
 
             var mAwake = AccessTools.Method(tPunManager, "Awake");
             var mEnsurePhotonView = AccessTools.Method(tPunManager, "EnsurePhotonView");
+            var mVersionCheck = AccessTools.Method(tPunManager, "VersionCheck");
 
             var awakePostfix = typeof(DHHPunViewFixModule).GetMethod(nameof(DHHPunManager_Awake_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             var ensurePrefix = typeof(DHHPunViewFixModule).GetMethod(nameof(DHHPunManager_EnsurePhotonView_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            var versionPrefix = typeof(DHHPunViewFixModule).GetMethod(nameof(DHHPunManager_VersionCheck_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
 
             if (mAwake != null && awakePostfix != null)
                 harmony.Patch(mAwake, postfix: new HarmonyMethod(awakePostfix));
 
             if (mEnsurePhotonView != null && ensurePrefix != null)
                 harmony.Patch(mEnsurePhotonView, prefix: new HarmonyMethod(ensurePrefix));
+
+            if (mVersionCheck != null && versionPrefix != null)
+                harmony.Patch(mVersionCheck, prefix: new HarmonyMethod(versionPrefix));
         }
 
         private static void DHHPunManager_Awake_Postfix(MonoBehaviour __instance)
@@ -70,6 +75,35 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
 
             // Keep original flow: DHH EnsurePhotonView may perform additional setup needed by clients.
+            return true;
+        }
+
+        private static bool DHHPunManager_VersionCheck_Prefix(MonoBehaviour __instance)
+        {
+            try
+            {
+                if (__instance == null)
+                    return false;
+
+                // Re-bind before VersionCheck to avoid sending RPC with illegal viewID 0.
+                BindDedicatedPhotonView(__instance);
+
+                var pv = __instance.GetComponent<PhotonView>();
+                if (pv == null || pv.ViewID <= 0)
+                {
+                    if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHPunView.VersionCheck.NoView", 30))
+                    {
+                        _log?.LogWarning("[Fix:DHHPunView] Skipping VersionCheck RPC because PhotonView ID is not valid yet.");
+                    }
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _log?.LogWarning($"DHHPunViewFix VersionCheck prefix failed: {ex.GetType().Name}");
+                return false;
+            }
+
             return true;
         }
 

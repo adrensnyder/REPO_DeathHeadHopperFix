@@ -22,6 +22,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         private static FieldInfo? s_abilitySpotsField;
         private static readonly HashSet<object> s_trackedSpots = new();
         private static readonly Dictionary<object, Vector3> s_spotBaseLocalPos = new();
+        private static readonly Dictionary<object, bool> s_lastDirectionVisibilityBySpot = new();
+        private static readonly Dictionary<object, string> s_lastDirectionCostLabelBySpot = new();
+        private static readonly Dictionary<object, float> s_lastDirectionProgressBySpot = new();
         private static float s_directionActivationProgress;
 
         private const int DirectionIndicatorSlotIndex = 1;
@@ -126,6 +129,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
 
             s_trackedSpots.Remove(__instance);
             s_spotBaseLocalPos.Remove(__instance);
+            s_lastDirectionVisibilityBySpot.Remove(__instance);
+            s_lastDirectionCostLabelBySpot.Remove(__instance);
+            s_lastDirectionProgressBySpot.Remove(__instance);
             AbilitySpotLabelOverlay.ClearLabel(__instance);
         }
 
@@ -229,29 +235,58 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 return;
 
             var visible = LastChanceTimerController.IsDirectionIndicatorUiVisible;
+            var previousVisible = s_lastDirectionVisibilityBySpot.TryGetValue(spot, out var prev) ? prev : (bool?)null;
+            s_lastDirectionVisibilityBySpot[spot] = visible;
             if (!visible)
             {
-                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("AbilityModule.DirectionIconHidden", 60))
+                if (FeatureFlags.DebugLogging && previousVisible != false)
                 {
                     Debug.Log($"[Fix:Ability] Slot2 hidden. slotIndex={slotIndex} visible={visible} mode={FeatureFlags.LastChanceIndicators}");
+                }
+                if (previousVisible == false)
+                {
+                    return;
                 }
                 AbilitySpotLabelOverlay.SetDirectionLabel(spot, string.Empty);
                 SlotCostOverrides.RestoreDefaultCostText(spot);
                 SlotVisualOverrides.RestoreDefaultIcon(spot);
                 SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
                 SlotLayoutOverrides.RestoreBasePosition(spot);
+                s_lastDirectionCostLabelBySpot.Remove(spot);
+                s_lastDirectionProgressBySpot.Remove(spot);
                 return;
             }
 
-            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("AbilityModule.DirectionIconApply", 60))
+            if (FeatureFlags.DebugLogging && previousVisible != true)
             {
                 Debug.Log($"[Fix:Ability] Slot2 apply icon. slotIndex={slotIndex} visible={visible} mode={FeatureFlags.LastChanceIndicators}");
             }
+            var costLabel = GetDirectionCostLabel();
+            var roundedProgress = Mathf.Round(s_directionActivationProgress * 1000f) * 0.001f;
+            var progressChanged = !s_lastDirectionProgressBySpot.TryGetValue(spot, out var lastProgress) ||
+                                  Mathf.Abs(lastProgress - roundedProgress) > 0.0001f;
+            var costChanged = !s_lastDirectionCostLabelBySpot.TryGetValue(spot, out var lastCostLabel) ||
+                              !string.Equals(lastCostLabel, costLabel, StringComparison.Ordinal);
+            var becameVisible = previousVisible != true;
+            if (!becameVisible && !progressChanged && !costChanged)
+            {
+                return;
+            }
+
             AbilitySpotLabelOverlay.SetDirectionLabel(spot, string.Empty);
-            SlotCostOverrides.SetDirectionCostText(spot, GetDirectionCostLabel());
-            SlotVisualOverrides.ApplyDirectionIcon(spot, DirectionIconFileName);
-            SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
-            SlotLayoutOverrides.EnsureBasePosition(spot);
+            if (becameVisible || costChanged)
+            {
+                SlotCostOverrides.SetDirectionCostText(spot, costLabel);
+                SlotVisualOverrides.ApplyDirectionIcon(spot, DirectionIconFileName);
+                SlotLayoutOverrides.EnsureBasePosition(spot);
+                s_lastDirectionCostLabelBySpot[spot] = costLabel;
+            }
+
+            if (becameVisible || progressChanged)
+            {
+                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, roundedProgress);
+                s_lastDirectionProgressBySpot[spot] = roundedProgress;
+            }
         }
 
         private static string GetDirectionCostLabel()

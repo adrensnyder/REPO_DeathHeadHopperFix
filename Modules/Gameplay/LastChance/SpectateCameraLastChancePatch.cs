@@ -28,6 +28,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool s_checkedDhhAccessors;
         private static bool s_missingDhhAccessors;
         private static bool s_warnedAccessorFailure;
+        private static string? s_lastSpectateDebugMessage;
 
         internal static bool AllPlayersDisabled()
         {
@@ -214,11 +215,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            if (!LogLimiter.ShouldLog(DebugStateLogKey, 120))
-            {
-                return;
-            }
-
             var local = PlayerAvatar.instance;
             var spectatePlayer = (spectate != null && s_spectatePlayerField != null)
                 ? s_spectatePlayerField.GetValue(spectate) as PlayerAvatar
@@ -262,9 +258,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             var spName = spectatePlayer != null ? spectatePlayer.GetType().Name : "null";
             var lpName = local != null ? local.GetType().Name : "null";
-            UnityEngine.Debug.Log(
+            var message =
                 $"[LastChance] SpectateState: spectatePlayer={spName} local={lpName} isSpectateLocal={isSpectateLocal} " +
-                $"DHH.LocalActive={localActive} DHH.Spectatable={spectatable} DHH.Spectated={spectated}");
+                $"DHH.LocalActive={localActive} DHH.Spectatable={spectatable} DHH.Spectated={spectated}";
+            if (string.Equals(s_lastSpectateDebugMessage, message, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            s_lastSpectateDebugMessage = message;
+            UnityEngine.Debug.Log(message);
         }
 
         internal static bool ShouldForceLocalDeathHeadSpectate()
