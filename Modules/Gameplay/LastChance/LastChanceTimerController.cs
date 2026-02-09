@@ -30,6 +30,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     internal static class LastChanceTimerController
     {
         private const string LogKey = "LastChance.Timer";
+        private const string BatteryJumpEnabledKey = nameof(FeatureFlags.BatteryJumpEnabled);
         private const string TimerSecondAudioFileName = "TimerSecond.mp3";
         private const string TimerWarningAudioPrimaryFileName = "TimeWarning.mp3";
         private const string TimerWarningAudioFallbackFileName = "TimerWarning.mp3";
@@ -117,6 +118,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static int s_lastUiStateHash;
         private static bool s_suppressedForRoom;
         private static bool s_suppressedLogEmitted;
+        private static bool s_lastChanceBatteryOverrideApplied;
         private static DynamicTimerInputs s_cachedDynamicTimerInputs;
         private static bool s_hasCachedDynamicTimerInputs;
         private static string? s_lastTruckStateDebugMessage;
@@ -217,6 +219,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_suppressedLogEmitted = false;
             ClearSurrenderState();
             ClearCachedDynamicTimerInputs();
+            ClearLastChanceHostRuntimeOverrides();
 
             if (!s_active)
             {
@@ -227,7 +230,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            s_active = false;
+            SetLastChanceActive(false);
             s_currencyCaptured = false;
             s_timerRemaining = 0f;
             s_timerSyncedFromHost = false;
@@ -317,7 +320,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         private static void StartTimer(int maxPlayers)
         {
-            s_active = true;
+            SetLastChanceActive(true);
             if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
             {
                 s_timerRemaining = Mathf.Max(30f, GetConfiguredSeconds());
@@ -377,7 +380,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             LastChanceTimerUI.Hide();
-            s_active = false;
+            SetLastChanceActive(false);
             s_timerSyncedFromHost = false;
             StopTimerSecondAudio();
             BroadcastTimerStateIfHost(force: true);
@@ -432,7 +435,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            s_active = false;
+            SetLastChanceActive(false);
             s_currencyCaptured = false;
             s_timerRemaining = 0f;
             s_timerSyncedFromHost = false;
@@ -476,7 +479,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             ClearSurrenderState();
             ClearCachedDynamicTimerInputs();
-            s_active = false;
+            SetLastChanceActive(false);
             s_currencyCaptured = false;
             s_timerRemaining = 0f;
             s_timerSyncedFromHost = false;
@@ -672,7 +675,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             LastChanceTimerUI.Hide();
             s_timerRemaining = 0f;
-            s_active = false;
+            SetLastChanceActive(false);
             s_timerSyncedFromHost = false;
             StopTimerSecondAudio();
             BroadcastTimerStateIfHost(force: true);
@@ -702,7 +705,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            s_active = active;
+            SetLastChanceActive(active);
             s_timerSyncedFromHost = active;
             s_timerRemaining = Mathf.Max(0f, secondsRemaining);
             s_lastNetworkTimerBroadcastSecond = Mathf.CeilToInt(s_timerRemaining);
@@ -2265,6 +2268,45 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             var color = seconds <= 30 ? FlashColor : TimerColor;
             var colorHex = ColorUtility.ToHtmlStringRGB(color);
             return $"<color=#{colorHex}><b>LAST CHANCE</b>  {minutes:0}:{secs:00}</color>";
+        }
+
+        private static void SetLastChanceActive(bool active)
+        {
+            s_active = active;
+            if (active)
+            {
+                ApplyLastChanceHostRuntimeOverrides();
+                return;
+            }
+
+            ClearLastChanceHostRuntimeOverrides();
+        }
+
+        private static void ApplyLastChanceHostRuntimeOverrides()
+        {
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
+            {
+                return;
+            }
+
+            if (s_lastChanceBatteryOverrideApplied || !FeatureFlags.BatteryJumpEnabled)
+            {
+                return;
+            }
+
+            ConfigManager.SetHostRuntimeOverride(BatteryJumpEnabledKey, bool.FalseString);
+            s_lastChanceBatteryOverrideApplied = true;
+        }
+
+        private static void ClearLastChanceHostRuntimeOverrides()
+        {
+            if (!s_lastChanceBatteryOverrideApplied)
+            {
+                return;
+            }
+
+            ConfigManager.ClearHostRuntimeOverride(BatteryJumpEnabledKey);
+            s_lastChanceBatteryOverrideApplied = false;
         }
     }
 
