@@ -1,7 +1,9 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using System.Reflection;
+using System.Reflection.Emit;
 using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using UnityEngine;
@@ -23,6 +25,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
             AccessTools.Field(typeof(PlayerVoiceChat), "ttsAudioSource");
         private static readonly FieldInfo? VoiceOverrideNoTalkAnimationTimerField =
             AccessTools.Field(typeof(PlayerVoiceChat), "overrideNoTalkAnimationTimer");
+        private static readonly FieldInfo? HeadSpectatedField =
+            AccessTools.Field(typeof(PlayerDeathHead), "spectated");
+        private static readonly Type? DhhControllerType =
+            AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController");
+        private static readonly FieldInfo? DhhControllerSpectatedField =
+            DhhControllerType == null ? null : AccessTools.Field(DhhControllerType, "spectated");
 
         internal static void ResetRuntimeState()
         {
@@ -71,11 +79,71 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
             ForceTalkAnimationEnabled(__instance);
         }
 
+        [HarmonyTranspiler]
+        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
+        {
+            if (HeadSpectatedField == null)
+            {
+                return instructions;
+            }
+
+            var replacement = AccessTools.Method(typeof(LastChanceMonstersVoiceEnemyOnlyModule), nameof(GetEffectiveHeadSpectated));
+            if (replacement == null)
+            {
+                return instructions;
+            }
+
+            var list = new List<CodeInstruction>(instructions);
+            for (var i = 0; i < list.Count; i++)
+            {
+                var ins = list[i];
+                if (ins.opcode == OpCodes.Ldfld && ins.operand is FieldInfo f && f == HeadSpectatedField)
+                {
+                    ins.opcode = OpCodes.Call;
+                    ins.operand = replacement;
+                }
+            }
+
+            return list;
+        }
+
         private static bool ShouldApply(PlayerAvatar player)
         {
             return FeatureFlags.LastChanceMonstersVoiceEnemyOnlyEnabled &&
                    LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() &&
                    LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player);
+        }
+
+        private static bool GetEffectiveHeadSpectated(PlayerDeathHead? head)
+        {
+            if (head == null)
+            {
+                return false;
+            }
+
+            // Vanilla State.Head path.
+            if (HeadSpectatedField?.GetValue(head) is bool vanillaSpectated && vanillaSpectated)
+            {
+                return true;
+            }
+
+            // Outside LastChance, keep vanilla behavior unchanged.
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !FeatureFlags.LastChanceMonstersVoiceEnemyOnlyEnabled)
+            {
+                return false;
+            }
+
+            // DHH path: SpectateCamera Head is blocked, but DHH controller can still be spectated.
+            if (DhhControllerType != null && DhhControllerSpectatedField != null)
+            {
+                var controller = head.GetComponent(DhhControllerType);
+                if (controller != null && DhhControllerSpectatedField.GetValue(controller) is bool dhhSpectated && dhhSpectated)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private static void ApplyEnemyOnlyVoiceMix(PlayerVoiceChat voiceChat, int viewId)

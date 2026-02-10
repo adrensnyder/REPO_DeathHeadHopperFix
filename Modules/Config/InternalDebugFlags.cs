@@ -12,6 +12,6 @@ namespace DeathHeadHopperFix.Modules.Config
 
         // Comma-separated enemy names/tokens to auto-spawn for debug test.
         // Empty string => disabled.
-        public static string DebugAutoSpawnMonsterNamesCsv = "ceiling eye,hunter";
+        public static string DebugAutoSpawnMonsterNamesCsv = "ceiling eye,tricycle,spinny,heart hugger,thin man,hidden";
     }
 }
