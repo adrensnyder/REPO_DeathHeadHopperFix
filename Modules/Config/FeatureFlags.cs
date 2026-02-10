@@ -70,6 +70,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceIndicatorDirectionPenaltyMaxSeconds = "Maximum timer penalty per Direction trigger (low difficulty, and always used when dynamic timer is disabled).";
             public const string LastChanceIndicatorDirectionPenaltyMinSeconds = "Minimum timer penalty per Direction trigger (high difficulty).";
             public const string LastChanceMonstersSearchEnabled = "During LastChance, monsters treat disabled players as valid targets (harder return to truck).";
+            public const string LastChanceMonstersVoiceEnemyOnlyEnabled = "During LastChance, disabled death-head voice keeps enemy reactions/talk animation but mutes playback to players (enemy-only voice aggro).";
             public const string LastChanceTimerPerMonsterSeconds = "Extra seconds added per active spawned monster when LastChanceMonstersSearch is enabled.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
             public const string DisableBatteryModule = "Temporarily disable the BatteryModule component.";
@@ -180,6 +181,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceMonstersSearchEnabled)]
         public static bool LastChanceMonstersSearchEnabled = true;
+
+        [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceMonstersVoiceEnemyOnlyEnabled)]
+        public static bool LastChanceMonstersVoiceEnemyOnlyEnabled = true;
 
         [FeatureConfigEntry(Sections.LastChanceTimer, Descriptions.LastChanceTimerPerMonsterSeconds, Min = 0f, Max = 60f)]
         public static float LastChanceTimerPerMonsterSeconds = 3f;
