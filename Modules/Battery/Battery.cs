@@ -227,7 +227,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
             catch
             {
-                // ignore
+                // Optional cleanup path: reflection can fail when target API changes.
             }
         }
 
@@ -256,7 +256,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
             catch
             {
-                // ignore
+                // Reflection probe failed; fall back to "not grabbed".
             }
 
             return false;
@@ -277,7 +277,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
             catch
             {
-                // ignore
+                // RPC may fail during disconnect/teardown; state will resync on next update.
             }
         }
 

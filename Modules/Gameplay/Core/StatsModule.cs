@@ -86,7 +86,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Legacy stats dictionaries can differ across versions; skip init for missing fields.
             }
         }
 
@@ -131,7 +131,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Keep vanilla result path if reflective lookup fails.
             }
 
             return true;
@@ -184,7 +184,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Keep vanilla result path if reflective lookup fails.
             }
 
             return true;

@@ -244,7 +244,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
             catch
             {
-                // ignore: non-critical probe
+                // IL probe is optional and can fail on non-standard method bodies.
             }
 
             return false;

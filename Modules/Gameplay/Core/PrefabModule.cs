@@ -525,7 +525,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 }
                 catch
                 {
-                    // ignore
+                    // Continue probing remaining candidate names in the bundle.
                 }
             }
 
@@ -583,7 +583,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Optional metadata probe; fallback is handled by caller.
             }
 
             return null;
@@ -625,7 +625,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Asset enumeration may fail on invalid bundles; treat as non-matching bundle.
             }
 
             return false;

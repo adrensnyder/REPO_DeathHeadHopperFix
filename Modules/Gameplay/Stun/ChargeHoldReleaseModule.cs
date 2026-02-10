@@ -520,7 +520,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             }
             catch
             {
-                // best effort
+                // Audio stop is cosmetic; failures must not affect stun/charge logic.
             }
         }
 
@@ -633,7 +633,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             }
             catch
             {
-                // ignore
+                // Visual impact RPC is non-critical; gameplay state already applied locally.
             }
         }
 

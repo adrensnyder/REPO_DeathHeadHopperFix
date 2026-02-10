@@ -136,7 +136,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             }
             catch
             {
-                // ignore
+                // Energy sync can fail during scene teardown; skip this tick and continue.
             }
         }
 

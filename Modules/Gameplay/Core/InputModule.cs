@@ -79,7 +79,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Non-critical hostVersion bootstrap; keep original flow if reflection fails.
             }
         }
 

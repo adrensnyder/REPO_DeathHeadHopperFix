@@ -162,7 +162,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 }
                 catch
                 {
-                    // ignore
+                    // UI element may be destroyed during scene/menu transitions.
                 }
             }
         }
@@ -413,7 +413,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
                 }
                 catch
                 {
-                    // ignore
+                    // Keep processing other spots if one UI reference is already invalid.
                 }
             }
         }

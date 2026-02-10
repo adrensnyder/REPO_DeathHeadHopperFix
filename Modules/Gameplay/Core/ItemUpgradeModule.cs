@@ -121,7 +121,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Upgrade VFX/stats refresh is non-critical; do not break item consumption flow.
             }
         }
 
@@ -156,7 +156,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
             }
             catch
             {
-                // ignore
+                // Reflection fallback: use helper-based asset name resolution.
             }
 
             var fallback = ItemHelpers.GetItemAssetName(toggle) ?? toggle.name;
