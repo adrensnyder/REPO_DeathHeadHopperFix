@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using BepInEx;
+using DeathHeadHopperFix.Modules.Utilities;
 using ExitGames.Client.Photon;
 using Photon.Pun;
 using Photon.Realtime;
@@ -17,8 +18,6 @@ namespace DeathHeadHopperFix.Modules.Config
 
     internal sealed class CompatibilityGate : MonoBehaviourPunCallbacks, IOnEventCallback
     {
-        private const byte ClientFixPresenceEventCode = 84;
-        private const byte HostGateStateEventCode = 85;
         private const string LastChanceModeKey = nameof(FeatureFlags.LastChangeMode);
         private const string UnknownVersion = "unknown";
         private static CompatibilityGate? s_instance;
@@ -135,7 +134,7 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
-            if (photonEvent.Code == ClientFixPresenceEventCode)
+            if (photonEvent.Code == PhotonEventCodes.ClientFixPresence)
             {
                 if (!PhotonNetwork.IsMasterClient)
                 {
@@ -153,7 +152,7 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
-            if (photonEvent.Code != HostGateStateEventCode)
+            if (photonEvent.Code != PhotonEventCodes.HostGateState)
             {
                 return;
             }
@@ -197,7 +196,7 @@ namespace DeathHeadHopperFix.Modules.Config
             };
 
             PhotonNetwork.RaiseEvent(
-                ClientFixPresenceEventCode,
+                PhotonEventCodes.ClientFixPresence,
                 new object[] { actor, GetLocalFixVersion() },
                 options,
                 SendOptions.SendReliable);
@@ -279,7 +278,7 @@ namespace DeathHeadHopperFix.Modules.Config
             };
 
             PhotonNetwork.RaiseEvent(
-                HostGateStateEventCode,
+                PhotonEventCodes.HostGateState,
                 new object[] { s_hostApprovedLastChanceCluster, s_lastHostDecisionReason },
                 options,
                 SendOptions.SendReliable);

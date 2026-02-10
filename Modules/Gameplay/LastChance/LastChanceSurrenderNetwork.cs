@@ -10,11 +10,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 {
     internal sealed class LastChanceSurrenderNetwork : MonoBehaviourPunCallbacks, IOnEventCallback
     {
-        private const byte LastChanceSurrenderEventCode = 80;
-        private const byte LastChanceTimerStateEventCode = 81;
-        private const byte LastChanceDirectionPenaltyRequestEventCode = 82;
-        private const byte LastChanceUiStateEventCode = 83;
-        private const byte LastChancePlayerTruckHintEventCode = 84;
         private static LastChanceSurrenderNetwork? s_instance;
         private static float s_lastTruckHintSentAt;
         private static int s_lastTruckHintRoomHash;
@@ -47,7 +42,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 Receivers = ReceiverGroup.All
             };
 
-            PhotonNetwork.RaiseEvent(LastChanceSurrenderEventCode, actorNumber, options, SendOptions.SendReliable);
+            PhotonNetwork.RaiseEvent(PhotonEventCodes.LastChanceSurrender, actorNumber, options, SendOptions.SendReliable);
         }
 
         internal static void NotifyTimerState(bool active, float secondsRemaining)
@@ -64,7 +59,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             };
 
             PhotonNetwork.RaiseEvent(
-                LastChanceTimerStateEventCode,
+                PhotonEventCodes.LastChanceTimerState,
                 new object[] { active, secondsRemaining },
                 options,
                 SendOptions.SendReliable);
@@ -84,7 +79,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             };
 
             PhotonNetwork.RaiseEvent(
-                LastChanceDirectionPenaltyRequestEventCode,
+                PhotonEventCodes.LastChanceDirectionPenaltyRequest,
                 null,
                 options,
                 SendOptions.SendReliable);
@@ -104,7 +99,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             };
 
             PhotonNetwork.RaiseEvent(
-                LastChanceUiStateEventCode,
+                PhotonEventCodes.LastChanceUiState,
                 new object[] { requiredOnTruck, playerStatesPayload },
                 options,
                 SendOptions.SendReliable);
@@ -136,7 +131,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             };
 
             PhotonNetwork.RaiseEvent(
-                LastChancePlayerTruckHintEventCode,
+                PhotonEventCodes.LastChancePlayerTruckHint,
                 new object[] { PhotonNetwork.LocalPlayer.ActorNumber, roomHash, heightDelta, levelStamp },
                 options,
                 SendOptions.SendUnreliable);
@@ -180,7 +175,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         public void OnEvent(EventData photonEvent)
         {
-            if (photonEvent.Code == LastChanceTimerStateEventCode)
+            if (photonEvent.Code == PhotonEventCodes.LastChanceTimerState)
             {
                 if (photonEvent.CustomData is object[] timerPayload &&
                     timerPayload.Length >= 2 &&
@@ -192,13 +187,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            if (photonEvent.Code == LastChanceDirectionPenaltyRequestEventCode)
+            if (photonEvent.Code == PhotonEventCodes.LastChanceDirectionPenaltyRequest)
             {
                 LastChanceTimerController.HandleDirectionPenaltyRequest(photonEvent.Sender);
                 return;
             }
 
-            if (photonEvent.Code == LastChanceUiStateEventCode)
+            if (photonEvent.Code == PhotonEventCodes.LastChanceUiState)
             {
                 if (photonEvent.CustomData is object[] uiPayload &&
                     uiPayload.Length >= 2 &&
@@ -210,7 +205,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            if (photonEvent.Code == LastChancePlayerTruckHintEventCode)
+            if (photonEvent.Code == PhotonEventCodes.LastChancePlayerTruckHint)
             {
                 if (photonEvent.CustomData is object[] hintPayload &&
                     hintPayload.Length >= 4 &&
@@ -224,7 +219,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
-            if (photonEvent.Code != LastChanceSurrenderEventCode)
+            if (photonEvent.Code != PhotonEventCodes.LastChanceSurrender)
             {
                 return;
             }

@@ -3,6 +3,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using DeathHeadHopperFix.Modules.Utilities;
 using ExitGames.Client.Photon;
 using Photon.Pun;
 using Photon.Realtime;
@@ -12,7 +13,6 @@ namespace DeathHeadHopperFix.Modules.Config
 {
     internal sealed class ConfigSyncManager : MonoBehaviourPunCallbacks, IOnEventCallback
     {
-        private const byte ConfigSyncEventCode = 79;
         private static ConfigSyncManager? s_instance;
 
         internal static void EnsureCreated()
@@ -115,12 +115,12 @@ namespace DeathHeadHopperFix.Modules.Config
                 TargetActors = targetActors
             };
 
-            PhotonNetwork.RaiseEvent(ConfigSyncEventCode, payload, options, SendOptions.SendReliable);
+            PhotonNetwork.RaiseEvent(PhotonEventCodes.ConfigSync, payload, options, SendOptions.SendReliable);
         }
 
         public void OnEvent(EventData photonEvent)
         {
-            if (photonEvent == null || photonEvent.Code != ConfigSyncEventCode)
+            if (photonEvent == null || photonEvent.Code != PhotonEventCodes.ConfigSync)
             {
                 return;
             }
