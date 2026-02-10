@@ -29,6 +29,7 @@ namespace DeathHeadHopperFix
             _log = Logger;
             ConfigManager.Initialize(Config);
             AllPlayersDeadGuard.EnsureEnabled();
+            LastChanceMonstersDebugSpawnModule.NotifyPluginAwake();
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
             _harmony.PatchAll(typeof(Plugin).Assembly);
@@ -92,6 +93,7 @@ namespace DeathHeadHopperFix
                 DHHShopModule.Apply(harmony, asm, _log);
                 LastChanceMonstersSearchModule.Apply(harmony, asm);
                 LastChanceMonstersNoiseAggroModule.Apply(harmony, asm);
+                LastChanceMonstersDebugSpawnModule.NotifyTargetAssemblyLoaded();
 
                 DHHApiGuardModule.Apply(harmony, asm);
                 BatteryJumpPatchModule.Apply(harmony, asm);

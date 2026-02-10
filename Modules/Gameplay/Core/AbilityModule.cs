@@ -82,7 +82,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (__instance == null)
                 return;
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             s_trackedSpots.Add(__instance);
@@ -98,7 +98,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (__instance == null)
                 return;
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             AbilitySpotLabelOverlay.UpdateLabel(__instance);
@@ -109,7 +109,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (__instance == null)
                 return;
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
             if (GetAbilityIndex(__instance) != DirectionIndicatorSlotIndex)
                 return;
@@ -125,7 +125,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (__instance == null)
                 return;
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             s_trackedSpots.Remove(__instance);
@@ -138,7 +138,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
 
         internal static void TriggerDirectionSlotCooldown(float cooldownSeconds)
         {
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             s_directionActivationProgress = 0f;
@@ -169,7 +169,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
 
         internal static void SetDirectionSlotActivationProgress(float progress01)
         {
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             s_directionActivationProgress = Mathf.Clamp01(progress01);
@@ -191,7 +191,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
 
         internal static void SetChargeSlotActivationProgress(float progress01, float releaseThreshold01 = 0f)
         {
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             if (s_trackedSpots.Count == 0)
@@ -213,7 +213,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
 
         internal static void RefreshDirectionSlotVisuals()
         {
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             if (s_trackedSpots.Count == 0)

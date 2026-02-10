@@ -105,7 +105,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (!_isOwner)
                 return;
 
-            if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
+            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
             {
                 if (!_inactiveStateApplied)
                 {
@@ -137,7 +137,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private void UpdateEnergyWarningState()
         {
-            if (FeatureFlags.DisableSpectateChecks)
+            if (InternalDebugFlags.DisableSpectateChecks)
             {
                 if (FeatureFlags.DebugLogging)
                     Debug.Log("[Fix:DHHBattery] Spectate checks disabled; skipping energy warning evaluation.");
@@ -293,7 +293,7 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (!_isOwner)
                 return;
 
-            if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
+            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
                 return;
 
             if (DHHBatteryHelper.HasRecentJumpConsumption())
@@ -308,7 +308,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         internal void NotifyJumpBlocked(float currentEnergy, float reference, bool? readyFlag)
         {
-            if (!FeatureFlags.BatteryJumpEnabled || FeatureFlags.DisableBatteryModule)
+            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
                 return;
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.JumpBlocked", 120))

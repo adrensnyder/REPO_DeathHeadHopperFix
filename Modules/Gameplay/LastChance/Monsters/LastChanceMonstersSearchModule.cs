@@ -188,6 +188,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
 
         private static bool IsMonsterRelatedType(Type type)
         {
+            if (type.Name.IndexOf("Enemy", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
             if (typeof(Enemy).IsAssignableFrom(type) || typeof(EnemyParent).IsAssignableFrom(type))
             {
                 return true;

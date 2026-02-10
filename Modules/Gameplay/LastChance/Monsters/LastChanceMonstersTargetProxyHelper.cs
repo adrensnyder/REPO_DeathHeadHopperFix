@@ -40,7 +40,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
 
         internal static bool IsHeadProxyActive(PlayerAvatar? player)
         {
-            if (player == null || !IsDisabled(player))
+            if (player == null)
             {
                 return false;
             }
@@ -56,8 +56,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
                 return triggered;
             }
 
-            // Fallback: if reflection fails, require a valid phys object.
-            return s_deathHeadPhysGrabObjectField?.GetValue(head) is PhysGrabObject;
+            // Fallback: if reflection fails, accept either disabled state or a valid head phys object.
+            // This keeps compatibility with both vanilla-disabled flow and LastChance "alive + active head" flow.
+            return IsDisabled(player) || s_deathHeadPhysGrabObjectField?.GetValue(head) is PhysGrabObject;
         }
 
         internal static bool TryGetHeadCenter(PlayerAvatar? player, out Vector3 center)

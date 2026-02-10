@@ -125,7 +125,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (__instance == null)
                 return;
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return;
 
             var abilityBaseCost = Mathf.Max(0f, __result);
@@ -148,7 +148,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core
         {
             if (__instance == null)
                 return true;
-            if (FeatureFlags.DisableAbilityPatches)
+            if (InternalDebugFlags.DisableAbilityPatches)
                 return true;
 
             var customCooldown = Mathf.Max(0f, (float)FeatureFlags.ChargeAbilityCooldown);

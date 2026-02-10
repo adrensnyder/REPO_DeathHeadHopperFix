@@ -73,9 +73,6 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceMonstersVoiceEnemyOnlyEnabled = "During LastChance, disabled death-head voice keeps enemy reactions/talk animation but mutes playback to players (enemy-only voice aggro).";
             public const string LastChanceTimerPerMonsterSeconds = "Extra seconds added per active spawned monster when LastChanceMonstersSearch is enabled.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
-            public const string DisableBatteryModule = "Temporarily disable the BatteryModule component.";
-            public const string DisableAbilityPatches = "Skip ability-related Harmony patches (charge rename, ability cooldown sync, etc.).";
-            public const string DisableSpectateChecks = "Skip SpectateCamera override/hints when evaluating battery status (debug test).";
             public const string SpectateDeadPlayers = "Allow SpectateCamera to cycle through disabled players (dead bodies) when toggling targets.";
             public const string SpectateDeadPlayersMode = "Mode for dead-player spectate switch: Always, LastChanceOnly, Disabled.";
         }
@@ -246,15 +243,6 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = false;
 
-        //[FeatureConfigEntry(Sections.Debug, Descriptions.DisableBatteryModule)]
-        public static bool DisableBatteryModule = false;
 
-        //[FeatureConfigEntry(Sections.Debug, Descriptions.DisableAbilityPatches)]
-        public static bool DisableAbilityPatches = false;
-
-        //[FeatureConfigEntry(Sections.Debug, Descriptions.DisableSpectateChecks)]
-        public static bool DisableSpectateChecks = false;
-
-        
     }
 }
