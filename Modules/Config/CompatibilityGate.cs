@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using BepInEx;
 using ExitGames.Client.Photon;
 using Photon.Pun;
 using Photon.Realtime;
@@ -19,11 +20,14 @@ namespace DeathHeadHopperFix.Modules.Config
         private const byte ClientFixPresenceEventCode = 84;
         private const byte HostGateStateEventCode = 85;
         private const string LastChanceModeKey = nameof(FeatureFlags.LastChangeMode);
+        private const string UnknownVersion = "unknown";
         private static CompatibilityGate? s_instance;
         private static bool s_hostApprovedLastChanceCluster = true;
         private static bool s_receivedHostDecision;
         private static bool s_lastAppliedRuntimeDisable;
-        private readonly HashSet<int> _playersWithFix = new();
+        private static string s_lastHostDecisionReason = string.Empty;
+        private static string s_lastLoggedIncompatibilityReason = string.Empty;
+        private readonly Dictionary<int, string> _playersWithFixVersion = new();
 
         internal static event Action? HostApprovalChanged;
 
@@ -74,10 +78,12 @@ namespace DeathHeadHopperFix.Modules.Config
 
         public override void OnJoinedRoom()
         {
-            _playersWithFix.Clear();
-            _playersWithFix.Add(PhotonNetwork.LocalPlayer?.ActorNumber ?? 0);
+            _playersWithFixVersion.Clear();
+            RegisterLocalPlayerFixVersion();
             s_receivedHostDecision = PhotonNetwork.IsMasterClient;
             s_hostApprovedLastChanceCluster = PhotonNetwork.IsMasterClient;
+            s_lastHostDecisionReason = string.Empty;
+            s_lastLoggedIncompatibilityReason = string.Empty;
 
             AnnounceLocalFixPresence();
             EvaluateHostApprovalAndBroadcast(forceBroadcast: true);
@@ -85,9 +91,11 @@ namespace DeathHeadHopperFix.Modules.Config
 
         public override void OnLeftRoom()
         {
-            _playersWithFix.Clear();
+            _playersWithFixVersion.Clear();
             s_receivedHostDecision = false;
             s_hostApprovedLastChanceCluster = true;
+            s_lastHostDecisionReason = string.Empty;
+            s_lastLoggedIncompatibilityReason = string.Empty;
             ApplyRuntimeHostOverrides();
             HostApprovalChanged?.Invoke();
         }
@@ -101,7 +109,7 @@ namespace DeathHeadHopperFix.Modules.Config
         {
             if (otherPlayer != null)
             {
-                _playersWithFix.Remove(otherPlayer.ActorNumber);
+                _playersWithFixVersion.Remove(otherPlayer.ActorNumber);
             }
 
             EvaluateHostApprovalAndBroadcast(forceBroadcast: true);
@@ -109,10 +117,12 @@ namespace DeathHeadHopperFix.Modules.Config
 
         public override void OnMasterClientSwitched(Player newMasterClient)
         {
-            _playersWithFix.Clear();
-            _playersWithFix.Add(PhotonNetwork.LocalPlayer?.ActorNumber ?? 0);
+            _playersWithFixVersion.Clear();
+            RegisterLocalPlayerFixVersion();
             s_receivedHostDecision = PhotonNetwork.IsMasterClient;
             s_hostApprovedLastChanceCluster = PhotonNetwork.IsMasterClient;
+            s_lastHostDecisionReason = string.Empty;
+            s_lastLoggedIncompatibilityReason = string.Empty;
 
             AnnounceLocalFixPresence();
             EvaluateHostApprovalAndBroadcast(forceBroadcast: true);
@@ -127,12 +137,18 @@ namespace DeathHeadHopperFix.Modules.Config
 
             if (photonEvent.Code == ClientFixPresenceEventCode)
             {
-                if (!PhotonNetwork.IsMasterClient || photonEvent.CustomData is not int actorNumber)
+                if (!PhotonNetwork.IsMasterClient)
                 {
                     return;
                 }
 
-                _playersWithFix.Add(actorNumber);
+                var hasPayload = TryParseClientPresencePayload(photonEvent.CustomData, out var actorNumber, out var reportedVersion);
+                if (!hasPayload || actorNumber <= 0)
+                {
+                    return;
+                }
+
+                _playersWithFixVersion[actorNumber] = reportedVersion;
                 EvaluateHostApprovalAndBroadcast(forceBroadcast: false);
                 return;
             }
@@ -147,9 +163,15 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
+            var reason = payload.Length >= 2 && payload[1] is string rawReason ? rawReason : string.Empty;
             var changed = !s_receivedHostDecision || s_hostApprovedLastChanceCluster != allowed;
             s_receivedHostDecision = true;
             s_hostApprovedLastChanceCluster = allowed;
+            s_lastHostDecisionReason = reason;
+            if (!allowed)
+            {
+                EmitIncompatibilityWarning(reason);
+            }
             if (changed)
             {
                 HostApprovalChanged?.Invoke();
@@ -174,7 +196,11 @@ namespace DeathHeadHopperFix.Modules.Config
                 Receivers = ReceiverGroup.MasterClient
             };
 
-            PhotonNetwork.RaiseEvent(ClientFixPresenceEventCode, actor, options, SendOptions.SendReliable);
+            PhotonNetwork.RaiseEvent(
+                ClientFixPresenceEventCode,
+                new object[] { actor, GetLocalFixVersion() },
+                options,
+                SendOptions.SendReliable);
         }
 
         private void EvaluateHostApprovalAndBroadcast(bool forceBroadcast)
@@ -195,27 +221,42 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
-            var actor = PhotonNetwork.LocalPlayer?.ActorNumber ?? 0;
-            if (actor > 0)
-            {
-                _playersWithFix.Add(actor);
-            }
+            RegisterLocalPlayerFixVersion();
 
-            var allPlayersHaveFix = true;
+            var localVersion = GetLocalFixVersion();
+            var missingPlayers = new List<string>();
+            var mismatchPlayers = new List<string>();
+            var allPlayersCompatible = true;
             var players = PhotonNetwork.PlayerList;
             for (var i = 0; i < players.Length; i++)
             {
                 var player = players[i];
-                if (player == null || !_playersWithFix.Contains(player.ActorNumber))
+                if (player == null)
                 {
-                    allPlayersHaveFix = false;
-                    break;
+                    continue;
+                }
+
+                if (!_playersWithFixVersion.TryGetValue(player.ActorNumber, out var remoteVersion))
+                {
+                    allPlayersCompatible = false;
+                    missingPlayers.Add(FormatPlayerTag(player));
+                    continue;
+                }
+
+                if (!string.Equals(remoteVersion, localVersion, StringComparison.Ordinal))
+                {
+                    allPlayersCompatible = false;
+                    mismatchPlayers.Add($"{FormatPlayerTag(player)}={remoteVersion}");
                 }
             }
 
-            var changed = s_hostApprovedLastChanceCluster != allPlayersHaveFix || !s_receivedHostDecision;
-            s_hostApprovedLastChanceCluster = allPlayersHaveFix;
+            var reason = BuildIncompatibilityReason(localVersion, missingPlayers, mismatchPlayers);
+            var changed = s_hostApprovedLastChanceCluster != allPlayersCompatible ||
+                          !s_receivedHostDecision ||
+                          !string.Equals(s_lastHostDecisionReason, reason, StringComparison.Ordinal);
+            s_hostApprovedLastChanceCluster = allPlayersCompatible;
             s_receivedHostDecision = true;
+            s_lastHostDecisionReason = reason;
             ApplyRuntimeHostOverrides();
 
             if (changed || forceBroadcast)
@@ -239,7 +280,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             PhotonNetwork.RaiseEvent(
                 HostGateStateEventCode,
-                new object[] { s_hostApprovedLastChanceCluster },
+                new object[] { s_hostApprovedLastChanceCluster, s_lastHostDecisionReason },
                 options,
                 SendOptions.SendReliable);
         }
@@ -261,11 +302,106 @@ namespace DeathHeadHopperFix.Modules.Config
             if (shouldDisable)
             {
                 ConfigManager.SetHostRuntimeOverride(LastChanceModeKey, bool.FalseString);
+                EmitIncompatibilityWarning(s_lastHostDecisionReason);
             }
             else
             {
                 ConfigManager.ClearHostRuntimeOverride(LastChanceModeKey);
+                s_lastLoggedIncompatibilityReason = string.Empty;
             }
+        }
+
+        private static void EmitIncompatibilityWarning(string reason)
+        {
+            var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Unknown incompatibility reason." : reason.Trim();
+            if (string.Equals(s_lastLoggedIncompatibilityReason, normalizedReason, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            s_lastLoggedIncompatibilityReason = normalizedReason;
+            Debug.LogWarning($"[LastChance] LastChange disabled due to incompatibility: {normalizedReason}");
+        }
+
+        private static bool TryParseClientPresencePayload(object? customData, out int actorNumber, out string version)
+        {
+            actorNumber = 0;
+            version = UnknownVersion;
+
+            if (customData is int legacyActor)
+            {
+                actorNumber = legacyActor;
+                return true;
+            }
+
+            if (customData is object[] payload &&
+                payload.Length >= 2 &&
+                payload[0] is int actor &&
+                payload[1] is string payloadVersion)
+            {
+                actorNumber = actor;
+                version = NormalizeVersion(payloadVersion);
+                return true;
+            }
+
+            return false;
+        }
+
+        private void RegisterLocalPlayerFixVersion()
+        {
+            var actor = PhotonNetwork.LocalPlayer?.ActorNumber ?? 0;
+            if (actor <= 0)
+            {
+                return;
+            }
+
+            _playersWithFixVersion[actor] = GetLocalFixVersion();
+        }
+
+        private static string GetLocalFixVersion()
+        {
+            return NormalizeVersion(GetPluginVersionRaw());
+        }
+
+        private static string NormalizeVersion(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return UnknownVersion;
+            }
+
+            return value!.Trim();
+        }
+
+        private static string? GetPluginVersionRaw()
+        {
+            var attr = (BepInPlugin?)Attribute.GetCustomAttribute(typeof(Plugin), typeof(BepInPlugin));
+            return attr?.Version?.ToString();
+        }
+
+        private static string BuildIncompatibilityReason(
+            string localVersion,
+            List<string> missingPlayers,
+            List<string> mismatchPlayers)
+        {
+            var reasonParts = new List<string>();
+            if (missingPlayers.Count > 0)
+            {
+                reasonParts.Add("missing fix presence from: " + string.Join(", ", missingPlayers));
+            }
+
+            if (mismatchPlayers.Count > 0)
+            {
+                reasonParts.Add($"version mismatch (host={localVersion}): " + string.Join(", ", mismatchPlayers));
+            }
+
+            return reasonParts.Count == 0 ? string.Empty : string.Join(" | ", reasonParts);
+        }
+
+        private static string FormatPlayerTag(Player player)
+        {
+            var name = string.IsNullOrWhiteSpace(player.NickName) ? "unknown" : player.NickName.Trim();
+            return $"{name}#{player.ActorNumber}";
         }
     }
 }
