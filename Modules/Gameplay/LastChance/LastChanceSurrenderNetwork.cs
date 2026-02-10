@@ -30,7 +30,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
         internal static void NotifyLocalSurrender(int actorNumber)
         {
-            if (!PhotonNetwork.InRoom)
+            if (!PhotonNetwork.InRoom || actorNumber <= 0)
             {
                 return;
             }
@@ -226,7 +226,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
 
             if (photonEvent.CustomData is int actorNumber)
             {
-                LastChanceTimerController.RegisterRemoteSurrender(actorNumber);
+                if (actorNumber > 0)
+                {
+                    LastChanceTimerController.RegisterRemoteSurrender(actorNumber);
+                }
                 return;
             }
 
@@ -234,7 +237,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 payload.Length > 0 &&
                 payload[0] is int payloadActor)
             {
-                LastChanceTimerController.RegisterRemoteSurrender(payloadActor);
+                if (payloadActor > 0)
+                {
+                    LastChanceTimerController.RegisterRemoteSurrender(payloadActor);
+                }
             }
         }
     }

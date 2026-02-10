@@ -938,12 +938,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 return;
             }
 
+            var actorNumber = GetLocalActorNumber();
+            if (!RegisterSurrenderedActor(actorNumber, true))
+            {
+                return;
+            }
+
             s_localSurrendered = true;
             s_surrenderHoldTimer = SurrenderHoldDuration;
             LastChanceTimerUI.SetSurrenderHintText(LocalSurrenderedHintText);
-
-            var actorNumber = GetLocalActorNumber();
-            RegisterSurrenderedActor(actorNumber, true);
         }
 
         private static void ResetLocalSurrenderAttempt()
@@ -993,31 +996,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
                 }
             }
 
-            return PhotonNetwork.LocalPlayer?.ActorNumber ?? 0;
+            return 0;
         }
 
         private static bool IsPlayerSurrendered(PlayerAvatar player)
         {
             var actorNumber = GetPlayerActorNumber(player);
+            if (actorNumber <= 0)
+            {
+                return false;
+            }
+
             return LastChanceSurrenderedPlayers.Contains(actorNumber);
         }
 
-        private static void RegisterSurrenderedActor(int actorNumber, bool broadcast)
+        private static bool RegisterSurrenderedActor(int actorNumber, bool broadcast)
         {
-            if (actorNumber < 0)
+            if (actorNumber <= 0)
             {
-                return;
+                return false;
             }
 
-            if (!LastChanceSurrenderedPlayers.Add(actorNumber))
-            {
-                return;
-            }
-
-            if (broadcast)
+            var added = LastChanceSurrenderedPlayers.Add(actorNumber);
+            if (added && broadcast)
             {
                 LastChanceSurrenderNetwork.NotifyLocalSurrender(actorNumber);
             }
+
+            return true;
         }
 
         internal static void RegisterRemoteSurrender(int actorNumber)
