@@ -6,6 +6,7 @@ using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters;
 using DeathHeadHopperFix.Modules.Gameplay.Stun;
 using HarmonyLib;
 using System;
@@ -90,6 +91,7 @@ namespace DeathHeadHopperFix
                 AudioModule.Apply(harmony, asm, _log);
                 DHHShopModule.Apply(harmony, asm, _log);
                 LastChanceMonstersSearchModule.Apply(harmony, asm);
+                LastChanceMonstersNoiseAggroModule.Apply(harmony, asm);
 
                 DHHApiGuardModule.Apply(harmony, asm);
                 BatteryJumpPatchModule.Apply(harmony, asm);

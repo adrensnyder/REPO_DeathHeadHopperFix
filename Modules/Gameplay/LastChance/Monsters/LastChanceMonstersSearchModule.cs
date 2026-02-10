@@ -10,7 +10,7 @@ using HarmonyLib;
 using UnityEngine;
 using Logger = BepInEx.Logging.Logger;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
 {
     internal static class LastChanceMonstersSearchModule
     {
