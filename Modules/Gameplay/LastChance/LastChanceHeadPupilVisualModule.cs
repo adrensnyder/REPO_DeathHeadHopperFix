@@ -39,6 +39,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static readonly Color PupilBlack = Color.black;
         private static readonly Dictionary<int, PupilVisualSnapshot> OriginalPupilVisualByHeadId = new();
 
+        internal static void ResetRuntimeState()
+        {
+            var heads = UnityEngine.Object.FindObjectsOfType<PlayerDeathHead>();
+            for (var i = 0; i < heads.Length; i++)
+            {
+                var head = heads[i];
+                if (head == null)
+                {
+                    continue;
+                }
+
+                var headId = head.GetInstanceID();
+                RestorePupilVisualIfNeeded(head, headId);
+            }
+
+            OriginalPupilVisualByHeadId.Clear();
+        }
+
         [HarmonyPostfix]
         private static void Postfix(PlayerDeathHead __instance)
         {

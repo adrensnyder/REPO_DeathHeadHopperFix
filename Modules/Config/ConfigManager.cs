@@ -30,6 +30,19 @@ namespace DeathHeadHopperFix.Modules.Config
         public bool HasRange => !float.IsNaN(Min) && !float.IsNaN(Max);
     }
 
+    [AttributeUsage(AttributeTargets.Field, AllowMultiple = true)]
+    internal sealed class FeatureConfigAliasAttribute : Attribute
+    {
+        public FeatureConfigAliasAttribute(string oldSection, string oldKey)
+        {
+            OldSection = oldSection ?? string.Empty;
+            OldKey = oldKey ?? string.Empty;
+        }
+
+        public string OldSection { get; }
+        public string OldKey { get; }
+    }
+
     internal static class ConfigManager
     {
         private struct RangeF { public float Min, Max; }
@@ -54,6 +67,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             s_initialized = true;
             BindConfigEntries(config, typeof(FeatureFlags), "General");
+            ConfigMigrationManager.Apply(config, typeof(FeatureFlags), "General");
             CaptureLocalHostControlledBaseline();
         }
 

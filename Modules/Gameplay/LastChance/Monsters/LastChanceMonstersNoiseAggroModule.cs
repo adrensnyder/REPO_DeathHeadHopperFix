@@ -32,6 +32,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
         private static readonly FieldInfo? s_enemyHasVisionField = AccessTools.Field(typeof(Enemy), "HasVision");
         private static readonly FieldInfo? s_enemyVisionField = AccessTools.Field(typeof(Enemy), "Vision");
 
+        internal static void ResetRuntimeState()
+        {
+            s_lastAggroByPlayerViewId.Clear();
+        }
+
         internal static void Apply(Harmony harmony, Assembly asm)
         {
             if (s_applied || harmony == null || asm == null)

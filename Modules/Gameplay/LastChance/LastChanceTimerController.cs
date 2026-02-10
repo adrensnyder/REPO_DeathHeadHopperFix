@@ -312,9 +312,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             if (!s_active)
             {
                 LastChanceTimerUI.Hide();
-                AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
-                LastChanceSaveDeleteState.ResetAutoDeleteBlock();
-                LastChanceSpectateHelper.ResetForceState();
+                ResetLastChanceRuntimeModules(allowVanillaAllPlayersDead: false, allowAutoDelete: false);
                 return;
             }
 
@@ -323,9 +321,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_timerRemaining = 0f;
             s_timerSyncedFromHost = false;
             LastChanceTimerUI.Hide();
-            AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
-            LastChanceSaveDeleteState.ResetAutoDeleteBlock();
-            LastChanceSpectateHelper.ResetForceState();
+            ResetLastChanceRuntimeModules(allowVanillaAllPlayersDead: false, allowAutoDelete: false);
         }
 
         internal static void Tick()
@@ -603,9 +599,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_lastUiStateHash = 0;
             StopTimerSecondAudio();
             LastChanceTimerUI.Hide();
-            AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
-            LastChanceSpectateHelper.ResetForceState();
-            LastChanceSaveDeleteState.ResetAutoDeleteBlock();
+            ResetLastChanceRuntimeModules(allowVanillaAllPlayersDead: false, allowAutoDelete: false);
             BroadcastTimerStateIfHost(force: true);
         }
 
@@ -647,9 +641,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             s_lastUiStateHash = 0;
             StopTimerSecondAudio();
             LastChanceTimerUI.Hide();
-            LastChanceSpectateHelper.ResetForceState();
-            LastChanceSaveDeleteState.AllowAutoDelete();
-            AllPlayersDeadGuard.AllowVanillaAllPlayersDead();
+            ResetLastChanceRuntimeModules(allowVanillaAllPlayersDead: true, allowAutoDelete: true);
             BroadcastTimerStateIfHost(force: true);
         }
 
@@ -837,8 +829,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             StopTimerSecondAudio();
             BroadcastTimerStateIfHost(force: true);
 
-            LastChanceSaveDeleteState.AllowAutoDelete();
-            AllPlayersDeadGuard.AllowVanillaAllPlayersDead();
+            ResetLastChanceRuntimeModules(allowVanillaAllPlayersDead: true, allowAutoDelete: true);
             ClearIndicatorsState();
 
             if (!SemiFunc.IsMasterClientOrSingleplayer())
@@ -2660,6 +2651,37 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
             }
 
             ClearLastChanceHostRuntimeOverrides();
+            LastChanceMonstersNoiseAggroModule.ResetRuntimeState();
+            LastChanceMonstersSearchModule.ResetRuntimeState();
+            LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
+            LastChanceHeadPupilVisualModule.ResetRuntimeState();
+        }
+
+        private static void ResetLastChanceRuntimeModules(bool allowVanillaAllPlayersDead, bool allowAutoDelete)
+        {
+            LastChanceMonstersNoiseAggroModule.ResetRuntimeState();
+            LastChanceMonstersSearchModule.ResetRuntimeState();
+            LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
+            LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            LastChanceSpectateHelper.ResetForceState();
+
+            if (allowAutoDelete)
+            {
+                LastChanceSaveDeleteState.AllowAutoDelete();
+            }
+            else
+            {
+                LastChanceSaveDeleteState.ResetAutoDeleteBlock();
+            }
+
+            if (allowVanillaAllPlayersDead)
+            {
+                AllPlayersDeadGuard.AllowVanillaAllPlayersDead();
+            }
+            else
+            {
+                AllPlayersDeadGuard.ResetVanillaAllPlayersDead();
+            }
         }
 
         private static void ApplyLastChanceHostRuntimeOverrides()

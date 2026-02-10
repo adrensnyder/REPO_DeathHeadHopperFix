@@ -32,6 +32,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
         private static bool s_runtimeStateEnabled;
         private static bool s_loggedActivationSnapshot;
 
+        internal static void ResetRuntimeState()
+        {
+            s_runtimeStateCachedAt = 0f;
+            s_runtimeStateEnabled = false;
+            s_loggedActivationSnapshot = false;
+        }
+
         internal static void Apply(Harmony harmony, Assembly asm)
         {
             if (s_harmony != null || harmony == null || s_playerIsDisabledField == null)

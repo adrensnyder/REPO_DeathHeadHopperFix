@@ -162,6 +162,7 @@ namespace DeathHeadHopperFix.Modules.Config
         public static float ShopItemsSpawnChance = 0.75f;
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceMode)]
+        [FeatureConfigAlias(Sections.LastChanceQuick, "LastChanceMode")]
         public static bool LastChangeMode = true;
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceTimerSeconds, Min = 30f, Max = 600f)]

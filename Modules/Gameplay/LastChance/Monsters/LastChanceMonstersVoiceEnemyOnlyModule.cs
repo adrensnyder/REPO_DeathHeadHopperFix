@@ -24,6 +24,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
         private static readonly FieldInfo? VoiceOverrideNoTalkAnimationTimerField =
             AccessTools.Field(typeof(PlayerVoiceChat), "overrideNoTalkAnimationTimer");
 
+        internal static void ResetRuntimeState()
+        {
+            var voiceChats = UnityEngine.Object.FindObjectsOfType<PlayerVoiceChat>();
+            for (var i = 0; i < voiceChats.Length; i++)
+            {
+                var voiceChat = voiceChats[i];
+                if (voiceChat == null)
+                {
+                    continue;
+                }
+
+                var photonView = VoicePhotonViewField?.GetValue(voiceChat) as Photon.Pun.PhotonView;
+                var viewId = photonView?.ViewID ?? -1;
+                RestoreVolumes(voiceChat, viewId);
+            }
+
+            OriginalAudioSourceVolumeByViewId.Clear();
+            OriginalTtsVolumeByViewId.Clear();
+        }
+
         [HarmonyPostfix]
         private static void Postfix(PlayerVoiceChat __instance)
         {

@@ -113,10 +113,10 @@
 	</Target>
 	
 	
-	<Target Name="PostBuildThunderstoreZip" AfterTargets="Build" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix')">
+	<!--<Target Name="PostBuildThunderstoreZip" AfterTargets="Build" Condition="Exists('Thunderstore\AdrenSnyder-DeathHeadHopperFix')">
 		<Exec Command="powershell -NoProfile -Command &quot;Compress-Archive -Path 'Thunderstore\AdrenSnyder-DeathHeadHopperFix\*' -DestinationPath 'Thunderstore\$(ThunderstoreZipFileName)' -Force&quot;" />
 		<Message Text="Created Thunderstore\$(ThunderstoreZipFileName)" Importance="high" />
-	</Target>
+	</Target>-->
 	
 
 </Project>
