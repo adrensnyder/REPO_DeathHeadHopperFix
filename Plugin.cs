@@ -6,24 +6,14 @@ using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance;
-using DeathHeadHopperFix.Modules.Gameplay.Spectate.Patches;
 using DeathHeadHopperFix.Modules.Gameplay.Stun;
 using HarmonyLib;
 using System;
-using System.Collections.Generic;
 using System.Reflection;
 using UnityEngine.SceneManagement;
 
 namespace DeathHeadHopperFix
 {
-    [HarmonyPatch(typeof(SpectateCamera), "StateNormal")]
-    internal static class SpectateCameraStateNormalPatchMarker
-    {
-        [HarmonyTranspiler]
-        private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
-            => SpectateCameraStateNormalPatch.Transpiler(instructions);
-    }
-
     [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.1.9")]
     public sealed class Plugin : BaseUnityPlugin
     {
