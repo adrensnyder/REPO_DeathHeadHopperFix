@@ -155,6 +155,8 @@ namespace DeathHeadHopperFix.Modules.Utilities
             ICollection<PlayerAvatar>? players = null,
             bool forceRefresh = false)
         {
+            try
+            {
             var profileEnabled = FeatureFlags.DebugLogging;
             var profileStart = profileEnabled ? Time.realtimeSinceStartup : 0f;
             var profileAfterSetup = profileStart;
@@ -354,6 +356,12 @@ namespace DeathHeadHopperFix.Modules.Utilities
             }
 
             return distances.ToArray();
+            }
+            catch (Exception ex)
+            {
+                LogReflectionHotPathException("GetDistancesFromTruck", ex);
+                return Array.Empty<PlayerTruckDistance>();
+            }
         }
 
         internal static void ApplyRemotePlayerHint(int actorNumber, int roomHash, float heightDelta, int levelStamp)
@@ -372,56 +380,80 @@ namespace DeathHeadHopperFix.Modules.Utilities
             heightDelta = 0f;
             levelStamp = RunManager.instance != null ? RunManager.instance.levelsCompleted : 0;
 
-            if (!PhotonNetwork.InRoom || PhotonNetwork.LocalPlayer == null || s_levelGeneratorInstanceField == null)
+            try
             {
-                return false;
-            }
-
-            var levelGenerator = s_levelGeneratorInstanceField.GetValue(null);
-            if (levelGenerator == null)
-            {
-                return false;
-            }
-
-            var allLevelPoints = GetAllLevelPoints(levelGenerator);
-            if (!TryGetTruckTarget(levelGenerator, allLevelPoints, out var truckPosition, out _))
-            {
-                return false;
-            }
-
-            var director = GameDirector.instance;
-            if (director?.PlayerList == null || director.PlayerList.Count == 0)
-            {
-                return false;
-            }
-
-            var localActor = PhotonNetwork.LocalPlayer.ActorNumber;
-            PlayerAvatar? localPlayer = null;
-            for (var i = 0; i < director.PlayerList.Count; i++)
-            {
-                var candidate = director.PlayerList[i];
-                if (candidate == null)
+                if (!PhotonNetwork.InRoom || PhotonNetwork.LocalPlayer == null || s_levelGeneratorInstanceField == null)
                 {
-                    continue;
+                    return false;
                 }
 
-                if ((candidate.photonView?.Owner?.ActorNumber ?? 0) == localActor)
+                var levelGenerator = s_levelGeneratorInstanceField.GetValue(null);
+                if (levelGenerator == null)
                 {
-                    localPlayer = candidate;
-                    break;
+                    return false;
                 }
-            }
 
-            if (localPlayer == null)
+                var allLevelPoints = GetAllLevelPoints(levelGenerator);
+                if (!TryGetTruckTarget(levelGenerator, allLevelPoints, out var truckPosition, out _))
+                {
+                    return false;
+                }
+
+                var director = GameDirector.instance;
+                if (director?.PlayerList == null || director.PlayerList.Count == 0)
+                {
+                    return false;
+                }
+
+                var localActor = PhotonNetwork.LocalPlayer.ActorNumber;
+                PlayerAvatar? localPlayer = null;
+                for (var i = 0; i < director.PlayerList.Count; i++)
+                {
+                    var candidate = director.PlayerList[i];
+                    if (candidate == null)
+                    {
+                        continue;
+                    }
+
+                    if ((candidate.photonView?.Owner?.ActorNumber ?? 0) == localActor)
+                    {
+                        localPlayer = candidate;
+                        break;
+                    }
+                }
+
+                if (localPlayer == null)
+                {
+                    return false;
+                }
+
+                var rooms = GetPlayerRooms(localPlayer);
+                roomHash = ComputeRoomsHash(rooms);
+                var position = GetPlayerWorldPosition(localPlayer);
+                heightDelta = position.y - truckPosition.y;
+                return true;
+            }
+            catch (Exception ex)
             {
+                LogReflectionHotPathException("TryBuildLocalPlayerTruckHint", ex);
                 return false;
             }
+        }
 
-            var rooms = GetPlayerRooms(localPlayer);
-            roomHash = ComputeRoomsHash(rooms);
-            var position = GetPlayerWorldPosition(localPlayer);
-            heightDelta = position.y - truckPosition.y;
-            return true;
+        private static void LogReflectionHotPathException(string context, Exception ex)
+        {
+            if (!FeatureFlags.DebugLogging)
+            {
+                return;
+            }
+
+            var key = "LastChance.Reflection.PlayerTruckDistance." + context;
+            if (!LogLimiter.ShouldLog(key, 600))
+            {
+                return;
+            }
+
+            Debug.LogWarning($"[LastChance] Reflection hot-path failed in {context}: {ex.GetType().Name}: {ex.Message}");
         }
 
         internal static void BeginActivationProfiling()

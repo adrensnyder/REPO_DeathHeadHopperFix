@@ -1874,42 +1874,49 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool TryGetTruckPosition(out Vector3 truckPosition)
         {
             truckPosition = Vector3.zero;
-            if (s_levelGeneratorInstanceField == null)
+            try
             {
-                return false;
-            }
-
-            var levelGenerator = s_levelGeneratorInstanceField.GetValue(null);
-            if (levelGenerator == null)
-            {
-                return false;
-            }
-
-            if (s_levelPathTruckField != null)
-            {
-                var candidate = s_levelPathTruckField.GetValue(levelGenerator);
-                if (TryGetTransformPosition(candidate, out truckPosition))
+                if (s_levelGeneratorInstanceField == null)
                 {
-                    return true;
-                }
-            }
-
-            if (s_levelPathPointsField?.GetValue(levelGenerator) is not System.Collections.IEnumerable points || s_levelPointTruckField == null)
-            {
-                return false;
-            }
-
-            foreach (var point in points)
-            {
-                if (point == null)
-                {
-                    continue;
+                    return false;
                 }
 
-                if (s_levelPointTruckField.GetValue(point) is bool isTruck && isTruck && TryGetTransformPosition(point, out truckPosition))
+                var levelGenerator = s_levelGeneratorInstanceField.GetValue(null);
+                if (levelGenerator == null)
                 {
-                    return true;
+                    return false;
                 }
+
+                if (s_levelPathTruckField != null)
+                {
+                    var candidate = s_levelPathTruckField.GetValue(levelGenerator);
+                    if (TryGetTransformPosition(candidate, out truckPosition))
+                    {
+                        return true;
+                    }
+                }
+
+                if (s_levelPathPointsField?.GetValue(levelGenerator) is not System.Collections.IEnumerable points || s_levelPointTruckField == null)
+                {
+                    return false;
+                }
+
+                foreach (var point in points)
+                {
+                    if (point == null)
+                    {
+                        continue;
+                    }
+
+                    if (s_levelPointTruckField.GetValue(point) is bool isTruck && isTruck && TryGetTransformPosition(point, out truckPosition))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogReflectionHotPathException("TryGetTruckPosition", ex);
             }
 
             return false;
@@ -1918,22 +1925,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool TryGetTransformPosition(object obj, out Vector3 position)
         {
             position = Vector3.zero;
-            if (obj == null)
+            try
             {
-                return false;
-            }
+                if (obj == null)
+                {
+                    return false;
+                }
 
-            if (obj is Component comp && comp != null)
-            {
-                position = comp.transform.position;
-                return true;
-            }
+                if (obj is Component comp && comp != null)
+                {
+                    position = comp.transform.position;
+                    return true;
+                }
 
-            var transformProperty = obj.GetType().GetProperty("transform", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (transformProperty?.GetValue(obj) is Transform transform)
+                var transformProperty = obj.GetType().GetProperty("transform", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (transformProperty?.GetValue(obj) is Transform transform)
+                {
+                    position = transform.position;
+                    return true;
+                }
+            }
+            catch (Exception ex)
             {
-                position = transform.position;
-                return true;
+                LogReflectionHotPathException("TryGetTransformPosition", ex);
             }
 
             return false;
@@ -1942,27 +1956,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool TrySampleNavMeshPosition(Vector3 source, float maxDistance, out Vector3 sampledPosition)
         {
             sampledPosition = Vector3.zero;
-            if (s_navMeshHitType == null || s_navMeshSamplePositionMethod == null)
+            try
             {
-                return false;
-            }
+                if (s_navMeshHitType == null || s_navMeshSamplePositionMethod == null)
+                {
+                    return false;
+                }
 
-            s_reusableNavMeshHitBoxed ??= Activator.CreateInstance(s_navMeshHitType);
-            if (s_reusableNavMeshHitBoxed == null)
-            {
-                return false;
-            }
+                s_reusableNavMeshHitBoxed ??= Activator.CreateInstance(s_navMeshHitType);
+                if (s_reusableNavMeshHitBoxed == null)
+                {
+                    return false;
+                }
 
-            var args = new object[] { source, s_reusableNavMeshHitBoxed, maxDistance, -1 };
-            if (s_navMeshSamplePositionMethod.Invoke(null, args) is not bool success || !success)
-            {
-                return false;
-            }
+                var args = new object[] { source, s_reusableNavMeshHitBoxed, maxDistance, -1 };
+                if (s_navMeshSamplePositionMethod.Invoke(null, args) is not bool success || !success)
+                {
+                    return false;
+                }
 
-            if (TryGetNavHitPosition(args[1], out var hit))
+                if (TryGetNavHitPosition(args[1], out var hit))
+                {
+                    sampledPosition = hit;
+                    return true;
+                }
+            }
+            catch (Exception ex)
             {
-                sampledPosition = hit;
-                return true;
+                LogReflectionHotPathException("TrySampleNavMeshPosition", ex);
             }
 
             return false;
@@ -1971,21 +1992,28 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool TryGetNavHitPosition(object navHit, out Vector3 position)
         {
             position = Vector3.zero;
-            if (navHit == null)
+            try
             {
-                return false;
-            }
+                if (navHit == null)
+                {
+                    return false;
+                }
 
-            if (s_navMeshHitPositionProperty != null && s_navMeshHitPositionProperty.GetValue(navHit) is Vector3 propPos)
-            {
-                position = propPos;
-                return true;
-            }
+                if (s_navMeshHitPositionProperty != null && s_navMeshHitPositionProperty.GetValue(navHit) is Vector3 propPos)
+                {
+                    position = propPos;
+                    return true;
+                }
 
-            if (s_navMeshHitPositionField != null && s_navMeshHitPositionField.GetValue(navHit) is Vector3 fieldPos)
+                if (s_navMeshHitPositionField != null && s_navMeshHitPositionField.GetValue(navHit) is Vector3 fieldPos)
+                {
+                    position = fieldPos;
+                    return true;
+                }
+            }
+            catch (Exception ex)
             {
-                position = fieldPos;
-                return true;
+                LogReflectionHotPathException("TryGetNavHitPosition", ex);
             }
 
             return false;
@@ -1994,30 +2022,53 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         private static bool TryCalculateNavMeshPathCorners(Vector3 from, Vector3 to, out Vector3[] corners)
         {
             corners = Array.Empty<Vector3>();
-            if (s_navMeshPathType == null || s_navMeshCalculatePathMethod == null || s_navMeshPathCornersProperty == null)
+            try
             {
-                return false;
-            }
+                if (s_navMeshPathType == null || s_navMeshCalculatePathMethod == null || s_navMeshPathCornersProperty == null)
+                {
+                    return false;
+                }
 
-            s_reusableNavMeshPath ??= Activator.CreateInstance(s_navMeshPathType);
-            if (s_reusableNavMeshPath == null)
-            {
-                return false;
-            }
+                s_reusableNavMeshPath ??= Activator.CreateInstance(s_navMeshPathType);
+                if (s_reusableNavMeshPath == null)
+                {
+                    return false;
+                }
 
-            var args = new object[] { from, to, -1, s_reusableNavMeshPath };
-            if (s_navMeshCalculatePathMethod.Invoke(null, args) is not bool success || !success)
-            {
-                return false;
-            }
+                var args = new object[] { from, to, -1, s_reusableNavMeshPath };
+                if (s_navMeshCalculatePathMethod.Invoke(null, args) is not bool success || !success)
+                {
+                    return false;
+                }
 
-            if (s_navMeshPathCornersProperty.GetValue(s_reusableNavMeshPath) is Vector3[] pathCorners && pathCorners.Length > 0)
+                if (s_navMeshPathCornersProperty.GetValue(s_reusableNavMeshPath) is Vector3[] pathCorners && pathCorners.Length > 0)
+                {
+                    corners = pathCorners;
+                    return true;
+                }
+            }
+            catch (Exception ex)
             {
-                corners = pathCorners;
-                return true;
+                LogReflectionHotPathException("TryCalculateNavMeshPathCorners", ex);
             }
 
             return false;
+        }
+
+        private static void LogReflectionHotPathException(string context, Exception ex)
+        {
+            if (!FeatureFlags.DebugLogging)
+            {
+                return;
+            }
+
+            var key = "LastChance.Reflection.TimerController." + context;
+            if (!LogLimiter.ShouldLog(key, 600))
+            {
+                return;
+            }
+
+            Debug.LogWarning($"[LastChance] Reflection hot-path failed in {context}: {ex.GetType().Name}: {ex.Message}");
         }
 
         private static void ClearActiveIndicatorVisuals()
