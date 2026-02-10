@@ -80,6 +80,11 @@ namespace DeathHeadHopperFix.Modules.Config
             }
         }
 
+        public override void OnLeftRoom()
+        {
+            ConfigManager.RestoreLocalHostControlledBaseline();
+        }
+
         internal static void RequestHostSnapshotBroadcast()
         {
             TrySendSnapshot();

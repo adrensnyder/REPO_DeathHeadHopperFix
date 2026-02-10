@@ -41,6 +41,7 @@ namespace DeathHeadHopperFix.Modules.Config
         private static readonly Dictionary<string, RangeI> s_intRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, FieldInfo> s_hostControlledFields = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, string> s_hostRuntimeOverrides = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> s_localHostControlledBaseline = new(StringComparer.Ordinal);
 
         internal static event Action? HostControlledChanged;
 
@@ -53,6 +54,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             s_initialized = true;
             BindConfigEntries(config, typeof(FeatureFlags), "General");
+            CaptureLocalHostControlledBaseline();
         }
 
         private static void BindConfigEntries(ConfigFile config, Type targetType, string defaultSection)
@@ -345,6 +347,16 @@ namespace DeathHeadHopperFix.Modules.Config
             }
         }
 
+        internal static void RestoreLocalHostControlledBaseline()
+        {
+            if (s_localHostControlledBaseline.Count == 0)
+            {
+                return;
+            }
+
+            ApplyHostSnapshot(s_localHostControlledBaseline);
+        }
+
         private static string SerializeValue(object? value, Type fieldType)
         {
             if (fieldType == typeof(bool))
@@ -490,6 +502,16 @@ namespace DeathHeadHopperFix.Modules.Config
         private static string BuildRangeKey(string section, string key)
         {
             return $"{section}:{key}";
+        }
+
+        private static void CaptureLocalHostControlledBaseline()
+        {
+            s_localHostControlledBaseline.Clear();
+            var snapshot = SnapshotHostControlled();
+            foreach (var kvp in snapshot)
+            {
+                s_localHostControlledBaseline[kvp.Key] = kvp.Value;
+            }
         }
 
     }
