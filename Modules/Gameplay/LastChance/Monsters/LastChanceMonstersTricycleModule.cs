@@ -294,4 +294,179 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
             return player.transform.position;
         }
     }
+
+    [HarmonyPatch]
+    internal static class LastChanceMonstersEffectiveTargetPointModule
+    {
+        private static readonly MethodInfo? s_transformGetPositionMethod =
+            AccessTools.PropertyGetter(typeof(Transform), nameof(Transform.position));
+
+        private static readonly MethodInfo? s_effectiveTransformPositionMethod =
+            AccessTools.Method(typeof(LastChanceMonstersEffectiveTargetPointModule), nameof(GetEffectiveTransformPosition));
+
+        [HarmonyTargetMethods]
+        private static IEnumerable<MethodBase> TargetMethods()
+        {
+            var methods = new List<MethodBase>();
+            Type[] types;
+            try
+            {
+                types = typeof(Enemy).Assembly.GetTypes();
+            }
+            catch
+            {
+                return methods;
+            }
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            for (var i = 0; i < types.Length; i++)
+            {
+                var type = types[i];
+                if (type == null || !IsMonsterRelatedType(type))
+                {
+                    continue;
+                }
+
+                var typeMethods = type.GetMethods(flags);
+                for (var m = 0; m < typeMethods.Length; m++)
+                {
+                    var method = typeMethods[m];
+                    if (method == null || method.IsAbstract || method.GetMethodBody() == null)
+                    {
+                        continue;
+                    }
+
+                    if (MethodUsesPlayerTargetTransformPosition(method))
+                    {
+                        methods.Add(method);
+                    }
+                }
+            }
+
+            return methods;
+        }
+
+        [HarmonyTranspiler]
+        private static IEnumerable<CodeInstruction> ReplaceTargetPositionReads(IEnumerable<CodeInstruction> instructions)
+        {
+            if (s_transformGetPositionMethod == null || s_effectiveTransformPositionMethod == null)
+            {
+                return instructions;
+            }
+
+            var list = new List<CodeInstruction>(instructions);
+            for (var i = 0; i < list.Count; i++)
+            {
+                var ins = list[i];
+                if ((ins.opcode != OpCodes.Call && ins.opcode != OpCodes.Callvirt) || ins.operand is not MethodInfo called)
+                {
+                    continue;
+                }
+
+                if (called == s_transformGetPositionMethod)
+                {
+                    ins.opcode = OpCodes.Call;
+                    ins.operand = s_effectiveTransformPositionMethod;
+                }
+            }
+
+            return list;
+        }
+
+        private static bool MethodUsesPlayerTargetTransformPosition(MethodBase method)
+        {
+            if (method == null || s_transformGetPositionMethod == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var body = method.GetMethodBody();
+                var il = body?.GetILAsByteArray();
+                if (il == null || il.Length < 5)
+                {
+                    return false;
+                }
+
+                var positionToken = s_transformGetPositionMethod.MetadataToken;
+                var hasPositionRead = false;
+                for (var i = 0; i <= il.Length - 5; i++)
+                {
+                    var op = il[i];
+                    if (op != 0x28 && op != 0x6F)
+                    {
+                        continue;
+                    }
+
+                    if (BitConverter.ToInt32(il, i + 1) == positionToken)
+                    {
+                        hasPositionRead = true;
+                        break;
+                    }
+                }
+
+                if (!hasPositionRead)
+                {
+                    return false;
+                }
+
+                var fields = method.DeclaringType?.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (fields == null)
+                {
+                    return false;
+                }
+
+                for (var i = 0; i < fields.Length; i++)
+                {
+                    var f = fields[i];
+                    if (typeof(PlayerAvatar).IsAssignableFrom(f.FieldType))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
+        private static Vector3 GetEffectiveTransformPosition(Transform transform)
+        {
+            if (transform == null)
+            {
+                return Vector3.zero;
+            }
+
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            {
+                return transform.position;
+            }
+
+            var player = transform.GetComponentInParent<PlayerAvatar>();
+            if (player != null && LastChanceMonstersTargetProxyHelper.TryGetHeadProxyTarget(player, out var headCenter))
+            {
+                return headCenter;
+            }
+
+            return transform.position;
+        }
+
+        private static bool IsMonsterRelatedType(Type type)
+        {
+            if (type.Name.IndexOf("Enemy", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return true;
+            }
+
+            if (typeof(Enemy).IsAssignableFrom(type) || typeof(EnemyParent).IsAssignableFrom(type))
+            {
+                return true;
+            }
+
+            return false;
+        }
+    }
 }
