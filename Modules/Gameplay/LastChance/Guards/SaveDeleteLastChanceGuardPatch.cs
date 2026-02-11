@@ -5,7 +5,7 @@ using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Guards
 {
     internal static class LastChanceSaveDeleteState
     {
@@ -87,3 +87,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
+

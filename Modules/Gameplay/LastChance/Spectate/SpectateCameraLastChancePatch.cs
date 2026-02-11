@@ -6,7 +6,7 @@ using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Spectate
 {
     internal static class LastChanceSpectateHelper
     {
@@ -337,3 +337,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
+

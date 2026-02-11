@@ -575,7 +575,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
 
         private static bool ShouldBeVisibleNow()
         {
-            if (!LastChance.LastChanceTimerController.IsActive)
+            if (!LastChanceTimerController.IsActive)
             {
                 return false;
             }
@@ -774,3 +774,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.UI
         
     }
 }
+

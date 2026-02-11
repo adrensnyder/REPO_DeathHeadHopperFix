@@ -12,7 +12,7 @@ using HarmonyLib;
 using Photon.Pun;
 using UnityEngine;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 {
     // RunManager.Update is intentionally patched in two places:
     // 1) this postfix drives LastChance runtime/timer state every frame,
@@ -2722,6 +2722,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
     }
 
 }
+
 
 
 

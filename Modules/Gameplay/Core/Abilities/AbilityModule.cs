@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using DeathHeadHopperFix.Modules.Config;
-using DeathHeadHopperFix.Modules.Gameplay.LastChance;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 using UnityEngine;

@@ -10,7 +10,6 @@ using DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Input;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Interop;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
-using DeathHeadHopperFix.Modules.Gameplay.LastChance;
 using DeathHeadHopperFix.Modules.Gameplay.Stun;
 using HarmonyLib;
 using System;

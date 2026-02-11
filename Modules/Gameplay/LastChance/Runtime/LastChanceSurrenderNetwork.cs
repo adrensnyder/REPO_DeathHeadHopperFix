@@ -6,7 +6,7 @@ using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 {
     internal sealed class LastChanceSurrenderNetwork : MonoBehaviourPunCallbacks, IOnEventCallback
     {
@@ -245,3 +245,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
+

@@ -1,11 +1,11 @@
-﻿#nullable enable
+#nullable enable
 
 using System.Text;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using UnityEngine;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Diagnostics
 {
     internal static class LastChanceTruckDistanceLogger
     {
@@ -53,3 +53,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
+

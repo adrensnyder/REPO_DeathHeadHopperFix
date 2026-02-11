@@ -6,7 +6,9 @@ namespace DeathHeadHopperFix.Modules.Config
     // Intended for engineering-level control of shared behavior.
     internal static class InternalConfig
     {
-        // If false, keep gameplay lock logic but skip camera forcing.
+        // Controls only camera-forcing behavior for monster lock pipelines during LastChance.
+        // false: keep detection/lock gameplay active, but do NOT force the player's camera target.
+        // true: allow camera forcing while lock is active (still bounded by max-lock and cooldown timers).
         internal static bool LastChanceMonstersForceCameraOnLock = false;
 
         internal static float LastChanceMonstersCameraLockMaxSeconds = 5f;

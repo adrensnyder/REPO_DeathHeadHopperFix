@@ -239,13 +239,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             // During LastChance keep vanilla Head state disabled, even if disabled flags flicker.
-            if (LastChance.LastChanceTimerController.IsActive)
+            if (LastChanceTimerController.IsActive)
             {
                 return false;
             }
 
             // Fallback: if all players are disabled outside active timer setup, keep old behavior.
-            return !LastChance.LastChanceSpectateHelper.AllPlayersDisabled();
+            return !LastChanceSpectateHelper.AllPlayersDisabled();
         }
 
         private static bool ShouldSkipSpectateTarget(PlayerAvatar player)
@@ -290,7 +290,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             if (mode.Equals("LastChanceOnly", StringComparison.OrdinalIgnoreCase))
             {
                 return FeatureFlags.LastChangeMode &&
-                       LastChance.LastChanceTimerController.IsActive &&
+                       LastChanceTimerController.IsActive &&
                        IsLocalPlayerDeadOrDisabled();
             }
 
@@ -458,28 +458,28 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
-            if (!LastChance.LastChanceTimerController.IsActive)
+            if (!LastChanceTimerController.IsActive)
             {
-                LastChance.LastChanceSpectateHelper.ResetForceState();
+                LastChanceSpectateHelper.ResetForceState();
                 return;
             }
 
-            if (!LastChance.LastChanceSpectateHelper.AllPlayersDisabled())
+            if (!LastChanceSpectateHelper.AllPlayersDisabled())
             {
-                LastChance.LastChanceSpectateHelper.ResetForceState();
+                LastChanceSpectateHelper.ResetForceState();
                 return;
             }
 
-            if (LastChance.LastChanceSpectateHelper.ShouldForceLocalDeathHeadSpectate())
+            if (LastChanceSpectateHelper.ShouldForceLocalDeathHeadSpectate())
             {
                 if (__instance != null)
                 {
-                    LastChance.LastChanceSpectateHelper.EnsureSpectatePlayerLocal(__instance);
+                    LastChanceSpectateHelper.EnsureSpectatePlayerLocal(__instance);
                 }
-                LastChance.LastChanceSpectateHelper.ForceDeathHeadSpectateIfPossible();
+                LastChanceSpectateHelper.ForceDeathHeadSpectateIfPossible();
             }
 
-            LastChance.LastChanceSpectateHelper.DebugLogState(__instance);
+            LastChanceSpectateHelper.DebugLogState(__instance);
         }
 
         private static bool ShouldBlockPlayerSwitchForLastChance()
@@ -489,17 +489,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return false;
             }
 
-            if (LastChance.LastChanceSpectateHelper.IsManualSwitchInputDown())
+            if (LastChanceSpectateHelper.IsManualSwitchInputDown())
             {
                 return false;
             }
 
-            if (!LastChance.LastChanceTimerController.IsActive)
+            if (!LastChanceTimerController.IsActive)
             {
                 return false;
             }
 
-            if (!LastChance.LastChanceSpectateHelper.AllPlayersDisabled())
+            if (!LastChanceSpectateHelper.AllPlayersDisabled())
             {
                 return false;
             }
@@ -508,3 +508,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         }
     }
 }
+

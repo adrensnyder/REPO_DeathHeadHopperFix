@@ -5,7 +5,7 @@ using HarmonyLib;
 using UnityEngine;
 using System.Collections.Generic;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 {
     [HarmonyPatch(typeof(PlayerDeathHead), "Update")]
     internal static class LastChanceHeadPupilVisualModule
@@ -170,3 +170,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
+

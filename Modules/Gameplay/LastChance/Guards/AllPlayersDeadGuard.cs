@@ -9,7 +9,7 @@ using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 using Logger = BepInEx.Logging.Logger;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Guards
 {
     internal static class AllPlayersDeadGuard
     {
@@ -219,3 +219,4 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance
         }
     }
 }
+
