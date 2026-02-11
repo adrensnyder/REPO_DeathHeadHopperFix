@@ -5,7 +5,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Config;
-using DeathHeadHopperFix.Modules.Gameplay.Core;
+using DeathHeadHopperFix.Modules.Gameplay.Core.Abilities;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 using Photon.Pun;

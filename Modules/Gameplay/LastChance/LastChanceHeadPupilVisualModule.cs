@@ -1,7 +1,6 @@
 #nullable enable
 
 using System.Reflection;
-using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters;
 using HarmonyLib;
 using UnityEngine;
 using System.Collections.Generic;
