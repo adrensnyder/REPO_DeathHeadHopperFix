@@ -1,5 +1,6 @@
 #nullable enable
 
+using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
@@ -10,12 +11,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
     [HarmonyPatch]
     internal static class LastChanceMonstersHeartHuggerVisualDecoupleModule
     {
-        private static readonly MethodInfo? s_playerInGasLogicMethod =
-            AccessTools.Method(typeof(EnemyHeartHugger), "PlayersInGasLogic");
-
-        private static readonly MethodInfo? s_gasCheckerUpdateMethod =
-            AccessTools.Method(typeof(EnemyHeartHuggerGasChecker), "Update");
-
         private static readonly FieldInfo? s_tumbleWingPinkTimerField =
             AccessTools.Field(typeof(ItemUpgradePlayerTumbleWingsLogic), "tumbleWingPinkTimer");
 
@@ -31,14 +26,44 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
         [HarmonyTargetMethods]
         private static IEnumerable<MethodBase> TargetMethods()
         {
-            if (s_playerInGasLogicMethod != null)
+            if (s_tumbleWingPinkTimerField == null && s_upgradeTumbleWingsVisualsActiveMethod == null)
             {
-                yield return s_playerInGasLogicMethod;
+                yield break;
             }
 
-            if (s_gasCheckerUpdateMethod != null)
+            Type[] types;
+            try
             {
-                yield return s_gasCheckerUpdateMethod;
+                types = typeof(Enemy).Assembly.GetTypes();
+            }
+            catch
+            {
+                yield break;
+            }
+
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            for (var i = 0; i < types.Length; i++)
+            {
+                var type = types[i];
+                if (type == null || type.Name.IndexOf("Enemy", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                var methods = type.GetMethods(flags);
+                for (var m = 0; m < methods.Length; m++)
+                {
+                    var method = methods[m];
+                    if (method == null || method.IsAbstract || method.GetMethodBody() == null)
+                    {
+                        continue;
+                    }
+
+                    if (MethodUsesTumbleWingPinkTimer(method) || MethodCallsTumbleWingsVisuals(method))
+                    {
+                        yield return method;
+                    }
+                }
             }
         }
 
@@ -47,9 +72,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
         {
             var list = new List<CodeInstruction>(instructions);
 
-            if (__originalMethod == s_playerInGasLogicMethod &&
-                s_tumbleWingPinkTimerField != null &&
-                s_setTumbleWingPinkTimerSafeMethod != null)
+            if (s_tumbleWingPinkTimerField != null && s_setTumbleWingPinkTimerSafeMethod != null)
             {
                 for (var i = 0; i < list.Count; i++)
                 {
@@ -62,9 +85,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
                 }
             }
 
-            if (__originalMethod == s_gasCheckerUpdateMethod &&
-                s_upgradeTumbleWingsVisualsActiveMethod != null &&
-                s_upgradeTumbleWingsVisualsActiveSafeMethod != null)
+            if (s_upgradeTumbleWingsVisualsActiveMethod != null && s_upgradeTumbleWingsVisualsActiveSafeMethod != null)
             {
                 for (var i = 0; i < list.Count; i++)
                 {
@@ -80,6 +101,60 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
             }
 
             return list;
+        }
+
+        private static bool MethodUsesTumbleWingPinkTimer(MethodBase method)
+        {
+            return MethodContainsCallOrFieldToken(method, s_tumbleWingPinkTimerField?.MetadataToken ?? -1, requireStfld: true);
+        }
+
+        private static bool MethodCallsTumbleWingsVisuals(MethodBase method)
+        {
+            return MethodContainsCallOrFieldToken(method, s_upgradeTumbleWingsVisualsActiveMethod?.MetadataToken ?? -1, requireStfld: false);
+        }
+
+        private static bool MethodContainsCallOrFieldToken(MethodBase method, int targetToken, bool requireStfld)
+        {
+            if (method == null || targetToken < 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                var il = method.GetMethodBody()?.GetILAsByteArray();
+                if (il == null || il.Length < 5)
+                {
+                    return false;
+                }
+
+                for (var i = 0; i <= il.Length - 5; i++)
+                {
+                    var op = il[i];
+                    if (requireStfld)
+                    {
+                        if (op != 0x7D)
+                        {
+                            continue;
+                        }
+                    }
+                    else if (op != 0x28 && op != 0x6F)
+                    {
+                        continue;
+                    }
+
+                    var token = BitConverter.ToInt32(il, i + 1);
+                    if (token == targetToken)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
         }
 
         private static void SetTumbleWingPinkTimerSafe(ItemUpgradePlayerTumbleWingsLogic? logic, float value)

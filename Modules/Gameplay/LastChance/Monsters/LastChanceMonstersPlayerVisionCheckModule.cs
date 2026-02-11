@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
+using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using UnityEngine;
 
@@ -12,11 +13,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
     [HarmonyPatch]
     internal static class LastChanceMonstersPlayerVisionCheckModule
     {
-        private const float ContinuousLockMaxSeconds = 5f;
-        private const float ContinuousLockCooldownSeconds = 15f;
-        private const float LockKeepAliveGraceSeconds = 0.6f;
-        private const float SourceBucketSize = 1f;
-
         private sealed class ContinuousLockState
         {
             internal float LockStartAt = -1f;
@@ -27,6 +23,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
 
         private static readonly Dictionary<long, ContinuousLockState> s_lockBySourceAndPlayer = new();
         private static float s_nextCleanupAt;
+
+        internal static void ResetRuntimeState()
+        {
+            s_lockBySourceAndPlayer.Clear();
+            s_nextCleanupAt = 0f;
+        }
 
         private static readonly MethodInfo? s_playerVisionCheckVanilla = AccessTools.Method(
             typeof(SemiFunc),
@@ -202,24 +204,27 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
             }
 
             var seen = SemiFunc.PlayerVisionCheckPosition(startPosition, endPosition, range, player, previouslySeen);
+            var keepAliveGrace = Mathf.Max(0.05f, InternalConfig.LastChanceMonstersCameraLockKeepAliveGraceSeconds);
             if (!seen)
             {
-                if (state.LastSeenAt < 0f || now - state.LastSeenAt > LockKeepAliveGraceSeconds)
+                if (state.LastSeenAt < 0f || now - state.LastSeenAt > keepAliveGrace)
                 {
                     state.LockStartAt = -1f;
                 }
                 return false;
             }
 
-            if (state.LockStartAt < 0f || state.LastSeenAt < 0f || now - state.LastSeenAt > LockKeepAliveGraceSeconds)
+            if (state.LockStartAt < 0f || state.LastSeenAt < 0f || now - state.LastSeenAt > keepAliveGrace)
             {
                 state.LockStartAt = now;
             }
 
             state.LastSeenAt = now;
-            if (now - state.LockStartAt >= ContinuousLockMaxSeconds)
+            var maxLock = Mathf.Max(0.1f, InternalConfig.LastChanceMonstersCameraLockMaxSeconds);
+            if (now - state.LockStartAt >= maxLock)
             {
-                state.CooldownUntil = now + ContinuousLockCooldownSeconds;
+                var cooldown = Mathf.Max(0.1f, InternalConfig.LastChanceMonstersCameraLockCooldownSeconds);
+                state.CooldownUntil = now + cooldown;
                 state.LockStartAt = -1f;
                 state.LastSeenAt = -1f;
                 return false;
@@ -230,9 +235,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters
 
         private static long BuildLockKey(Vector3 startPosition, PlayerAvatar player)
         {
-            var px = Mathf.RoundToInt(startPosition.x / SourceBucketSize);
-            var py = Mathf.RoundToInt(startPosition.y / SourceBucketSize);
-            var pz = Mathf.RoundToInt(startPosition.z / SourceBucketSize);
+            var sourceBucketSize = Mathf.Max(0.1f, InternalConfig.LastChanceMonstersVisionLockSourceBucketSize);
+            var px = Mathf.RoundToInt(startPosition.x / sourceBucketSize);
+            var py = Mathf.RoundToInt(startPosition.y / sourceBucketSize);
+            var pz = Mathf.RoundToInt(startPosition.z / sourceBucketSize);
             var sourceHash = ((px * 73856093) ^ (py * 19349663) ^ (pz * 83492791));
             var playerId = player != null && player.photonView != null ? player.photonView.ViewID : (player?.GetInstanceID() ?? 0);
             return ((long)sourceHash << 32) ^ (uint)playerId;

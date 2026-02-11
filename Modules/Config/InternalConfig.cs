@@ -12,5 +12,6 @@ namespace DeathHeadHopperFix.Modules.Config
         internal static float LastChanceMonstersCameraLockMaxSeconds = 5f;
         internal static float LastChanceMonstersCameraLockCooldownSeconds = 15f;
         internal static float LastChanceMonstersCameraLockKeepAliveGraceSeconds = 0.6f;
+        internal static float LastChanceMonstersVisionLockSourceBucketSize = 1f;
     }
 }
