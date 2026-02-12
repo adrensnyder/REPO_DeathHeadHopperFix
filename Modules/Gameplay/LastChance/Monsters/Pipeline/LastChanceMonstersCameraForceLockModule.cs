@@ -7,12 +7,17 @@ using System.Reflection.Emit;
 using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using UnityEngine;
+using BepInEx.Logging;
+using DeathHeadHopperFix.Modules.Utilities;
+using Logger = BepInEx.Logging.Logger;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 {
     [HarmonyPatch]
     internal static class LastChanceMonstersCameraForceLockModule
     {
+        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.CeilingEye");
+
         private sealed class LockState
         {
             internal float LockStartAt = -1f;
@@ -35,6 +40,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 
         private static readonly MethodInfo? s_aimTargetSetProxy =
             AccessTools.Method(typeof(LastChanceMonstersCameraForceLockModule), nameof(AimTargetSetLastChanceAware));
+        private static readonly FieldInfo? s_spectatePlayerField = AccessTools.Field(typeof(SpectateCamera), "player");
+        private static readonly FieldInfo? s_normalAimHorizontalField = AccessTools.Field(typeof(SpectateCamera), "normalAimHorizontal");
+        private static readonly FieldInfo? s_normalAimVerticalField = AccessTools.Field(typeof(SpectateCamera), "normalAimVertical");
 
         [HarmonyTargetMethods]
         private static IEnumerable<MethodBase> TargetMethods()
@@ -151,24 +159,38 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             return false;
         }
 
-        internal static void AimTargetSoftSetLastChanceAware(Vector3 position, float inSpeed, float outSpeed, float strengthNoAim, GameObject source, int prio)
+        internal static void AimTargetSoftSetLastChanceAware(CameraAim? cameraAim, Vector3 position, float inSpeed, float outSpeed, float strengthNoAim, GameObject source, int prio)
         {
             if (!ShouldApplyCameraForce(source))
             {
                 return;
             }
 
-            CameraAim.Instance.AimTargetSoftSet(position, inSpeed, outSpeed, strengthNoAim, source, prio);
+            var target = cameraAim ?? CameraAim.Instance;
+            if (target == null)
+            {
+                return;
+            }
+
+            TryForceSpectateAimTo(position, source);
+            target.AimTargetSoftSet(position, inSpeed, outSpeed, strengthNoAim, source, prio);
         }
 
-        internal static void AimTargetSetLastChanceAware(Vector3 position, float inSpeed, float outSpeed, GameObject source, int prio)
+        internal static void AimTargetSetLastChanceAware(CameraAim? cameraAim, Vector3 position, float inSpeed, float outSpeed, GameObject source, int prio)
         {
             if (!ShouldApplyCameraForce(source))
             {
                 return;
             }
 
-            CameraAim.Instance.AimTargetSet(position, inSpeed, outSpeed, source, prio);
+            var target = cameraAim ?? CameraAim.Instance;
+            if (target == null)
+            {
+                return;
+            }
+
+            TryForceSpectateAimTo(position, source);
+            target.AimTargetSet(position, inSpeed, outSpeed, source, prio);
         }
 
         private static bool ShouldApplyCameraForce(GameObject? source)
@@ -197,6 +219,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             state.LastTouchAt = now;
             if (state.CooldownUntil > now)
             {
+                DebugDecision(source, key, "CooldownActive", state, now, false);
                 return false;
             }
 
@@ -214,11 +237,63 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 state.CooldownUntil = now + cooldown;
                 state.LockStartAt = -1f;
                 state.LastSeenAt = -1f;
+                DebugDecision(source, key, "ReachedMaxLock_SetCooldown", state, now, false);
                 return false;
             }
 
             // Gameplay stays active regardless; this only controls camera forcing.
-            return InternalConfig.LastChanceMonstersForceCameraOnLock;
+            var allow = InternalConfig.LastChanceMonstersForceCameraOnLock;
+            DebugDecision(source, key, allow ? "AllowForceCamera" : "ForceCameraDisabledByConfig", state, now, allow);
+            return allow;
+        }
+
+        private static void DebugDecision(GameObject? source, int key, string reason, LockState state, float now, bool decision)
+        {
+            if (!InternalDebugFlags.DebugLastChanceCeilingEyeFlow || !LogLimiter.ShouldLog($"CeilingEye.CameraForce.{reason}.{key}", 90))
+            {
+                return;
+            }
+
+            var sourceName = source != null ? source.name : "null-source";
+            Log.LogInfo(
+                $"[CeilingEye][CameraForce][{reason}] source='{sourceName}' key={key} decision={decision} " +
+                $"now={now:F2} lockStart={state.LockStartAt:F2} lastSeen={state.LastSeenAt:F2} cooldownUntil={state.CooldownUntil:F2} " +
+                $"cfgForce={InternalConfig.LastChanceMonstersForceCameraOnLock}");
+        }
+
+        private static void TryForceSpectateAimTo(Vector3 targetPosition, GameObject? source)
+        {
+            var spectate = SpectateCamera.instance;
+            if (spectate == null || s_spectatePlayerField == null || s_normalAimHorizontalField == null || s_normalAimVerticalField == null)
+            {
+                return;
+            }
+
+            var local = PlayerAvatar.instance;
+            var spectated = s_spectatePlayerField.GetValue(spectate) as PlayerAvatar;
+            if (local == null || spectated == null || !ReferenceEquals(local, spectated))
+            {
+                return;
+            }
+
+            var pivot = spectate.transform;
+            var direction = targetPosition - pivot.position;
+            if (direction.sqrMagnitude <= 0.0001f)
+            {
+                return;
+            }
+
+            var yaw = Mathf.Atan2(direction.x, direction.z) * Mathf.Rad2Deg;
+            var flat = new Vector2(direction.x, direction.z).magnitude;
+            var pitch = -Mathf.Atan2(direction.y, Mathf.Max(0.0001f, flat)) * Mathf.Rad2Deg;
+
+            s_normalAimHorizontalField.SetValue(spectate, yaw);
+            s_normalAimVerticalField.SetValue(spectate, Mathf.Clamp(pitch, -80f, 80f));
+
+            if (InternalDebugFlags.DebugLastChanceCeilingEyeFlow && LogLimiter.ShouldLog("CeilingEye.SpectateBridge", 90))
+            {
+                Log.LogInfo($"[CeilingEye][SpectateBridge] source='{(source != null ? source.name : "null-source")}' yaw={yaw:F1} pitch={pitch:F1} target={targetPosition}");
+            }
         }
 
         private static void CleanupOldStates(float now)

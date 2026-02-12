@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 {
@@ -142,10 +143,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 
             var built = new BlockingReflection
             {
-                EnemyField = AccessTools.Field(type, "enemy"),
-                AgentDirectionField = AccessTools.Field(type, "agentDirection"),
-                IsBlockedByPlayerField = AccessTools.Field(type, "isBlockedByPlayer"),
-                IsBlockedByPlayerAvatarField = AccessTools.Field(type, "isBlockedByPlayerAvatar")
+                EnemyField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "enemy"),
+                AgentDirectionField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "agentDirection"),
+                IsBlockedByPlayerField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "isBlockedByPlayer"),
+                IsBlockedByPlayerAvatarField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "isBlockedByPlayerAvatar")
             };
 
             ReflectionCache[type] = built;
@@ -165,37 +166,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 
         private static bool TryResolvePlayerFromBlockingCollider(Collider collider, out PlayerAvatar? player)
         {
-            player = null;
-
-            var controller = collider.GetComponentInParent<PlayerController>();
-            if (controller != null && controller.playerAvatarScript != null)
-            {
-                player = controller.playerAvatarScript;
-                return true;
-            }
-
-            var avatar = collider.GetComponentInParent<PlayerAvatar>();
-            if (avatar != null)
-            {
-                player = avatar;
-                return true;
-            }
-
-            var tumble = collider.GetComponentInParent<PlayerTumble>();
-            if (tumble != null && tumble.playerAvatar != null)
-            {
-                player = tumble.playerAvatar;
-                return true;
-            }
-
-            var deathHead = collider.GetComponentInParent<PlayerDeathHead>();
-            if (deathHead != null && deathHead.playerAvatar != null)
-            {
-                player = deathHead.playerAvatar;
-                return true;
-            }
-
-            return false;
+            return LastChanceMonstersReflectionHelper.TryResolvePlayerFromCollider(collider, out player);
         }
 
         private static bool TryResolveNavmeshPoint(PlayerAvatar player, out Vector3 point)

@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 {
@@ -185,9 +186,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                     continue;
                 }
 
-                var playerInGas = AccessTools.Method(ft, "PlayerInGas", new[] { typeof(PlayerAvatar) });
-                var playerOnCooldown = AccessTools.Method(ft, "PlayerIsOnCooldown", new[] { typeof(PlayerAvatar) });
-                var playerInGasCheck = AccessTools.Method(ft, "PlayerInGasCheck", new[] { typeof(PlayerAvatar) });
+                var playerInGas = LastChanceMonstersReflectionHelper.FindMethodInHierarchy(ft, "PlayerInGas", new[] { typeof(PlayerAvatar) });
+                var playerOnCooldown = LastChanceMonstersReflectionHelper.FindMethodInHierarchy(ft, "PlayerIsOnCooldown", new[] { typeof(PlayerAvatar) });
+                var playerInGasCheck = LastChanceMonstersReflectionHelper.FindMethodInHierarchy(ft, "PlayerInGasCheck", new[] { typeof(PlayerAvatar) });
                 if (playerInGas == null || playerOnCooldown == null || playerInGasCheck == null)
                 {
                     continue;
@@ -197,7 +198,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                 built.PlayerInGasMethod = playerInGas;
                 built.PlayerIsOnCooldownMethod = playerOnCooldown;
                 built.PlayerInGasCheckMethod = playerInGasCheck;
-                built.OwnerEnemyField = AccessTools.Field(ft, "enemy");
+                built.OwnerEnemyField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(ft, "enemy");
                 break;
             }
 
@@ -206,39 +207,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
         }
 
         private static bool TryResolvePlayer(Collider collider, out PlayerAvatar? player)
-        {
-            player = null;
-
-            var controller = collider.GetComponentInParent<PlayerController>();
-            if (controller != null && controller.playerAvatarScript != null)
-            {
-                player = controller.playerAvatarScript;
-                return true;
-            }
-
-            var avatar = collider.GetComponentInParent<PlayerAvatar>();
-            if (avatar != null)
-            {
-                player = avatar;
-                return true;
-            }
-
-            var tumble = collider.GetComponentInParent<PlayerTumble>();
-            if (tumble != null && tumble.playerAvatar != null)
-            {
-                player = tumble.playerAvatar;
-                return true;
-            }
-
-            var deathHead = collider.GetComponentInParent<PlayerDeathHead>();
-            if (deathHead != null && deathHead.playerAvatar != null)
-            {
-                player = deathHead.playerAvatar;
-                return true;
-            }
-
-            return false;
-        }
+            => LastChanceMonstersReflectionHelper.TryResolvePlayerFromCollider(collider, out player);
 
         private static bool ContainsPlayer(IList list, PlayerAvatar player)
         {

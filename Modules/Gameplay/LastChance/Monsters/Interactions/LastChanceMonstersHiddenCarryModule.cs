@@ -4,19 +4,35 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Reflection.Emit;
+using BepInEx.Logging;
+using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using UnityEngine;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support;
+using DeathHeadHopperFix.Modules.Utilities;
+using Logger = BepInEx.Logging.Logger;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 {
     [HarmonyPatch]
     internal static class LastChanceMonstersCarryProxyModule
     {
+        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.HiddenCarry");
+
+        private sealed class CarryAnchorState
+        {
+            internal int PlayerId;
+            internal Vector3 PickupOrigin;
+            internal bool HasOrigin;
+            internal string LastState = string.Empty;
+        }
+
         private static readonly FieldInfo? DeathHeadPhysGrabObjectField = AccessTools.Field(typeof(PlayerDeathHead), "physGrabObject");
         private static readonly FieldInfo? PhysGrabObjectRbField = AccessTools.Field(typeof(PhysGrabObject), "rb");
         private static readonly FieldInfo? PhysGrabObjectCenterPointField = AccessTools.Field(typeof(PhysGrabObject), "centerPoint");
         private static readonly FieldInfo? PhysGrabObjectPlayerGrabbingField = AccessTools.Field(typeof(PhysGrabObject), "playerGrabbing");
         private static readonly Dictionary<Type, CarryReflection> ReflectionCache = new();
+        private static readonly Dictionary<int, CarryAnchorState> AnchorByCarrier = new();
 
         private sealed class CarryReflection
         {
@@ -84,11 +100,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             var player = cache.PlayerTargetField?.GetValue(__instance) as PlayerAvatar;
             if (player == null || !LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
             {
+                ClearPickupOrigin(__instance);
                 return true;
             }
 
             if (!IsCarryState(__instance, cache))
             {
+                ClearPickupOrigin(__instance);
                 return true;
             }
 
@@ -100,6 +118,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             if (head == null || phys == null || rb == null || pickupTransform == null)
             {
                 return true;
+            }
+
+            UpdatePickupOrigin(__instance, player, GetCurrentStateName(__instance, cache), centerPoint);
+
+            if (InternalDebugFlags.DebugLastChanceHiddenCarryFlow && LogLimiter.ShouldLog("HiddenCarry.PrefixState", 120))
+            {
+                Log.LogInfo(
+                    $"[HiddenCarry][Prefix] state={GetCurrentStateName(__instance, cache)} " +
+                    $"headCenter={centerPoint} bodyPos={player.transform.position} pickupPos={pickupTransform.position}");
             }
 
             player.FallDamageResetSet(0.1f);
@@ -127,6 +154,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             return false;
         }
 
+        internal static bool TryGetPickupOrigin(object carrierInstance, PlayerAvatar player, out Vector3 origin)
+        {
+            origin = default;
+            if (carrierInstance == null || player == null)
+            {
+                return false;
+            }
+
+            var key = GetCarrierKey(carrierInstance);
+            if (!AnchorByCarrier.TryGetValue(key, out var state) || state == null || !state.HasOrigin)
+            {
+                return false;
+            }
+
+            var playerId = GetPlayerId(player);
+            if (state.PlayerId != playerId)
+            {
+                return false;
+            }
+
+            origin = state.PickupOrigin;
+            return true;
+        }
+
         private static CarryReflection GetCarryReflection(Type type)
         {
             if (ReflectionCache.TryGetValue(type, out var cached))
@@ -136,9 +187,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 
             var built = new CarryReflection
             {
-                CurrentStateField = AccessTools.Field(type, "currentState"),
-                PlayerTargetField = AccessTools.Field(type, "playerTarget"),
-                PlayerPickupTransformField = AccessTools.Field(type, "playerPickupTransform")
+                CurrentStateField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "currentState"),
+                PlayerTargetField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "playerTarget"),
+                PlayerPickupTransformField = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "playerPickupTransform")
             };
 
             ReflectionCache[type] = built;
@@ -189,6 +240,75 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             return IsState(instance, cache, "PlayerPickup") ||
                    IsState(instance, cache, "PlayerMove") ||
                    IsState(instance, cache, "PlayerRelease");
+        }
+
+        private static string GetCurrentStateName(object instance, CarryReflection cache)
+        {
+            if (instance == null || cache.CurrentStateField == null)
+            {
+                return string.Empty;
+            }
+
+            return cache.CurrentStateField.GetValue(instance)?.ToString() ?? string.Empty;
+        }
+
+        private static void UpdatePickupOrigin(object carrierInstance, PlayerAvatar player, string stateName, Vector3 currentHeadCenter)
+        {
+            var key = GetCarrierKey(carrierInstance);
+            if (!AnchorByCarrier.TryGetValue(key, out var state) || state == null)
+            {
+                state = new CarryAnchorState();
+                AnchorByCarrier[key] = state;
+            }
+
+            var playerId = GetPlayerId(player);
+            var enteringPickup = string.Equals(stateName, "PlayerPickup", StringComparison.Ordinal) &&
+                                 !string.Equals(state.LastState, "PlayerPickup", StringComparison.Ordinal);
+            var playerChanged = state.PlayerId != 0 && state.PlayerId != playerId;
+
+            if (!state.HasOrigin || enteringPickup || playerChanged)
+            {
+                state.PickupOrigin = currentHeadCenter;
+                state.HasOrigin = true;
+                state.PlayerId = playerId;
+                if (InternalDebugFlags.DebugLastChanceHiddenCarryFlow && LogLimiter.ShouldLog("HiddenCarry.PickupOriginSet", 120))
+                {
+                    Log.LogInfo($"[HiddenCarry][OriginSet] state={stateName} origin={state.PickupOrigin} playerId={state.PlayerId}");
+                }
+            }
+
+            state.LastState = stateName;
+        }
+
+        private static void ClearPickupOrigin(object carrierInstance)
+        {
+            if (carrierInstance == null)
+            {
+                return;
+            }
+
+            AnchorByCarrier.Remove(GetCarrierKey(carrierInstance));
+        }
+
+        private static int GetCarrierKey(object carrierInstance)
+        {
+            if (carrierInstance is UnityEngine.Object unityObject)
+            {
+                return unityObject.GetInstanceID();
+            }
+
+            return carrierInstance.GetHashCode();
+        }
+
+        private static int GetPlayerId(PlayerAvatar player)
+        {
+            var photonView = player.photonView;
+            if (photonView != null)
+            {
+                return photonView.ViewID;
+            }
+
+            return player.GetInstanceID();
         }
 
         private static bool IsState(object instance, CarryReflection cache, string stateName)

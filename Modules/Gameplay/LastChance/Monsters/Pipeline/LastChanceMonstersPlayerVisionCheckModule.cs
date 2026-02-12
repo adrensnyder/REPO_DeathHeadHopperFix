@@ -7,12 +7,17 @@ using System.Reflection.Emit;
 using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using UnityEngine;
+using BepInEx.Logging;
+using DeathHeadHopperFix.Modules.Utilities;
+using Logger = BepInEx.Logging.Logger;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 {
     [HarmonyPatch]
     internal static class LastChanceMonstersPlayerVisionCheckModule
     {
+        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.CeilingEye");
+
         private sealed class ContinuousLockState
         {
             internal float LockStartAt = -1f;
@@ -171,7 +176,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 
         internal static bool PlayerVisionCheckLastChanceAware(Vector3 position, float range, PlayerAvatar player, bool previouslySeen)
         {
-            if (LastChanceMonstersTargetProxyHelper.TryGetHeadProxyTarget(player, out var headCenter))
+            if (LastChanceMonstersTargetProxyHelper.TryGetHeadProxyVisionTarget(player, out var headCenter))
             {
                 return PlayerVisionCheckPositionLastChanceAware(position, headCenter, range, player, previouslySeen);
             }
@@ -181,7 +186,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 
         internal static bool PlayerVisionCheckPositionLastChanceAware(Vector3 startPosition, Vector3 endPosition, float range, PlayerAvatar player, bool previouslySeen)
         {
-            if (!LastChanceMonstersTargetProxyHelper.TryGetHeadProxyTarget(player, out var headCenter))
+            if (!LastChanceMonstersTargetProxyHelper.TryGetHeadProxyVisionTarget(player, out var headCenter))
             {
                 return SemiFunc.PlayerVisionCheckPosition(startPosition, endPosition, range, player, previouslySeen);
             }
@@ -200,10 +205,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             state.LastTouchAt = now;
             if (state.CooldownUntil > now)
             {
+                DebugVision("CooldownActive", startPosition, endPosition, player, state, now, false);
                 return false;
             }
 
-            var seen = SemiFunc.PlayerVisionCheckPosition(startPosition, endPosition, range, player, previouslySeen);
+            var seen = HeadProxyVisionCheckPosition(startPosition, endPosition, range, player);
             var keepAliveGrace = Mathf.Max(0.05f, InternalConfig.LastChanceMonstersCameraLockKeepAliveGraceSeconds);
             if (!seen)
             {
@@ -211,6 +217,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 {
                     state.LockStartAt = -1f;
                 }
+                DebugVision("NotSeen", startPosition, endPosition, player, state, now, false);
                 return false;
             }
 
@@ -227,10 +234,118 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 state.CooldownUntil = now + cooldown;
                 state.LockStartAt = -1f;
                 state.LastSeenAt = -1f;
+                DebugVision("ReachedMaxLock_SetCooldown", startPosition, endPosition, player, state, now, false);
+                return false;
+            }
+
+            DebugVision("SeenAndAllowed", startPosition, endPosition, player, state, now, true);
+            return true;
+        }
+
+        private static bool HeadProxyVisionCheckPosition(Vector3 startPosition, Vector3 endPosition, float range, PlayerAvatar player)
+        {
+            // Ceiling-eye specific resilience: test a few vertical samples so near-floor head proxies
+            // are still detectable when floor geometry clips the direct center ray.
+            var candidatePoints = new[]
+            {
+                endPosition,
+                endPosition + Vector3.up * 0.2f,
+                endPosition + Vector3.up * 0.45f
+            };
+
+            for (var i = 0; i < candidatePoints.Length; i++)
+            {
+                if (HeadProxyVisionCheckPositionSingle(startPosition, candidatePoints[i], range, player))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool HeadProxyVisionCheckPositionSingle(Vector3 startPosition, Vector3 endPosition, float range, PlayerAvatar player)
+        {
+            var direction = endPosition - startPosition;
+            var distance = direction.magnitude;
+            if (distance > range)
+            {
+                return false;
+            }
+
+            if (distance <= 0.001f)
+            {
+                return true;
+            }
+
+            var hits = Physics.RaycastAll(startPosition, direction.normalized, distance, ~0, QueryTriggerInteraction.Ignore);
+            for (var i = 0; i < hits.Length; i++)
+            {
+                var t = hits[i].transform;
+                if (t == null)
+                {
+                    continue;
+                }
+
+                if (t.CompareTag("Enemy"))
+                {
+                    continue;
+                }
+
+                var hitHead = t.GetComponentInParent<PlayerDeathHead>();
+                if (hitHead != null && player != null && hitHead == player.playerDeathHead)
+                {
+                    continue;
+                }
+
+                var hitAvatar = t.GetComponentInParent<PlayerAvatar>();
+                if (hitAvatar != null && hitAvatar == player)
+                {
+                    continue;
+                }
+
+                if (t.GetComponentInParent<PlayerTumble>() != null)
+                {
+                    continue;
+                }
+
+                // If the obstruction is extremely close to target point, treat it as endpoint grazing
+                // (common when target is on/near floor).
+                var hitToTarget = Vector3.Distance(hits[i].point, endPosition);
+                if (hitToTarget <= 0.35f)
+                {
+                    continue;
+                }
+
                 return false;
             }
 
             return true;
+        }
+
+        private static void DebugVision(
+            string reason,
+            Vector3 startPosition,
+            Vector3 endPosition,
+            PlayerAvatar player,
+            ContinuousLockState state,
+            float now,
+            bool decision)
+        {
+            if (!InternalDebugFlags.DebugLastChanceCeilingEyeFlow)
+            {
+                return;
+            }
+
+            var playerId = player != null && player.photonView != null ? player.photonView.ViewID : (player?.GetInstanceID() ?? 0);
+            if (!LogLimiter.ShouldLog($"CeilingEye.Vision.{reason}.{playerId}", 90))
+            {
+                return;
+            }
+
+            Log.LogInfo(
+                $"[CeilingEye][Vision][{reason}] playerId={playerId} decision={decision} " +
+                $"start={startPosition} end={endPosition} now={now:F2} lockStart={state.LockStartAt:F2} lastSeen={state.LastSeenAt:F2} cooldownUntil={state.CooldownUntil:F2}");
         }
 
         private static long BuildLockKey(Vector3 startPosition, PlayerAvatar player)

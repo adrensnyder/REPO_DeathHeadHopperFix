@@ -257,20 +257,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
             }
 
             var selected = new List<(string label, EnemySetup setup)>();
-            var used = new HashSet<EnemySetup>();
             var unknownRequests = new List<string>();
 
             for (var i = 0; i < requestedNames.Count; i++)
             {
                 var requested = requestedNames[i];
-                var direct = setups.FirstOrDefault(s => !used.Contains(s) && IsNameMatch(requested, NormalizeSetupName(s.name)));
+                var direct = setups.FirstOrDefault(s => IsNameMatch(requested, NormalizeSetupName(s.name)));
                 if (direct == null)
                 {
                     unknownRequests.Add(requested);
                     continue;
                 }
 
-                used.Add(direct);
                 selected.Add((requested, direct));
             }
 
@@ -490,7 +488,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
                 }
 
                 var token = raw.Trim().ToLowerInvariant();
-                if (!string.IsNullOrWhiteSpace(token) && !list.Contains(token))
+                if (!string.IsNullOrWhiteSpace(token))
                 {
                     list.Add(token);
                 }

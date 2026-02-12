@@ -346,6 +346,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             return methods;
         }
 
+        [HarmonyPrepare]
+        private static bool Prepare()
+        {
+            foreach (var _ in TargetMethods())
+            {
+                return true;
+            }
+
+            return false;
+        }
+
         [HarmonyTranspiler]
         private static IEnumerable<CodeInstruction> ReplaceTargetPositionReads(IEnumerable<CodeInstruction> instructions)
         {

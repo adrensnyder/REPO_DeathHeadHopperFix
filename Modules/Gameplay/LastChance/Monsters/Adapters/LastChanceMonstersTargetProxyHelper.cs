@@ -15,6 +15,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
         private static readonly FieldInfo? s_deathHeadTriggeredField = AccessTools.Field(typeof(PlayerDeathHead), "triggered");
         private static readonly FieldInfo? s_deathHeadPhysGrabObjectField = AccessTools.Field(typeof(PlayerDeathHead), "physGrabObject");
         private static readonly FieldInfo? s_physGrabObjectCenterPointField = AccessTools.Field(typeof(PhysGrabObject), "centerPoint");
+        private static readonly FieldInfo? s_deathHeadPlayerEyesField = AccessTools.Field(typeof(PlayerDeathHead), "playerEyes");
 
         internal static bool IsRuntimeEnabled()
         {
@@ -94,6 +95,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
         {
             center = default;
             return IsRuntimeEnabled() && IsHeadProxyActive(player) && TryGetHeadCenter(player, out center);
+        }
+
+        internal static bool TryGetHeadProxyVisionTarget(PlayerAvatar? player, out Vector3 point)
+        {
+            point = default;
+            if (!IsRuntimeEnabled() || !IsHeadProxyActive(player) || player?.playerDeathHead == null)
+            {
+                return false;
+            }
+
+            var eyes = s_deathHeadPlayerEyesField?.GetValue(player.playerDeathHead);
+            if (eyes is Component eyesComponent)
+            {
+                point = eyesComponent.transform.position;
+                return true;
+            }
+
+            return TryGetHeadCenter(player, out point);
         }
 
         internal static bool TryGetPlayerFromDeathHeadCollider(Collider? other, out PlayerAvatar? player)
