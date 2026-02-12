@@ -115,6 +115,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
             return TryGetHeadCenter(player, out point);
         }
 
+        internal static bool TryGetHeadProxyTransform(PlayerAvatar? player, out Transform? transform)
+        {
+            transform = null;
+            if (!IsRuntimeEnabled() || !IsHeadProxyActive(player) || player?.playerDeathHead == null)
+            {
+                return false;
+            }
+
+            transform = player.playerDeathHead.transform;
+            return transform != null;
+        }
+
+        internal static bool TryGetHeadProxyPhysGrabObject(PlayerAvatar? player, out PhysGrabObject? physGrabObject)
+        {
+            physGrabObject = null;
+            if (!IsRuntimeEnabled() || !IsHeadProxyActive(player) || player?.playerDeathHead == null)
+            {
+                return false;
+            }
+
+            physGrabObject = s_deathHeadPhysGrabObjectField?.GetValue(player.playerDeathHead) as PhysGrabObject;
+            return physGrabObject != null;
+        }
+
         internal static bool TryGetPlayerFromDeathHeadCollider(Collider? other, out PlayerAvatar? player)
         {
             player = null;

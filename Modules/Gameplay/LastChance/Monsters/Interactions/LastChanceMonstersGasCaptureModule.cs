@@ -4,15 +4,20 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
+using BepInEx.Logging;
+using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support;
+using DeathHeadHopperFix.Modules.Utilities;
+using Logger = BepInEx.Logging.Logger;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 {
     [HarmonyPatch]
     internal static class LastChanceMonstersGasCaptureModule
     {
+        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.HeartHugger");
         private static readonly Dictionary<Type, GasCheckerReflection> ReflectionCache = new();
         private static readonly FieldInfo? EnemyVisionField = AccessTools.Field(typeof(Enemy), "Vision");
 
@@ -21,6 +26,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             internal FieldInfo? PrevCheckPosField;
             internal FieldInfo? CheckTimerField;
             internal FieldInfo? PlayersCollidingField;
+            internal FieldInfo? GasGuiderPrefabField;
             internal FieldInfo? OwnerField;
             internal MethodInfo? PlayerInGasMethod;
             internal MethodInfo? PlayerIsOnCooldownMethod;
@@ -107,14 +113,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             var prev = cache.PrevCheckPosField.GetValue(__instance) as Vector3? ?? default;
             var current = (__instance as MonoBehaviour)?.transform.position ?? prev;
             var travel = current - prev;
-            if (travel.sqrMagnitude <= 0.0001f)
-            {
-                return;
-            }
 
             var direction = travel.normalized;
             var distance = travel.magnitude;
             var radius = Mathf.Max((__instance as MonoBehaviour)?.transform.localScale.z * 0.5f ?? 0.3f, 0.2f);
+
+            if (distance <= 0.01f)
+            {
+                DebugLog("Gas.NoTravel", $"overlap fallback radius={radius:0.00}");
+                var overlap = Physics.OverlapSphere(current, radius, ~0, QueryTriggerInteraction.Ignore);
+                var processed = 0;
+                for (var i = 0; i < overlap.Length; i++)
+                {
+                    var col = overlap[i];
+                    if (col == null)
+                    {
+                        continue;
+                    }
+
+                    if (ProcessCandidateCollider(cache, __instance, owner, playersColliding, ownerVision, col, current, radius))
+                    {
+                        processed++;
+                    }
+                }
+                DebugLog("Gas.NoTravel.Result", $"overlap={overlap.Length} processed={processed}");
+
+                return;
+            }
+
             var hits = Physics.SphereCastAll(prev, radius, direction, distance, LayerMask.GetMask("Player", "PhysGrabObject"), QueryTriggerInteraction.Ignore);
             for (var i = 0; i < hits.Length; i++)
             {
@@ -123,44 +149,69 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                 {
                     continue;
                 }
-
-                if (!TryResolvePlayer(collider, out var player) || player == null)
-                {
-                    continue;
-                }
-
-                if (!LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
-                {
-                    continue;
-                }
-
-                if (cache.PlayerIsOnCooldownMethod.Invoke(owner, new object[] { player }) as bool? == true)
-                {
-                    continue;
-                }
-
-                if (cache.PlayerInGasCheckMethod.Invoke(owner, new object[] { player }) as bool? == true)
-                {
-                    continue;
-                }
-
-                if (visionOrigin != null && player.PlayerVisionTarget?.VisionTransform != null)
-                {
-                    var target = player.PlayerVisionTarget.VisionTransform.position;
-                    var dir = target - visionOrigin.position;
-                    if (Physics.Raycast(visionOrigin.position, dir, dir.magnitude, LayerMask.GetMask("Default"), QueryTriggerInteraction.Ignore))
-                    {
-                        continue;
-                    }
-                }
-
-                if (!ContainsPlayer(playersColliding, player))
-                {
-                    playersColliding.Add(player);
-                }
-
-                cache.PlayerInGasMethod.Invoke(owner, new object[] { player });
+                _ = ProcessCandidateCollider(cache, __instance, owner, playersColliding, ownerVision, collider, hits[i].point, radius);
             }
+        }
+
+        private static bool ProcessCandidateCollider(
+            GasCheckerReflection cache,
+            object checkerInstance,
+            object owner,
+            IList playersColliding,
+            EnemyVision? ownerVision,
+            Collider collider,
+            Vector3 hitPoint,
+            float radius)
+        {
+            if (cache.PlayerIsOnCooldownMethod == null || cache.PlayerInGasCheckMethod == null || cache.PlayerInGasMethod == null)
+            {
+                return false;
+            }
+
+            if (!TryResolvePlayer(collider, out var player) || player == null)
+            {
+                return false;
+            }
+
+            if (!LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
+            {
+                DebugLog("Gas.Skip.NotHeadProxy", $"player={GetPlayerId(player)}");
+                return false;
+            }
+
+            if (cache.PlayerIsOnCooldownMethod.Invoke(owner, new object[] { player }) as bool? == true)
+            {
+                DebugLog("Gas.Skip.Cooldown", $"player={GetPlayerId(player)}");
+                return false;
+            }
+
+            if (cache.PlayerInGasCheckMethod.Invoke(owner, new object[] { player }) as bool? == true)
+            {
+                DebugLog("Gas.Skip.AlreadyInGas", $"player={GetPlayerId(player)}");
+                return false;
+            }
+
+            var visionOrigin = ownerVision?.VisionTransform;
+            if (visionOrigin != null && player.PlayerVisionTarget?.VisionTransform != null)
+            {
+                var target = player.PlayerVisionTarget.VisionTransform.position;
+                var dir = target - visionOrigin.position;
+                if (Physics.Raycast(visionOrigin.position, dir, dir.magnitude, LayerMask.GetMask("Default"), QueryTriggerInteraction.Ignore))
+                {
+                    DebugLog("Gas.Skip.BlockedLOS", $"player={GetPlayerId(player)}");
+                    return false;
+                }
+            }
+
+            if (!ContainsPlayer(playersColliding, player))
+            {
+                playersColliding.Add(player);
+            }
+
+            cache.PlayerInGasMethod.Invoke(owner, new object[] { player });
+            DebugLog("Gas.PlayerInGas", $"player={GetPlayerId(player)} radius={radius:0.00}");
+            TrySpawnGasGuiderForHeadProxy(cache, checkerInstance, owner, player, hitPoint);
+            return true;
         }
 
         private static GasCheckerReflection GetReflection(Type type)
@@ -174,7 +225,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             {
                 PrevCheckPosField = AccessTools.Field(type, "prevCheckPos"),
                 CheckTimerField = AccessTools.Field(type, "checkTimer"),
-                PlayersCollidingField = AccessTools.Field(type, "playersColliding")
+                PlayersCollidingField = AccessTools.Field(type, "playersColliding"),
+                GasGuiderPrefabField = AccessTools.Field(type, "gasGuider")
             };
 
             var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
@@ -220,6 +272,68 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             }
 
             return false;
+        }
+
+        private static void TrySpawnGasGuiderForHeadProxy(GasCheckerReflection cache, object checkerInstance, object owner, PlayerAvatar player, Vector3 hitPoint)
+        {
+            if (!LastChanceMonstersTargetProxyHelper.TryGetHeadProxyTransform(player, out var headTransform) || headTransform == null)
+            {
+                DebugLog("Guider.SpawnSkip.NoHeadTransform", $"player={GetPlayerId(player)}");
+                return;
+            }
+
+            if (!LastChanceMonstersTargetProxyHelper.TryGetHeadProxyPhysGrabObject(player, out var headPhys) || headPhys == null)
+            {
+                DebugLog("Guider.SpawnSkip.NoHeadPhys", $"player={GetPlayerId(player)}");
+                return;
+            }
+
+            if (cache.GasGuiderPrefabField?.GetValue(checkerInstance) is not GameObject gasGuiderPrefab || gasGuiderPrefab == null)
+            {
+                DebugLog("Guider.SpawnSkip.NoPrefab", $"player={GetPlayerId(player)}");
+                return;
+            }
+
+            var instance = UnityEngine.Object.Instantiate(gasGuiderPrefab, (checkerInstance as MonoBehaviour)?.transform.position ?? headTransform.position, Quaternion.identity);
+            if (instance == null)
+            {
+                DebugLog("Guider.SpawnSkip.InstantiateNull", $"player={GetPlayerId(player)}");
+                return;
+            }
+
+            var guider = instance.GetComponent("EnemyHeartHuggerGasGuider");
+            if (guider == null)
+            {
+                DebugLog("Guider.SpawnSkip.NoComponent", $"player={GetPlayerId(player)} prefab={gasGuiderPrefab.name}");
+                return;
+            }
+
+            var guiderType = guider.GetType();
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "playerTumble")?.SetValue(guider, player.tumble);
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "targetTransform")?.SetValue(guider, headTransform);
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "enemyHeartHugger")?.SetValue(guider, owner);
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "headTransform")?.SetValue(guider, headTransform);
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "startPosition")?.SetValue(guider, hitPoint);
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "physGrabObject")?.SetValue(guider, headPhys);
+            LastChanceMonstersReflectionHelper.FindFieldInHierarchy(guiderType, "player")?.SetValue(guider, player);
+            instance.SetActive(true);
+            DebugLog("Guider.Spawned", $"player={GetPlayerId(player)} start={hitPoint} head={headTransform.position}");
+        }
+
+        private static void DebugLog(string reason, string detail)
+        {
+            if (!InternalDebugFlags.DebugLastChanceHeartHuggerFlow || !LogLimiter.ShouldLog($"HeartHugger.{reason}", 30))
+            {
+                return;
+            }
+
+            Log.LogInfo($"[HeartHugger][{reason}] {detail}");
+        }
+
+        private static int GetPlayerId(PlayerAvatar player)
+        {
+            var view = player.photonView;
+            return view != null ? view.ViewID : player.GetInstanceID();
         }
     }
 }
