@@ -26,17 +26,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             typeof(EnemyParent).GetField("enemy", AnyInstanceField);
         private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.MonstersSearch");
         private static readonly HashSet<MethodBase> s_patchedMethods = new HashSet<MethodBase>();
+        private static readonly Dictionary<Assembly, List<MethodBase>> s_discoveredMethodsByAssembly = new();
         private static Harmony? s_harmony;
         private static bool s_assemblyLoadHooked;
         private static float s_runtimeStateCachedAt;
         private static bool s_runtimeStateEnabled;
         private static bool s_loggedActivationSnapshot;
+        private static float s_lastSelfCheckAt;
 
         internal static void ResetRuntimeState()
         {
             s_runtimeStateCachedAt = 0f;
             s_runtimeStateEnabled = false;
             s_loggedActivationSnapshot = false;
+            s_lastSelfCheckAt = 0f;
         }
 
         internal static void Apply(Harmony harmony, Assembly asm)
@@ -54,6 +57,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
                 s_assemblyLoadHooked = true;
             }
+        }
+
+        internal static void Unapply()
+        {
+            if (s_harmony == null)
+            {
+                return;
+            }
+
+            try
+            {
+                s_harmony.UnpatchSelf();
+            }
+            catch
+            {
+                // Best-effort unpatch.
+            }
+
+            if (s_assemblyLoadHooked)
+            {
+                AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+                s_assemblyLoadHooked = false;
+            }
+
+            s_patchedMethods.Clear();
+            s_discoveredMethodsByAssembly.Clear();
+            s_harmony = null;
+            ResetRuntimeState();
         }
 
         private static void PatchAllLoadedAssemblies()
@@ -77,16 +108,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 return;
             }
 
-            List<MethodBase> methods;
-            try
-            {
-                methods = CollectEnemyMethodsUsingIsDisabled(asm);
-            }
-            catch
-            {
-                return;
-            }
-
+            var methods = DiscoverPatchableMethods(asm);
             if (methods.Count == 0)
             {
                 return;
@@ -111,6 +133,27 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             {
                 Log.LogInfo($"[LastChance] MonstersSearch patched methods in {asm.GetName().Name}: {patchedNow}.");
             }
+        }
+
+        private static List<MethodBase> DiscoverPatchableMethods(Assembly asm)
+        {
+            if (s_discoveredMethodsByAssembly.TryGetValue(asm, out var cached))
+            {
+                return cached;
+            }
+
+            List<MethodBase> discovered;
+            try
+            {
+                discovered = CollectEnemyMethodsUsingIsDisabled(asm);
+            }
+            catch
+            {
+                discovered = new List<MethodBase>();
+            }
+
+            s_discoveredMethodsByAssembly[asm] = discovered;
+            return discovered;
         }
 
         internal static int GetAliveSearchMonsterCount()
@@ -159,7 +202,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             for (var i = 0; i < types.Length; i++)
             {
                 var type = types[i];
-                if (type == null || !IsMonsterRelatedType(type))
+                if (type == null || !IsMonsterRelatedType(type) || IsTricycleType(type))
                 {
                     continue;
                 }
@@ -220,6 +263,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             }
 
             return false;
+        }
+
+        private static bool IsTricycleType(Type type)
+        {
+            return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
         }
 
         private static bool MethodReadsPlayerIsDisabled(MethodBase method)
@@ -331,7 +380,48 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 TryLogActivationSnapshot();
             }
 
+            TryRunRemapSelfCheck(now);
+
             return s_runtimeStateEnabled;
+        }
+
+        private static void TryRunRemapSelfCheck(float now)
+        {
+            if (!FeatureFlags.DebugLogging || now - s_lastSelfCheckAt < 2f)
+            {
+                return;
+            }
+
+            s_lastSelfCheckAt = now;
+            var players = GameDirector.instance?.PlayerList;
+            if (players == null || players.Count == 0)
+            {
+                return;
+            }
+
+            for (var i = 0; i < players.Count; i++)
+            {
+                var player = players[i];
+                if (player == null)
+                {
+                    continue;
+                }
+
+                if (s_playerIsDisabledGetter == null)
+                {
+                    return;
+                }
+
+                var rawDisabled = s_playerIsDisabledGetter(player);
+                var remapped = RemapMonsterDisabledCheck(player);
+                var expected = s_runtimeStateEnabled ? false : rawDisabled;
+                if (remapped != expected)
+                {
+                    Log.LogWarning(
+                        $"[LastChance] MonstersSearch self-check mismatch: player={player.photonView?.ViewID ?? player.GetInstanceID()} " +
+                        $"runtime={s_runtimeStateEnabled} rawDisabled={rawDisabled} remapped={remapped} expected={expected}");
+                }
+            }
         }
 
         private static void TryLogActivationSnapshot()

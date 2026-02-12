@@ -32,11 +32,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private static IEnumerable<MethodBase> TargetMethods()
         {
             var methods = new List<MethodBase>();
-            var asm = typeof(Enemy).Assembly;
             Type[] types;
             try
             {
-                types = asm.GetTypes();
+                types = typeof(Enemy).Assembly.GetTypes();
             }
             catch
             {
@@ -46,7 +45,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             for (var i = 0; i < types.Length; i++)
             {
                 var type = types[i];
-                if (type == null || !IsMonsterRelatedType(type))
+                if (type == null || !IsMonsterRelatedType(type) || IsTricycleType(type))
                 {
                     continue;
                 }
@@ -146,6 +145,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             return false;
         }
 
+        private static bool IsTricycleType(Type type)
+        {
+            return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+        }
+
         private static bool MethodCallsSharedPlayerSearch(MethodBase method)
         {
             if (method == null || s_getAllVanillaMethod == null || s_getNearestVanillaMethod == null)
@@ -168,7 +173,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 for (var i = 0; i <= il.Length - 5; i++)
                 {
                     var op = il[i];
-                    if (op != 0x28 && op != 0x6F) // call / callvirt
+                    if (op != 0x28 && op != 0x6F)
                     {
                         continue;
                     }
@@ -182,7 +187,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             }
             catch
             {
-                // Ignore IL probe failures for non-standard bodies.
             }
 
             return false;
@@ -322,7 +326,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             for (var i = 0; i < types.Length; i++)
             {
                 var type = types[i];
-                if (type == null || !IsMonsterRelatedType(type))
+                if (type == null || !IsMonsterRelatedType(type) || IsTricycleType(type))
                 {
                     continue;
                 }
@@ -479,6 +483,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 
             return false;
         }
+
+        private static bool IsTricycleType(Type type)
+        {
+            return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+        }
     }
 }
-

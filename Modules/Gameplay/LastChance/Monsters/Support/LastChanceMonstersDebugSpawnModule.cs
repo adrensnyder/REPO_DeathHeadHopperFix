@@ -499,7 +499,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
 
         private static bool IsDebugSpawnConfigured()
         {
-            return !string.IsNullOrWhiteSpace(InternalDebugFlags.DebugAutoSpawnMonsterNamesCsv);
+            return InternalDebugFlags.EnableDebugSpawnRuntime &&
+                   !string.IsNullOrWhiteSpace(InternalDebugFlags.DebugAutoSpawnMonsterNamesCsv);
         }
 
         private static void TryLogAvailableEnemyCatalog(string reason)

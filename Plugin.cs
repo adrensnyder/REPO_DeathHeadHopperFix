@@ -25,12 +25,14 @@ namespace DeathHeadHopperFix
 
         private Harmony? _harmony;
         private bool _patched;
+        private Assembly? _targetAssembly;
         private static ManualLogSource? _log;
 
         private void Awake()
         {
             _log = Logger;
             ConfigManager.Initialize(Config);
+            WarnUnsafeDebugFlagsInRelease();
             AllPlayersDeadGuard.EnsureEnabled();
             LastChanceMonstersDebugSpawnModule.NotifyPluginAwake();
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
@@ -43,6 +45,7 @@ namespace DeathHeadHopperFix
 
             AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
             SceneManager.sceneLoaded += OnSceneLoaded;
+            ConfigManager.HostControlledChanged += OnHostControlledChanged;
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 TryPatchIfTargetAssembly(asm);
@@ -52,6 +55,7 @@ namespace DeathHeadHopperFix
         {
             AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
             SceneManager.sceneLoaded -= OnSceneLoaded;
+            ConfigManager.HostControlledChanged -= OnHostControlledChanged;
         }
 
         private void OnAssemblyLoad(object sender, AssemblyLoadEventArgs args)
@@ -63,6 +67,13 @@ namespace DeathHeadHopperFix
         {
             LastChanceTimerController.OnLevelLoaded();
             ConfigSyncManager.RequestHostSnapshotBroadcast();
+            ReconcileConditionalMonsterPatches();
+        }
+
+        private void OnHostControlledChanged()
+        {
+            LastChanceTimerController.OnHostControlledConfigChanged();
+            ReconcileConditionalMonsterPatches();
         }
 
         private void ApplyEarlyPatches()
@@ -94,8 +105,8 @@ namespace DeathHeadHopperFix
                 PrefabModule.Apply(harmony, asm, _log);
                 AudioModule.Apply(harmony, asm, _log);
                 DHHShopModule.Apply(harmony, asm, _log);
-                LastChanceMonstersSearchModule.Apply(harmony, asm);
-                LastChanceMonstersNoiseAggroModule.Apply(harmony, asm);
+                _targetAssembly = asm;
+                ReconcileConditionalMonsterPatches();
                 LastChanceMonstersDebugSpawnModule.NotifyTargetAssemblyLoaded();
 
                 DHHApiGuardModule.Apply(harmony, asm);
@@ -116,6 +127,51 @@ namespace DeathHeadHopperFix
             {
                 _log?.LogError(ex);
             }
+        }
+
+        private void ReconcileConditionalMonsterPatches()
+        {
+            var harmony = _harmony;
+            var asm = _targetAssembly;
+            if (harmony == null || asm == null)
+            {
+                return;
+            }
+
+            var enableMonsterPipelinePatches =
+                FeatureFlags.LastChangeMode &&
+                FeatureFlags.LastChanceMonstersSearchEnabled;
+
+            if (enableMonsterPipelinePatches)
+            {
+                LastChanceMonstersSearchModule.Apply(harmony, asm);
+                LastChanceMonstersNoiseAggroModule.Apply(harmony, asm);
+                return;
+            }
+
+            LastChanceMonstersNoiseAggroModule.Unapply();
+            LastChanceMonstersSearchModule.Unapply();
+        }
+
+        private void WarnUnsafeDebugFlagsInRelease()
+        {
+            if (UnityEngine.Debug.isDebugBuild)
+            {
+                return;
+            }
+
+            if (!InternalDebugFlags.DisableBatteryModule &&
+                !InternalDebugFlags.DisableAbilityPatches &&
+                !InternalDebugFlags.DisableSpectateChecks)
+            {
+                return;
+            }
+
+            _log?.LogWarning(
+                "[DebugSafety] Internal debug bypass flags are enabled in a non-debug build. " +
+                $"DisableBatteryModule={InternalDebugFlags.DisableBatteryModule}, " +
+                $"DisableAbilityPatches={InternalDebugFlags.DisableAbilityPatches}, " +
+                $"DisableSpectateChecks={InternalDebugFlags.DisableSpectateChecks}");
         }
     }
 }

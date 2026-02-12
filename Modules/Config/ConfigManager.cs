@@ -346,6 +346,7 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
+            var changed = false;
             foreach (var kvp in snapshot)
             {
                 if (!s_hostControlledFields.TryGetValue(kvp.Key, out var field))
@@ -356,8 +357,18 @@ namespace DeathHeadHopperFix.Modules.Config
                 var parsed = DeserializeValue(kvp.Value, field.FieldType);
                 if (parsed != null)
                 {
+                    var current = field.GetValue(null);
+                    if (current == null || !current.Equals(parsed))
+                    {
+                        changed = true;
+                    }
                     field.SetValue(null, parsed);
                 }
+            }
+
+            if (changed)
+            {
+                HostControlledChanged?.Invoke();
             }
         }
 

@@ -282,6 +282,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             s_active &&
             AllPlayersDeadGuard.AllPlayersDisabled() &&
             GetIndicatorMode() == LastChanceIndicatorMode.Direction;
+        internal static void OnHostControlledConfigChanged()
+        {
+            // Keep runtime caches/states coherent when host-controlled flags are changed live.
+            ClearCachedDynamicTimerInputs();
+            LastChanceMonstersNoiseAggroModule.ResetRuntimeState();
+            LastChanceMonstersSearchModule.ResetRuntimeState();
+            LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
+            LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
+            LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
+            LastChanceHeadPupilVisualModule.ResetRuntimeState();
+        }
+
         internal static float GetDirectionIndicatorPenaltySecondsPreview()
         {
             if (!IsDirectionIndicatorUiVisible)

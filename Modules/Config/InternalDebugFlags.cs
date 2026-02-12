@@ -13,7 +13,8 @@ namespace DeathHeadHopperFix.Modules.Config
         // Comma-separated enemy names/tokens to auto-spawn for debug test.
         // Empty string => disabled.
         // Done "ceiling eye,hidden,heart hugger"
-        // Check "tricycle,spinny,,thin man,tumbler";
+        // Check "tricycle,spinny,thin man,tumbler";
+        public static bool EnableDebugSpawnRuntime = true;
         public static string DebugAutoSpawnMonsterNamesCsv = "tricycle,tricycle,tricycle";
 
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
@@ -24,5 +25,8 @@ namespace DeathHeadHopperFix.Modules.Config
 
         // Temporary diagnostics for Heart Hugger gas capture / pull in LastChance.
         public static bool DebugLastChanceHeartHuggerFlow = false;
+
+        // Temporary diagnostics for Tricycle path-blocking reaction flow in LastChance.
+        public static bool DebugLastChanceTricycleFlow = true;
     }
 }

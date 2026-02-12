@@ -64,6 +64,27 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             s_applied = true;
         }
 
+        internal static void Unapply()
+        {
+            if (!s_applied || s_harmony == null)
+            {
+                return;
+            }
+
+            try
+            {
+                s_harmony.UnpatchSelf();
+            }
+            catch
+            {
+                // Best-effort unpatch.
+            }
+
+            s_applied = false;
+            s_harmony = null;
+            ResetRuntimeState();
+        }
+
         private static void ChargeWindupPostfix(object __instance)
         {
             if (__instance == null ||
