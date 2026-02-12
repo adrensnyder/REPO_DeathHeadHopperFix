@@ -299,13 +299,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     {
                         if (it is UnityEngine.Object uo)
                         {
-                            // Keep original DHH behavior strict: match only by itemAssetName, not display/object name.
-                            var itemKey = TryGetStrictItemAssetName(uo);
-                            if (!string.IsNullOrWhiteSpace(itemKey) && ShopItemsDictContains(shopItemsDict, itemKey))
+                            if (TryResolveShopItemKey(shopItemsDict, uo, out var resolvedKey, out var resolveMode))
                             {
                                 dhhPotential.Add(it);
                                 toRemove.Add(it);
-                                _log?.LogInfo($"[Fix] DHHShopManager selecting '{itemKey}' into dhhPotential");
+                                _log?.LogInfo($"[Fix] DHHShopManager selecting '{resolvedKey}' into dhhPotential");
+                                if (FeatureFlags.DebugLogging && !string.Equals(resolveMode, "strict-itemAssetName", StringComparison.Ordinal))
+                                    _log?.LogInfo($"[Fix] DHHShopManager fallback match mode={resolveMode} item='{uo.name}' key='{resolvedKey}'");
+                            }
+                            else if (FeatureFlags.DebugLogging)
+                            {
+                                var strictKey = TryGetStrictItemAssetName(uo);
+                                var flexibleKey = ItemHelpers.GetItemAssetName(uo);
+                                _log?.LogInfo($"[Fix] DHHShopManager skip item='{uo.name}' strict='{strictKey ?? "<null>"}' flexible='{flexibleKey ?? "<null>"}'");
                             }
                         }
                     }
@@ -567,6 +573,40 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 return true;
             var normalized = NormalizePrefabKey(key);
             return dict.Contains(normalized);
+        }
+
+        private static bool TryResolveShopItemKey(IDictionary shopItemsDict, UnityEngine.Object itemObj, out string? resolvedKey, out string resolveMode)
+        {
+            resolvedKey = null;
+            resolveMode = "none";
+            if (shopItemsDict == null || itemObj == null)
+                return false;
+
+            var strictKey = TryGetStrictItemAssetName(itemObj);
+            if (!string.IsNullOrWhiteSpace(strictKey) && ShopItemsDictContains(shopItemsDict, strictKey))
+            {
+                resolvedKey = strictKey;
+                resolveMode = "strict-itemAssetName";
+                return true;
+            }
+
+            var flexibleKey = ItemHelpers.GetItemAssetName(itemObj);
+            if (!string.IsNullOrWhiteSpace(flexibleKey) && ShopItemsDictContains(shopItemsDict, flexibleKey))
+            {
+                resolvedKey = flexibleKey;
+                resolveMode = "flexible-itemAssetName";
+                return true;
+            }
+
+            var nameKey = itemObj.name;
+            if (!string.IsNullOrWhiteSpace(nameKey) && ShopItemsDictContains(shopItemsDict, nameKey))
+            {
+                resolvedKey = nameKey;
+                resolveMode = "object-name";
+                return true;
+            }
+
+            return false;
         }
 
         private static string? TryGetStrictItemAssetName(UnityEngine.Object itemObj)
