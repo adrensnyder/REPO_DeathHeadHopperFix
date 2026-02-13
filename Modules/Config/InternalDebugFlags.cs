@@ -16,10 +16,10 @@ namespace DeathHeadHopperFix.Modules.Config
         // - EnableDebugSpawnRuntime=true by default is intentional while this repository is in active development/testing.
         // - This is expected and should not be treated as a production-critical issue by itself.
         // - Production-like behavior is obtained by setting EnableDebugSpawnRuntime=false (and/or clearing CSV).
-        // Done "ceiling eye,hidden,heart hugger,tricycle,tumbler"
-        // Check "spinny,thin man,tumbler";
+        // Done "ceiling eye,hidden,heart hugger,tricycle,tumbler,thin man"
+        // Check "spinny";
         public static bool EnableDebugSpawnRuntime = true;
-        public static string DebugAutoSpawnMonsterNamesCsv = "thin man,thin man,thin man,thin man,thin man";
+        public static string DebugAutoSpawnMonsterNamesCsv = "spinny,spinny,spinny,spinny";
 
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
         public static bool DebugLastChanceHiddenCarryFlow = false;
@@ -34,8 +34,8 @@ namespace DeathHeadHopperFix.Modules.Config
         public static bool DebugLastChanceTricycleFlow = false;
 
         // Temporary diagnostics for Spinny-like tumble lock pipelines in LastChance.
-        public static bool DebugLastChanceSpinnyFlow = false;
-        public static bool DebugLastChanceSpinnyVerbose = false;
+        public static bool DebugLastChanceSpinnyFlow = true;
+        public static bool DebugLastChanceSpinnyVerbose = true;
 
         // Temporary diagnostics for Thin Man on-screen camera pipeline in LastChance.
         public static bool DebugLastChanceThinManFlow = false;

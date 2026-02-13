@@ -20,6 +20,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
         private static readonly Type? EnemySpinnyType = AccessTools.TypeByName("EnemySpinny");
         private static readonly FieldInfo? PlayerTargetField = EnemySpinnyType != null ? AccessTools.Field(EnemySpinnyType, "playerTarget") : null;
         private static readonly FieldInfo? CurrentStateField = EnemySpinnyType != null ? AccessTools.Field(EnemySpinnyType, "currentState") : null;
+        private static readonly FieldInfo? PlayerLockPointField = EnemySpinnyType != null ? AccessTools.Field(EnemySpinnyType, "playerLockPoint") : null;
+        private static readonly FieldInfo? OffLockPointTimerField = EnemySpinnyType != null ? AccessTools.Field(EnemySpinnyType, "offLockPointTimer") : null;
         private static readonly FieldInfo? PlayerTumbleRbField = AccessTools.Field(typeof(PlayerTumble), "rb");
 
         [HarmonyTargetMethod]
@@ -36,9 +38,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
         [HarmonyPostfix]
         private static void Postfix(object __instance, bool _horizontalPull = false, bool _fixedUpdate = false)
         {
-            if (__instance == null ||
-                !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() ||
-                !LastChanceMonstersTargetProxyHelper.IsMasterContext())
+            if (__instance == null)
             {
                 return;
             }
@@ -49,18 +49,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             }
 
             var player = PlayerTargetField?.GetValue(__instance) as PlayerAvatar;
-            if (player == null || !LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
+            if (!LastChanceMonstersLockBridgeCore.IsHeadProxyRuntimeApplicable(player))
             {
                 return;
             }
 
-            var tumble = player.tumble;
+            var tumble = player!.tumble;
             var tumbleRb = PlayerTumbleRbField?.GetValue(tumble) as Rigidbody;
             if (tumbleRb == null)
             {
                 DebugLog("Bridge.Skip.NoTumbleRb", $"enemyId={GetInstanceKey(__instance)} player={GetPlayerId(player)}");
                 return;
             }
+
+            StabilizeTumbleAtLockPoint(__instance, tumbleRb, _fixedUpdate);
 
             if (!LastChanceMonstersTargetProxyHelper.TryGetHeadProxyPhysGrabObject(player, out var headPhys) || headPhys?.rb == null)
             {
@@ -69,38 +71,58 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             }
 
             var headRb = headPhys.rb;
-            var targetPos = tumbleRb.position;
-            var targetRot = tumbleRb.rotation;
-            var dist = Vector3.Distance(headRb.position, targetPos);
-
-            // Keep DeathHead physically coupled to the vanilla tumble lock path used by Spinny.
-            if (dist > 2.5f)
+            var couple = LastChanceMonstersLockBridgeCore.CoupleHeadToTarget(headPhys, headRb, tumbleRb, _fixedUpdate);
+            if (couple.HardSnap)
             {
-                headRb.position = targetPos;
-                headRb.rotation = targetRot;
-                headRb.velocity = tumbleRb.velocity;
-                headRb.angularVelocity = tumbleRb.angularVelocity;
-                DebugLog("Bridge.HardSnap", $"enemyId={GetInstanceKey(__instance)} player={GetPlayerId(player)} dist={dist:0.00}");
+                DebugLog("Bridge.HardSnap", $"enemyId={GetInstanceKey(__instance)} player={GetPlayerId(player)} dist={couple.Distance:0.00}");
                 return;
             }
 
-            headPhys.OverrideZeroGravity(0.1f);
-
-            var follow = SemiFunc.PhysFollowPosition(headRb.position, targetPos, headRb.velocity, 5f);
-            var dir = targetPos - headRb.position;
-            if (dir.sqrMagnitude > 0.0001f)
-            {
-                var torque = SemiFunc.PhysFollowDirection(headRb.transform, dir.normalized, headRb, 0.5f);
-                headRb.AddTorque(torque / Mathf.Max(headRb.mass, 0.0001f), ForceMode.Force);
-            }
-
-            headRb.AddForce(follow, _fixedUpdate ? ForceMode.Acceleration : ForceMode.Force);
-            headRb.velocity = Vector3.Lerp(headRb.velocity, tumbleRb.velocity, 0.35f);
-            headRb.angularVelocity = Vector3.Lerp(headRb.angularVelocity, tumbleRb.angularVelocity, 0.35f);
-
             DebugLog(
                 "Bridge.Apply",
-                $"enemyId={GetInstanceKey(__instance)} player={GetPlayerId(player)} state={ReadState(__instance)} dist={dist:0.00} fixed={_fixedUpdate} horizontal={_horizontalPull}");
+                $"enemyId={GetInstanceKey(__instance)} player={GetPlayerId(player)} state={ReadState(__instance)} dist={couple.Distance:0.00} follow={couple.ForceMagnitude:0.00} fixed={_fixedUpdate} horizontal={_horizontalPull}");
+        }
+
+        private static void StabilizeTumbleAtLockPoint(object instance, Rigidbody tumbleRb, bool fixedUpdate)
+        {
+            if (!fixedUpdate || !string.Equals(ReadState(instance), "WaitForRoulette", StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            var lockPoint = PlayerLockPointField?.GetValue(instance) as Transform;
+            if (lockPoint == null)
+            {
+                return;
+            }
+
+            var result = LastChanceMonstersLockBridgeCore.StabilizeTargetAtLockPoint(
+                tumbleRb,
+                lockPoint,
+                ReadFloat(instance, OffLockPointTimerField),
+                fixedUpdate,
+                isPrimaryLockState: true);
+            if (!result.Applied)
+            {
+                return;
+            }
+
+            if (result.Kind == LastChanceMonstersLockBridgeCore.LockStabilizeKind.Emergency)
+            {
+                DebugLog("Bridge.LockStabilizeEmergency", $"enemyId={GetInstanceKey(instance)} dist={result.Distance:0.00} offLock={result.OffLockTimer:0.00}");
+                return;
+            }
+
+            if (result.Kind == LastChanceMonstersLockBridgeCore.LockStabilizeKind.Snap)
+            {
+                DebugLog("Bridge.LockStabilizeSnap", $"enemyId={GetInstanceKey(instance)} dist={result.Distance:0.00}");
+                return;
+            }
+
+            if (result.Kind == LastChanceMonstersLockBridgeCore.LockStabilizeKind.Force)
+            {
+                DebugLog("Bridge.LockStabilizeForce", $"enemyId={GetInstanceKey(instance)} dist={result.Distance:0.00} force={result.ForceMagnitude:0.00}");
+            }
         }
 
         private static bool IsSpinnyLockState(object instance)
@@ -146,6 +168,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             }
 
             return instance.GetHashCode();
+        }
+
+        private static float ReadFloat(object instance, FieldInfo? field)
+        {
+            if (field == null || field.FieldType != typeof(float))
+            {
+                return 0f;
+            }
+
+            try
+            {
+                return (float)field.GetValue(instance)!;
+            }
+            catch
+            {
+                return 0f;
+            }
         }
     }
 }

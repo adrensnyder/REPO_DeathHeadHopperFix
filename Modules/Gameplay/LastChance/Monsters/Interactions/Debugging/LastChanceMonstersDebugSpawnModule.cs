@@ -13,7 +13,7 @@ using Photon.Pun;
 using UnityEngine;
 using Logger = BepInEx.Logging.Logger;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
+namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.Debugging
 {
     [HarmonyPatch]
     internal static class LastChanceMonstersDebugSpawnModule
