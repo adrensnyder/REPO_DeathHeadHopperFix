@@ -24,7 +24,7 @@ namespace DeathHeadHopperFix.Modules.Config
         //    "animal,bang,beamer,birthday boy,bomb thrower,bowtie,ceiling eye,duck,elsa,floater," +
         //    "gnome,head,head grabber,heart hugger,hidden,hunter,oogly,robe,runner,shadow," +
         //    "slow mouth,slow walker,spinny,thin man,tick,tricycle,tumbler,upscream,valuable thrower";
-        public static string DebugAutoSpawnMonsterNamesCsv = "head grabber,head grabber,head grabber,head grabber";
+        public static string DebugAutoSpawnMonsterNamesCsv = "";
 
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
         public static bool DebugLastChanceHiddenCarryFlow = false;

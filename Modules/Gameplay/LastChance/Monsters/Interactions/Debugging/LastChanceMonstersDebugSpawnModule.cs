@@ -19,6 +19,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
     internal static class LastChanceMonstersDebugSpawnModule
     {
         private sealed class CatalogWatchRunner : MonoBehaviour { }
+        private sealed class DelayStunRunner : MonoBehaviour { }
         private readonly struct SpawnVerifyResult
         {
             internal SpawnVerifyResult(bool success, EnemyParent? enemyParent)
@@ -70,6 +71,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         private static bool s_catalogWatcherStarted;
         private static bool s_logProbeInstalled;
         private static bool s_repolibSignalReceived;
+        private static DelayStunRunner? s_delayStunRunner;
         private static readonly RepolibLogProbe s_repolibLogProbe = new();
         private static readonly Regex s_enemyPrefixRegex = new Regex("^Enemy (- )?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly System.Reflection.FieldInfo? s_debugSpawnCloseField = AccessTools.Field(typeof(EnemyDirector), "debugSpawnClose");
@@ -83,7 +85,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         private static readonly System.Reflection.FieldInfo? s_levelPointConnectedPointsField = s_levelPointType == null ? null : AccessTools.Field(s_levelPointType, "ConnectedPoints");
         private static readonly System.Reflection.FieldInfo? s_roomVolumeTruckField = s_roomVolumeType == null ? null : AccessTools.Field(s_roomVolumeType, "Truck");
         private static readonly System.Reflection.FieldInfo? s_enemyDirectorSpawnedField = AccessTools.Field(typeof(EnemyDirector), "enemiesSpawned");
-        private static readonly PropertyInfo? s_enemyParentSpawnedProperty = AccessTools.Property(typeof(EnemyParent), "Spawned");
+        private static readonly PropertyInfo? s_enemyParentSpawnedProperty =
+            typeof(EnemyParent).GetProperty("Spawned", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static readonly System.Reflection.FieldInfo? s_enemyParentSpawnedField =
+            typeof(EnemyParent).GetField("Spawned", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ??
+            typeof(EnemyParent).GetField("spawned", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        private static readonly System.Reflection.FieldInfo? s_enemyTeleportedTimerField = AccessTools.Field(typeof(Enemy), "TeleportedTimer");
         private static List<MethodInfo>? s_enemyDirectorSpawnMethods;
 
         internal static void NotifyPluginAwake()
@@ -158,6 +165,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         internal static void ResetRuntimeState()
         {
             s_spawnDoneForLevel = false;
+            if (s_delayStunRunner != null)
+            {
+                UnityEngine.Object.Destroy(s_delayStunRunner.gameObject);
+                s_delayStunRunner = null;
+            }
         }
 
         private static void StartCatalogWatcher()
@@ -1021,10 +1033,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
 
             if (s_enemyParentSpawnedProperty == null)
             {
-                return true;
+                if (s_enemyParentSpawnedField == null)
+                {
+                    return true;
+                }
+
+                return s_enemyParentSpawnedField.GetValue(parent) is bool spawnedField && spawnedField;
             }
 
-            return s_enemyParentSpawnedProperty.GetValue(parent) is bool spawned && spawned;
+            return s_enemyParentSpawnedProperty.GetValue(parent) is bool spawnedProp && spawnedProp;
         }
 
         private static void ApplySpawnDelayStun(EnemyParent enemyParent)
@@ -1046,19 +1063,94 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                 return;
             }
 
+            var runner = EnsureDelayStunRunner();
+            if (runner == null)
+            {
+                return;
+            }
+
+            runner.StartCoroutine(ApplySpawnDelayStunCoroutine(enemy, delaySeconds));
+        }
+
+        private static DelayStunRunner? EnsureDelayStunRunner()
+        {
+            if (s_delayStunRunner != null)
+            {
+                return s_delayStunRunner;
+            }
+
+            var go = new GameObject("DHHFix_LastChance_DebugDelayStunRunner");
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            s_delayStunRunner = go.AddComponent<DelayStunRunner>();
+            return s_delayStunRunner;
+        }
+
+        private static IEnumerator ApplySpawnDelayStunCoroutine(Enemy enemy, float delaySeconds)
+        {
+            if (enemy == null)
+            {
+                yield break;
+            }
+
             var stateStunned = enemy.GetComponent<EnemyStateStunned>();
             if (stateStunned != null)
             {
-                // Use the same runtime channel used by charge/hurt stun logic.
-                // We set the timer directly so spawn teleport guards do not skip the stun window.
-                stateStunned.stunTimer = Mathf.Max(stateStunned.stunTimer, delaySeconds);
-                enemy.CurrentState = EnemyState.Stunned;
-                enemy.DisableChase(delaySeconds + 0.25f);
-                return;
+                var targetEndTime = Time.time + delaySeconds;
+                var setUntil = Time.realtimeSinceStartup + 1.5f;
+
+                // Wait for spawn/teleport phase, then enter stun through native Set(...) path.
+                while (enemy != null && Time.realtimeSinceStartup < setUntil)
+                {
+                    if (GetEnemyTeleportedTimer(enemy) <= 0f)
+                    {
+                        stateStunned.Set(delaySeconds);
+                        enemy.CurrentState = EnemyState.Stunned;
+                        enemy.DisableChase(delaySeconds + 0.25f);
+                        break;
+                    }
+
+                    yield return null;
+                }
+
+                if (enemy == null)
+                {
+                    yield break;
+                }
+
+                // Keep stun alive for full delay window in case other spawn logic briefly resets it.
+                while (enemy != null && Time.time < targetEndTime)
+                {
+                    var remaining = targetEndTime - Time.time;
+                    if (remaining <= 0f)
+                    {
+                        break;
+                    }
+
+                    if (stateStunned.stunTimer < remaining - 0.05f)
+                    {
+                        stateStunned.Set(remaining);
+                    }
+
+                    enemy.CurrentState = EnemyState.Stunned;
+                    enemy.DisableChase(0.35f);
+                    yield return null;
+                }
+
+                yield break;
             }
 
             // Fallback for enemies without EnemyStateStunned.
             enemy.Freeze(delaySeconds);
+        }
+
+        private static float GetEnemyTeleportedTimer(Enemy enemy)
+        {
+            if (enemy == null || s_enemyTeleportedTimerField == null)
+            {
+                return 0f;
+            }
+
+            return s_enemyTeleportedTimerField.GetValue(enemy) is float timer ? timer : 0f;
         }
 
         private static bool TryResolveSpawnMetrics(EnemyParent enemyParent, out float metersFromLocalPlayer, out int roomSteps)
