@@ -24,6 +24,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
         private static readonly Dictionary<object, bool> s_lastDirectionVisibilityBySpot = new();
         private static readonly Dictionary<object, string> s_lastDirectionCostLabelBySpot = new();
         private static readonly Dictionary<object, float> s_lastDirectionProgressBySpot = new();
+        private static readonly Dictionary<object, bool> s_lastDirectionEnergySufficientBySpot = new();
         private static float s_directionActivationProgress;
 
         private const int DirectionIndicatorSlotIndex = 1;
@@ -132,6 +133,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             s_lastDirectionVisibilityBySpot.Remove(__instance);
             s_lastDirectionCostLabelBySpot.Remove(__instance);
             s_lastDirectionProgressBySpot.Remove(__instance);
+            s_lastDirectionEnergySufficientBySpot.Remove(__instance);
             AbilitySpotLabelOverlay.ClearLabel(__instance);
         }
 
@@ -276,6 +278,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 SlotLayoutOverrides.RestoreBasePosition(spot);
                 s_lastDirectionCostLabelBySpot.Remove(spot);
                 s_lastDirectionProgressBySpot.Remove(spot);
+                s_lastDirectionEnergySufficientBySpot.Remove(spot);
                 return;
             }
 
@@ -287,10 +290,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             var roundedProgress = Mathf.Round(s_directionActivationProgress * 1000f) * 0.001f;
             var progressChanged = !s_lastDirectionProgressBySpot.TryGetValue(spot, out var lastProgress) ||
                                   Mathf.Abs(lastProgress - roundedProgress) > 0.0001f;
+            var hasDirectionEnergy = LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview();
+            var energyStateChanged = !s_lastDirectionEnergySufficientBySpot.TryGetValue(spot, out var lastEnergyState) ||
+                                     lastEnergyState != hasDirectionEnergy;
             var costChanged = !s_lastDirectionCostLabelBySpot.TryGetValue(spot, out var lastCostLabel) ||
                               !string.Equals(lastCostLabel, costLabel, StringComparison.Ordinal);
             var becameVisible = previousVisible != true;
-            if (!becameVisible && !progressChanged && !costChanged)
+            if (!becameVisible && !progressChanged && !costChanged && !energyStateChanged)
             {
                 return;
             }
@@ -308,6 +314,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             {
                 SlotVisualOverrides.ApplyDirectionActivationProgress(spot, roundedProgress);
                 s_lastDirectionProgressBySpot[spot] = roundedProgress;
+            }
+
+            if (becameVisible || energyStateChanged)
+            {
+                SlotVisualOverrides.ApplyDirectionEnergyAvailability(spot, hasDirectionEnergy);
+                s_lastDirectionEnergySufficientBySpot[spot] = hasDirectionEnergy;
             }
         }
 
@@ -655,6 +667,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             private static PropertyInfo? s_imageColorProp;
             private static PropertyInfo? s_imageFillAmountProp;
             private static readonly Dictionary<object, Color> s_cooldownIconBaseColors = new();
+            private static readonly Dictionary<object, Color> s_backgroundIconBaseColors = new();
 
             internal static void ApplyDirectionIcon(object spot, string fileName)
             {
@@ -776,6 +789,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 }
             }
 
+            internal static void ApplyDirectionEnergyAvailability(object spot, bool hasEnoughEnergy)
+            {
+                if (spot == null)
+                    return;
+
+                var type = spot.GetType();
+                s_backgroundIconField ??= type.GetField("backgroundIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                var backgroundImage = s_backgroundIconField?.GetValue(spot);
+                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                var targetAlpha = hasEnoughEnergy ? 1f : 0.3f;
+
+                ApplyIconAlpha(backgroundImage, targetAlpha, s_backgroundIconBaseColors);
+                ApplyIconAlpha(cooldownImage, targetAlpha, s_cooldownIconBaseColors);
+            }
+
             internal static void ApplyChargeActivationProgress(object spot, float progress01, bool canReleaseActivate)
             {
                 if (spot == null)
@@ -845,6 +875,31 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 {
                     s_behaviourEnabledProp.SetValue(imageLikeObject, true);
                 }
+            }
+
+            private static void ApplyIconAlpha(object? imageLikeObject, float alpha, Dictionary<object, Color> baseColors)
+            {
+                if (imageLikeObject == null)
+                    return;
+
+                var type = imageLikeObject.GetType();
+                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != type)
+                {
+                    s_imageColorProp = type.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
+                }
+
+                if (s_imageColorProp == null)
+                    return;
+
+                if (!baseColors.TryGetValue(imageLikeObject, out var baseColor))
+                {
+                    baseColor = s_imageColorProp.GetValue(imageLikeObject) is Color c ? c : Color.white;
+                    baseColors[imageLikeObject] = baseColor;
+                }
+
+                var newColor = baseColor;
+                newColor.a = Mathf.Clamp01(alpha);
+                s_imageColorProp.SetValue(imageLikeObject, newColor);
             }
 
             private static Sprite? GetOrLoadDirectionSprite(string fileName)

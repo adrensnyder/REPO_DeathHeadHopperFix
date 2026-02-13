@@ -310,6 +310,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             return CalculateIndicatorPenaltySeconds();
         }
 
+        internal static bool IsDirectionIndicatorEnergySufficientPreview()
+        {
+            if (!IsDirectionIndicatorUiVisible)
+            {
+                return false;
+            }
+
+            var penaltyPreview = GetDirectionIndicatorPenaltySecondsPreview();
+            if (penaltyPreview <= 0f)
+            {
+                return false;
+            }
+
+            return s_timerRemaining >= penaltyPreview;
+        }
+
         internal static void OnLevelLoaded()
         {
             s_suppressedForRoom = false;
