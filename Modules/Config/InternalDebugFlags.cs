@@ -35,6 +35,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         // Temporary diagnostics for Thin Man on-screen camera pipeline in LastChance.
         public static bool DebugLastChanceThinManFlow = false;
+        
+        // Temporary diagnostics for LastChance eyes/pupil visibility + override bypass flow.
+        public static bool DebugLastChanceEyesFlow = false;
 
         // Extra diagnostics for JumpForceModule "[Fix:Jump]" logs.
         public static bool DebugJumpForceLog = false;
@@ -45,5 +48,8 @@ namespace DeathHeadHopperFix.Modules.Config
 
         // Extra diagnostics for DHH battery jump-allowance logs.
         public static bool DebugDhhBatteryJumpAllowanceLog = false;
+
+        // Extra diagnostics for slot2 Direction energy/visibility preview checks.
+        public static bool DebugDirectionSlotEnergyPreviewLog = false;
     }
 }

@@ -12,6 +12,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 {
     internal static class AbilityModule
     {
+        private const string DirectionEnergyLogKey = "Fix:Ability.DirectionEnergy";
         private static Type? s_abilityBaseType;
         private static MethodInfo? s_abilityCooldownGetter;
         private static MethodInfo? s_abilityEnergyCostGetter;
@@ -160,6 +161,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 {
                     s_abilitySpotSetCooldown.Invoke(spot, new object[] { clamped });
                     SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
+                    SlotVisualOverrides.ApplyDirectionEnergyAvailability(
+                        spot,
+                        LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview(),
+                        s_directionActivationProgress);
                 }
                 catch
                 {
@@ -187,6 +192,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     continue;
 
                 SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
+                SlotVisualOverrides.ApplyDirectionEnergyAvailability(
+                    spot,
+                    LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview(),
+                    s_directionActivationProgress);
             }
         }
 
@@ -291,6 +300,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             var progressChanged = !s_lastDirectionProgressBySpot.TryGetValue(spot, out var lastProgress) ||
                                   Mathf.Abs(lastProgress - roundedProgress) > 0.0001f;
             var hasDirectionEnergy = LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview();
+            if (FeatureFlags.DebugLogging &&
+                InternalDebugFlags.DebugDirectionSlotEnergyPreviewLog &&
+                LogLimiter.ShouldLog(DirectionEnergyLogKey, 120))
+            {
+                LastChanceTimerController.GetDirectionIndicatorEnergyDebugSnapshot(
+                    out var directionVisible,
+                    out var timerRemaining,
+                    out var penaltyPreview,
+                    out var snapshotHasEnoughEnergy);
+                Debug.Log(
+                    $"[Fix:Ability] Slot2 energy preview visible={directionVisible} timer={timerRemaining:F1}s cost={penaltyPreview:F1}s enough={snapshotHasEnoughEnergy} appliedEnough={hasDirectionEnergy} progress={roundedProgress:F3}");
+            }
             var energyStateChanged = !s_lastDirectionEnergySufficientBySpot.TryGetValue(spot, out var lastEnergyState) ||
                                      lastEnergyState != hasDirectionEnergy;
             var costChanged = !s_lastDirectionCostLabelBySpot.TryGetValue(spot, out var lastCostLabel) ||
@@ -316,11 +337,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 s_lastDirectionProgressBySpot[spot] = roundedProgress;
             }
 
-            if (becameVisible || energyStateChanged)
-            {
-                SlotVisualOverrides.ApplyDirectionEnergyAvailability(spot, hasDirectionEnergy);
-                s_lastDirectionEnergySufficientBySpot[spot] = hasDirectionEnergy;
-            }
+            SlotVisualOverrides.ApplyDirectionEnergyAvailability(spot, hasDirectionEnergy, roundedProgress);
+            s_lastDirectionEnergySufficientBySpot[spot] = hasDirectionEnergy;
         }
 
         private static string GetDirectionCostLabel()
@@ -789,21 +807,44 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 }
             }
 
-            internal static void ApplyDirectionEnergyAvailability(object spot, bool hasEnoughEnergy)
+            internal static void ApplyDirectionEnergyAvailability(object spot, bool hasEnoughEnergy, float progress01)
             {
                 if (spot == null)
                     return;
 
                 var type = spot.GetType();
-                s_backgroundIconField ??= type.GetField("backgroundIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-                var backgroundImage = s_backgroundIconField?.GetValue(spot);
                 var cooldownImage = s_cooldownIconField?.GetValue(spot);
-                var targetAlpha = hasEnoughEnergy ? 1f : 0.3f;
+                if (cooldownImage == null)
+                    return;
 
-                ApplyIconAlpha(backgroundImage, targetAlpha, s_backgroundIconBaseColors);
-                ApplyIconAlpha(cooldownImage, targetAlpha, s_cooldownIconBaseColors);
+                var imageType = cooldownImage.GetType();
+                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != imageType)
+                {
+                    s_imageColorProp = imageType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
+                }
+                if (s_imageFillAmountProp == null || s_imageFillAmountProp.DeclaringType != imageType)
+                {
+                    s_imageFillAmountProp = imageType.GetProperty("fillAmount", BindingFlags.Instance | BindingFlags.Public);
+                }
+
+                if (!s_cooldownIconBaseColors.TryGetValue(cooldownImage, out var baseColor))
+                {
+                    baseColor = s_imageColorProp?.GetValue(cooldownImage) is Color c ? c : Color.white;
+                    s_cooldownIconBaseColors[cooldownImage] = baseColor;
+                }
+
+                // Match DHH AbilityCooldown behavior:
+                // - ready => fillAmount 1 and alpha 1
+                // - not ready => fillAmount < 1 and alpha 0.3
+                // Keep hold-progress visualization when progress > 0.
+                var clampedProgress = Mathf.Clamp01(progress01);
+                var fill = clampedProgress > 0f ? clampedProgress : (hasEnoughEnergy ? 1f : 0f);
+                var newColor = baseColor;
+                newColor.a = fill < 1f ? 0.3f : 1f;
+                s_imageFillAmountProp?.SetValue(cooldownImage, fill);
+                s_imageColorProp?.SetValue(cooldownImage, newColor);
             }
 
             internal static void ApplyChargeActivationProgress(object spot, float progress01, bool canReleaseActivate)

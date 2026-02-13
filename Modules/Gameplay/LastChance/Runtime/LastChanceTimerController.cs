@@ -292,6 +292,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
         }
 
         internal static float GetDirectionIndicatorPenaltySecondsPreview()
@@ -324,6 +325,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             }
 
             return s_timerRemaining >= penaltyPreview;
+        }
+
+        internal static void GetDirectionIndicatorEnergyDebugSnapshot(
+            out bool visible,
+            out float timerRemaining,
+            out float penaltyPreview,
+            out bool hasEnoughEnergy)
+        {
+            visible = IsDirectionIndicatorUiVisible;
+            timerRemaining = s_timerRemaining;
+            penaltyPreview = visible ? GetDirectionIndicatorPenaltySecondsPreview() : 0f;
+            hasEnoughEnergy = visible && penaltyPreview > 0f && timerRemaining >= penaltyPreview;
         }
 
         internal static void OnLevelLoaded()
@@ -2685,6 +2698,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
         }
 
         private static void ResetLastChanceRuntimeModules(bool allowVanillaAllPlayersDead, bool allowAutoDelete)
@@ -2695,6 +2709,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
             LastChanceSpectateHelper.ResetForceState();
 
             if (allowAutoDelete)
