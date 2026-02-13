@@ -19,6 +19,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
     internal static class LastChanceMonstersDebugSpawnModule
     {
         private sealed class CatalogWatchRunner : MonoBehaviour { }
+        private sealed class DelayedSpawnRunner : MonoBehaviour { }
         private sealed class RepolibLogProbe : ILogListener
         {
             public void Dispose()
@@ -59,6 +60,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         private static bool s_catalogWatcherStarted;
         private static bool s_logProbeInstalled;
         private static bool s_repolibSignalReceived;
+        private static bool s_delayedSpawnScheduled;
         private static readonly RepolibLogProbe s_repolibLogProbe = new();
         private static readonly Regex s_enemyPrefixRegex = new Regex("^Enemy (- )?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly System.Reflection.FieldInfo? s_debugSpawnCloseField = AccessTools.Field(typeof(EnemyDirector), "debugSpawnClose");
@@ -133,6 +135,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             }
 
             s_spawnDoneForLevel = false;
+            s_delayedSpawnScheduled = false;
         }
 
         [HarmonyPatch(typeof(LevelGenerator), "GenerateDone")]
@@ -144,7 +147,40 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                 return;
             }
 
+            StartDelayedDebugSpawn();
+        }
+
+        private static void StartDelayedDebugSpawn()
+        {
+            if (s_delayedSpawnScheduled || s_spawnDoneForLevel)
+            {
+                return;
+            }
+
+            var delaySeconds = Mathf.Max(0f, InternalDebugFlags.DebugAutoSpawnDelaySeconds);
+            if (delaySeconds <= 0f)
+            {
+                TrySpawnDebugMonsters();
+                return;
+            }
+
+            s_delayedSpawnScheduled = true;
+            var go = new GameObject("DHHFix_LastChance_DelayedDebugSpawn");
+            UnityEngine.Object.DontDestroyOnLoad(go);
+            var runner = go.AddComponent<DelayedSpawnRunner>();
+            runner.StartCoroutine(DelayedDebugSpawnCoroutine(runner, delaySeconds));
+        }
+
+        private static IEnumerator DelayedDebugSpawnCoroutine(MonoBehaviour runner, float delaySeconds)
+        {
+            yield return new WaitForSecondsRealtime(delaySeconds);
             TrySpawnDebugMonsters();
+            s_delayedSpawnScheduled = false;
+
+            if (runner != null)
+            {
+                UnityEngine.Object.Destroy(runner.gameObject);
+            }
         }
 
         private static void StartCatalogWatcher()

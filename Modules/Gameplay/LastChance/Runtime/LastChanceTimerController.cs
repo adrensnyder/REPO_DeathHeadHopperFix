@@ -1618,6 +1618,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             ApplyIndicatorPenaltyHost(maxPlayers);
         }
 
+        internal static void TryApplyMonsterDeathTimerBonusHost()
+        {
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
+            {
+                return;
+            }
+
+            // NOOP guards: feature disabled or runtime not in active LastChance must not alter timer.
+            if (!FeatureFlags.LastChangeMode || !s_active || !AllPlayersDeadGuard.AllPlayersDisabled())
+            {
+                return;
+            }
+
+            var bonusSeconds = Mathf.Clamp(FeatureFlags.LastChanceTimerBonusPerMonsterDeathSeconds, 0, 10);
+            if (bonusSeconds <= 0)
+            {
+                return;
+            }
+
+            s_timerRemaining = Mathf.Max(0f, s_timerRemaining + bonusSeconds);
+            BroadcastTimerStateIfHost(force: true);
+            LastChanceTimerUI.UpdateText(FormatTimerText(s_timerRemaining));
+        }
+
         private static void ApplyIndicatorPenaltyHost(int maxPlayers)
         {
             var penalty = CalculateIndicatorPenaltySeconds();

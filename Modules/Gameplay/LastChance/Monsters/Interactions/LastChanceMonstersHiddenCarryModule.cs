@@ -144,6 +144,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                 strength = 0.75f;
             }
 
+            if (rb.isKinematic)
+            {
+                rb.position = Vector3.Lerp(centerPoint, pickupTransform.position, 0.35f);
+                rb.rotation = Quaternion.Slerp(head.transform.rotation, pickupTransform.rotation, 0.2f * strength);
+                return false;
+            }
+
             var followPos = SemiFunc.PhysFollowPosition(centerPoint, pickupTransform.position, rb.velocity, 10f * strength);
             rb.AddForce(followPos * (10f * Time.fixedDeltaTime * strength), ForceMode.Impulse);
 

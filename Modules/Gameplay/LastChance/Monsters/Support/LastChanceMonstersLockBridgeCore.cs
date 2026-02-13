@@ -76,7 +76,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
             {
                 var emergency = Vector3.Lerp(targetRb.position, lockPoint.position, 0.65f);
                 targetRb.position = emergency;
-                targetRb.velocity = Vector3.Lerp(targetRb.velocity, Vector3.zero, 0.7f);
+                if (!targetRb.isKinematic)
+                {
+                    targetRb.velocity = Vector3.Lerp(targetRb.velocity, Vector3.zero, 0.7f);
+                }
                 return new LockStabilizeResult(LockStabilizeKind.Emergency, distToLock, offLockPointTimer, 0f);
             }
 
@@ -84,7 +87,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
             {
                 var snap = Vector3.Lerp(targetRb.position, lockPoint.position, 0.35f);
                 targetRb.position = snap;
-                targetRb.velocity = Vector3.Lerp(targetRb.velocity, Vector3.zero, 0.5f);
+                if (!targetRb.isKinematic)
+                {
+                    targetRb.velocity = Vector3.Lerp(targetRb.velocity, Vector3.zero, 0.5f);
+                }
+                return new LockStabilizeResult(LockStabilizeKind.Snap, distToLock, offLockPointTimer, 0f);
+            }
+
+            if (targetRb.isKinematic)
+            {
+                targetRb.position = Vector3.Lerp(targetRb.position, lockPoint.position, 0.2f);
                 return new LockStabilizeResult(LockStabilizeKind.Snap, distToLock, offLockPointTimer, 0f);
             }
 
@@ -104,12 +116,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
             {
                 headRb.position = targetRb.position;
                 headRb.rotation = targetRb.rotation;
-                headRb.velocity = targetRb.velocity;
-                headRb.angularVelocity = targetRb.angularVelocity;
+                if (!headRb.isKinematic)
+                {
+                    headRb.velocity = targetRb.isKinematic ? Vector3.zero : targetRb.velocity;
+                    headRb.angularVelocity = targetRb.isKinematic ? Vector3.zero : targetRb.angularVelocity;
+                }
                 return new HeadCoupleResult(true, distance, 0f);
             }
 
             headPhys.OverrideZeroGravity(0.1f);
+
+            if (headRb.isKinematic)
+            {
+                headRb.position = Vector3.Lerp(headRb.position, targetRb.position, 0.3f);
+                headRb.rotation = Quaternion.Slerp(headRb.rotation, targetRb.rotation, 0.3f);
+                return new HeadCoupleResult(false, distance, 0f);
+            }
 
             var follow = SemiFunc.PhysFollowPosition(headRb.position, targetRb.position, headRb.velocity, 5f);
             var dir = targetRb.position - headRb.position;
@@ -120,8 +142,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
             }
 
             headRb.AddForce(follow, fixedUpdate ? ForceMode.Acceleration : ForceMode.Force);
-            headRb.velocity = Vector3.Lerp(headRb.velocity, targetRb.velocity, 0.35f);
-            headRb.angularVelocity = Vector3.Lerp(headRb.angularVelocity, targetRb.angularVelocity, 0.35f);
+            var targetLinearVelocity = targetRb.isKinematic ? Vector3.zero : targetRb.velocity;
+            var targetAngularVelocity = targetRb.isKinematic ? Vector3.zero : targetRb.angularVelocity;
+            headRb.velocity = Vector3.Lerp(headRb.velocity, targetLinearVelocity, 0.35f);
+            headRb.angularVelocity = Vector3.Lerp(headRb.angularVelocity, targetAngularVelocity, 0.35f);
             return new HeadCoupleResult(false, distance, follow.magnitude);
         }
     }

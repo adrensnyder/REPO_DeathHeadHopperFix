@@ -60,6 +60,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             var to = guiderComponent.transform.position;
 
             phys.OverrideZeroGravity(0.1f);
+            if (rb.isKinematic)
+            {
+                rb.position = Vector3.Lerp(from, to, 0.3f);
+                var targetRot = Quaternion.LookRotation(dirToHead.sqrMagnitude > 0.0001f ? dirToHead : rb.transform.forward, Vector3.up);
+                rb.rotation = Quaternion.Slerp(rb.rotation, targetRot, 0.25f);
+                DebugLog("Guider.Fixed.Kinematic", $"player={GetPlayerId(player)} rbPos={from} target={to}");
+                return false;
+            }
+
             var torque = SemiFunc.PhysFollowDirection(rb.transform, dirToHead, rb, 0.5f);
             rb.AddTorque(torque / Mathf.Max(rb.mass, 0.0001f), ForceMode.Force);
             var force = SemiFunc.PhysFollowPosition(from, to, rb.velocity, 5f);

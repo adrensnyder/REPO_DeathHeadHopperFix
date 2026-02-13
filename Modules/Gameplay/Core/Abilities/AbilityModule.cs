@@ -19,6 +19,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
         private static MethodInfo? s_abilityNameGetter;
         private static Type? s_abilitySpotType;
         private static MethodInfo? s_abilitySpotSetCooldown;
+        private static MethodInfo? s_abilitySpotCurrentAbilityGetter;
         private static FieldInfo? s_abilitySpotsField;
         private static readonly HashSet<object> s_trackedSpots = new();
         private static readonly Dictionary<object, Vector3> s_spotBaseLocalPos = new();
@@ -408,6 +409,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             {
                 s_abilitySpotSetCooldown = AccessTools.Method(s_abilitySpotType, "SetCooldown", new[] { typeof(float) });
             }
+
+            if (s_abilitySpotCurrentAbilityGetter == null && s_abilitySpotType != null)
+            {
+                s_abilitySpotCurrentAbilityGetter =
+                    s_abilitySpotType.GetProperty("CurrentAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetMethod;
+            }
         }
 
         private static void DHHAbilityManager_OnAbilityUsed_Postfix(object __instance, object ability)
@@ -431,11 +438,60 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (spotsField.GetValue(__instance) is not Array spots)
                 return;
 
+            var matchingSpots = new List<object>();
             foreach (var spot in spots)
             {
                 if (spot == null)
                     continue;
 
+                object? currentAbility = null;
+                try
+                {
+                    currentAbility = s_abilitySpotCurrentAbilityGetter?.Invoke(spot, null);
+                }
+                catch
+                {
+                    // UI element may be destroyed during scene/menu transitions.
+                }
+
+                if (ReferenceEquals(currentAbility, ability))
+                {
+                    matchingSpots.Add(spot);
+                }
+            }
+
+            if (matchingSpots.Count == 0 && s_abilityNameGetter != null)
+            {
+                var usedAbilityName = s_abilityNameGetter.Invoke(ability, null)?.ToString();
+                if (!string.IsNullOrWhiteSpace(usedAbilityName))
+                {
+                    foreach (var spot in spots)
+                    {
+                        if (spot == null)
+                            continue;
+
+                        try
+                        {
+                            var currentAbility = s_abilitySpotCurrentAbilityGetter?.Invoke(spot, null);
+                            if (currentAbility == null)
+                                continue;
+
+                            var spotAbilityName = s_abilityNameGetter.Invoke(currentAbility, null)?.ToString();
+                            if (string.Equals(spotAbilityName, usedAbilityName, StringComparison.Ordinal))
+                            {
+                                matchingSpots.Add(spot);
+                            }
+                        }
+                        catch
+                        {
+                            // Keep processing other spots if one UI reference is already invalid.
+                        }
+                    }
+                }
+            }
+
+            foreach (var spot in matchingSpots)
+            {
                 try
                 {
                     s_abilitySpotSetCooldown?.Invoke(spot, new object[] { cooldown });

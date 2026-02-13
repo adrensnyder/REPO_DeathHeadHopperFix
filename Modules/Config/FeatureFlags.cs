@@ -62,6 +62,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceDynamicMaxMinutes = "Hard cap (minutes) for final LastChance timer after dynamic scaling.";
             public const string LastChanceConsolationMoney = "LastChance consolation money added on success (integer).";
             public const string LastChanceMissingPlayers = "Number of players allowed to stay outside the truck before LastChance success triggers (0 = all players required).";
+            public const string LastChanceTimerBonusPerMonsterDeathSeconds = "Seconds added to LastChance timer whenever a monster dies during active LastChance.";
             public const string LastChanceSurrenderSeconds = "Seconds the player must hold Crouch to surrender during LastChance.";
             public const string LastChanceIndicators = "LastChance indicators mode: None, Direction.";
             public const string LastChanceIndicatorHoldSeconds = "Seconds to hold Tumble before triggering the selected indicator.";
@@ -79,7 +80,7 @@ namespace DeathHeadHopperFix.Modules.Config
         }
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpEnabled)]
-        public static bool BatteryJumpEnabled = true;
+        public static bool BatteryJumpEnabled = false;
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpUsage, Min = 0.01f, Max = 1f)]
         public static float BatteryJumpUsage = 0.02f;
@@ -160,7 +161,7 @@ namespace DeathHeadHopperFix.Modules.Config
         public static float ShopItemsSpawnChance = 0.75f;
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceMode)]
-        public static bool LastChangeMode = true;
+        public static bool LastChangeMode = false;
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceTimerSeconds, Min = 30f, Max = 600f)]
         public static int LastChanceTimerSeconds = 60;
@@ -176,6 +177,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceMissingPlayers, Min = 0f, Max = 32f)]
         public static int LastChanceMissingPlayers = 0;
+
+        [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceTimerBonusPerMonsterDeathSeconds, Min = 0f, Max = 10f)]
+        public static int LastChanceTimerBonusPerMonsterDeathSeconds = 5;
 
         [FeatureConfigEntry(Sections.LastChanceQuick, Descriptions.LastChanceMonstersSearchEnabled)]
         public static bool LastChanceMonstersSearchEnabled = true;

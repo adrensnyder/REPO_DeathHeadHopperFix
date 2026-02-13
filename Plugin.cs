@@ -11,6 +11,7 @@ using DeathHeadHopperFix.Modules.Gameplay.Core.Input;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Interop;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
 using DeathHeadHopperFix.Modules.Gameplay.Stun;
+using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 using System;
 using System.Reflection;
@@ -32,6 +33,7 @@ namespace DeathHeadHopperFix
         {
             _log = Logger;
             ConfigManager.Initialize(Config);
+            BundleAssetLoader.EnsureBundleLoaded();
             WarnUnsafeDebugFlagsInRelease();
             AllPlayersDeadGuard.EnsureEnabled();
             LastChanceMonstersDebugSpawnModule.NotifyPluginAwake();
