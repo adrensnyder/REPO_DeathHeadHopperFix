@@ -19,7 +19,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
     internal static class LastChanceMonstersDebugSpawnModule
     {
         private sealed class CatalogWatchRunner : MonoBehaviour { }
-        private sealed class DelayedSpawnRunner : MonoBehaviour { }
+        private readonly struct SpawnVerifyResult
+        {
+            internal SpawnVerifyResult(bool success, EnemyParent? enemyParent)
+            {
+                Success = success;
+                EnemyParent = enemyParent;
+            }
+
+            internal bool Success { get; }
+            internal EnemyParent? EnemyParent { get; }
+        }
         private sealed class RepolibLogProbe : ILogListener
         {
             public void Dispose()
@@ -60,7 +70,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         private static bool s_catalogWatcherStarted;
         private static bool s_logProbeInstalled;
         private static bool s_repolibSignalReceived;
-        private static bool s_delayedSpawnScheduled;
         private static readonly RepolibLogProbe s_repolibLogProbe = new();
         private static readonly Regex s_enemyPrefixRegex = new Regex("^Enemy (- )?", RegexOptions.Compiled | RegexOptions.IgnoreCase);
         private static readonly System.Reflection.FieldInfo? s_debugSpawnCloseField = AccessTools.Field(typeof(EnemyDirector), "debugSpawnClose");
@@ -74,6 +83,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         private static readonly System.Reflection.FieldInfo? s_levelPointConnectedPointsField = s_levelPointType == null ? null : AccessTools.Field(s_levelPointType, "ConnectedPoints");
         private static readonly System.Reflection.FieldInfo? s_roomVolumeTruckField = s_roomVolumeType == null ? null : AccessTools.Field(s_roomVolumeType, "Truck");
         private static readonly System.Reflection.FieldInfo? s_enemyDirectorSpawnedField = AccessTools.Field(typeof(EnemyDirector), "enemiesSpawned");
+        private static readonly PropertyInfo? s_enemyParentSpawnedProperty = AccessTools.Property(typeof(EnemyParent), "Spawned");
         private static List<MethodInfo>? s_enemyDirectorSpawnMethods;
 
         internal static void NotifyPluginAwake()
@@ -89,8 +99,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                 return;
             }
 
-            var requested = ParseRequestedNames();
-            Log.LogInfo($"[LastChance][DebugSpawn] Startup config CSV='{InternalDebugFlags.DebugAutoSpawnMonsterNamesCsv}'.");
             TryLogAvailableEnemyCatalog("startup");
             InstallRepolibLogProbe();
         }
@@ -108,8 +116,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                 return;
             }
 
-            var requested = ParseRequestedNames();
-            Log.LogInfo($"[LastChance][DebugSpawn] Mods loaded, debug spawn requested for: {string.Join(", ", requested)}");
             TryLogAvailableEnemyCatalog("mods-loaded");
             InstallRepolibLogProbe();
         }
@@ -135,7 +141,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             }
 
             s_spawnDoneForLevel = false;
-            s_delayedSpawnScheduled = false;
         }
 
         [HarmonyPatch(typeof(LevelGenerator), "GenerateDone")]
@@ -147,40 +152,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                 return;
             }
 
-            StartDelayedDebugSpawn();
-        }
-
-        private static void StartDelayedDebugSpawn()
-        {
-            if (s_delayedSpawnScheduled || s_spawnDoneForLevel)
-            {
-                return;
-            }
-
-            var delaySeconds = Mathf.Max(0f, InternalDebugFlags.DebugAutoSpawnDelaySeconds);
-            if (delaySeconds <= 0f)
-            {
-                TrySpawnDebugMonsters();
-                return;
-            }
-
-            s_delayedSpawnScheduled = true;
-            var go = new GameObject("DHHFix_LastChance_DelayedDebugSpawn");
-            UnityEngine.Object.DontDestroyOnLoad(go);
-            var runner = go.AddComponent<DelayedSpawnRunner>();
-            runner.StartCoroutine(DelayedDebugSpawnCoroutine(runner, delaySeconds));
-        }
-
-        private static IEnumerator DelayedDebugSpawnCoroutine(MonoBehaviour runner, float delaySeconds)
-        {
-            yield return new WaitForSecondsRealtime(delaySeconds);
             TrySpawnDebugMonsters();
-            s_delayedSpawnScheduled = false;
+        }
 
-            if (runner != null)
-            {
-                UnityEngine.Object.Destroy(runner.gameObject);
-            }
+        internal static void ResetRuntimeState()
+        {
+            s_spawnDoneForLevel = false;
         }
 
         private static void StartCatalogWatcher()
@@ -324,13 +301,34 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                 {
                     var entry = selected[i];
                     var spawnPos = spawnCenterPosition + GetSpawnOffset(i);
-                    if (!TrySpawnEnemySetupViaDirector(director, entry.setup, spawnPos))
+                    Log.LogInfo($"[LastChance][DebugSpawn] Spawning '{entry.label}'...");
+                    var beforeIds = CaptureSpawnedEnemyIds(director);
+                    SpawnEnemySetup(entry.setup, spawnPos);
+                    var verifyResult = TryVerifySpawnSucceeded(director, beforeIds, spawnPos, 8f);
+
+                    if (!verifyResult.Success)
                     {
-                        SpawnEnemySetup(entry.setup, spawnPos);
+                        Log.LogWarning($"[LastChance][DebugSpawn] Direct spawn for '{entry.label}' not confirmed. Falling back to EnemyDirector spawn.");
+                        beforeIds = CaptureSpawnedEnemyIds(director);
+                        var spawnedViaDirector = TrySpawnEnemySetupViaDirector(director, entry.setup, spawnPos);
+                        verifyResult = spawnedViaDirector ? TryVerifySpawnSucceeded(director, beforeIds, spawnPos, 8f) : default;
                     }
-                    if (FeatureFlags.DebugLogging)
+
+                    if (!verifyResult.Success || verifyResult.EnemyParent == null)
                     {
-                        Log.LogInfo($"[LastChance][DebugSpawn] Spawned test enemy '{entry.label}' from setup '{entry.setup.name}'.");
+                        Log.LogWarning($"[LastChance][DebugSpawn] Spawn failed for '{entry.label}'.");
+                        continue;
+                    }
+
+                    ApplySpawnDelayStun(verifyResult.EnemyParent);
+
+                    if (TryResolveSpawnMetrics(verifyResult.EnemyParent, out var metersFromLocalPlayer, out var roomSteps))
+                    {
+                        Log.LogInfo($"[LastChance][DebugSpawn] Spawned '{entry.label}': distance={metersFromLocalPlayer:0.0}m rooms={roomSteps}.");
+                    }
+                    else
+                    {
+                        Log.LogInfo($"[LastChance][DebugSpawn] Spawned '{entry.label}': distance=n/a rooms=n/a.");
                     }
                 }
             }
@@ -877,6 +875,327 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             }
 
             return s_enemyDirectorSpawnedField.GetValue(director) is IList list ? list.Count : -1;
+        }
+
+        private static HashSet<int> CaptureSpawnedEnemyIds(EnemyDirector director)
+        {
+            var ids = new HashSet<int>();
+            AddKnownEnemyIdsFromDirector(ids, director);
+            AddKnownEnemyIdsFromScene(ids);
+
+            return ids;
+        }
+
+        private static SpawnVerifyResult TryVerifySpawnSucceeded(EnemyDirector director, HashSet<int> beforeIds, Vector3 requestedPosition, float preferredDistance)
+        {
+            var sawAnyNewSpawned = false;
+            var nearestDistance = float.MaxValue;
+            EnemyParent? nearestParent = null;
+            var candidates = CollectCurrentEnemyParents(director);
+            for (var i = 0; i < candidates.Count; i++)
+            {
+                var parent = candidates[i];
+                if (parent == null)
+                {
+                    continue;
+                }
+
+                var id = parent.GetInstanceID();
+                if (beforeIds.Contains(id))
+                {
+                    continue;
+                }
+
+                if (!IsEnemyParentSpawned(parent))
+                {
+                    continue;
+                }
+
+                sawAnyNewSpawned = true;
+                var distance = Vector3.Distance(parent.transform.position, requestedPosition);
+                if (distance < nearestDistance)
+                {
+                    nearestDistance = distance;
+                    nearestParent = parent;
+                }
+
+                if (distance <= preferredDistance)
+                {
+                    return new SpawnVerifyResult(success: true, enemyParent: parent);
+                }
+            }
+
+            if (sawAnyNewSpawned)
+            {
+                return new SpawnVerifyResult(success: true, enemyParent: nearestParent);
+            }
+
+            return default;
+        }
+
+        private static List<EnemyParent> CollectCurrentEnemyParents(EnemyDirector director)
+        {
+            var list = new List<EnemyParent>();
+            AddEnemyParentsFromDirector(list, director);
+
+            // Fallback for direct spawns that may not yet be tracked by EnemyDirector.enemiesSpawned.
+            var sceneParents = UnityEngine.Object.FindObjectsOfType<EnemyParent>(true);
+            for (var i = 0; i < sceneParents.Length; i++)
+            {
+                var parent = sceneParents[i];
+                if (parent != null && !list.Contains(parent))
+                {
+                    list.Add(parent);
+                }
+            }
+
+            return list;
+        }
+
+        private static void AddKnownEnemyIdsFromDirector(HashSet<int> targetIds, EnemyDirector director)
+        {
+            if (targetIds == null || director == null || s_enemyDirectorSpawnedField == null)
+            {
+                return;
+            }
+
+            if (!(s_enemyDirectorSpawnedField.GetValue(director) is IList list))
+            {
+                return;
+            }
+
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i] is EnemyParent parent && parent != null)
+                {
+                    targetIds.Add(parent.GetInstanceID());
+                }
+            }
+        }
+
+        private static void AddKnownEnemyIdsFromScene(HashSet<int> targetIds)
+        {
+            if (targetIds == null)
+            {
+                return;
+            }
+
+            var sceneParents = UnityEngine.Object.FindObjectsOfType<EnemyParent>(true);
+            for (var i = 0; i < sceneParents.Length; i++)
+            {
+                var parent = sceneParents[i];
+                if (parent != null)
+                {
+                    targetIds.Add(parent.GetInstanceID());
+                }
+            }
+        }
+
+        private static void AddEnemyParentsFromDirector(List<EnemyParent> target, EnemyDirector director)
+        {
+            if (target == null || director == null || s_enemyDirectorSpawnedField == null)
+            {
+                return;
+            }
+
+            if (!(s_enemyDirectorSpawnedField.GetValue(director) is IList list))
+            {
+                return;
+            }
+
+            for (var i = 0; i < list.Count; i++)
+            {
+                if (list[i] is EnemyParent parent && parent != null && !target.Contains(parent))
+                {
+                    target.Add(parent);
+                }
+            }
+        }
+
+        private static bool IsEnemyParentSpawned(EnemyParent parent)
+        {
+            if (parent == null)
+            {
+                return false;
+            }
+
+            if (s_enemyParentSpawnedProperty == null)
+            {
+                return true;
+            }
+
+            return s_enemyParentSpawnedProperty.GetValue(parent) is bool spawned && spawned;
+        }
+
+        private static void ApplySpawnDelayStun(EnemyParent enemyParent)
+        {
+            if (enemyParent == null)
+            {
+                return;
+            }
+
+            var delaySeconds = Mathf.Max(0f, InternalDebugFlags.DebugAutoSpawnDelaySeconds);
+            if (delaySeconds <= 0f)
+            {
+                return;
+            }
+
+            var enemy = enemyParent.GetComponentInChildren<Enemy>();
+            if (enemy == null)
+            {
+                return;
+            }
+
+            var stateStunned = enemy.GetComponent<EnemyStateStunned>();
+            if (stateStunned != null)
+            {
+                // Use the same runtime channel used by charge/hurt stun logic.
+                // We set the timer directly so spawn teleport guards do not skip the stun window.
+                stateStunned.stunTimer = Mathf.Max(stateStunned.stunTimer, delaySeconds);
+                enemy.CurrentState = EnemyState.Stunned;
+                enemy.DisableChase(delaySeconds + 0.25f);
+                return;
+            }
+
+            // Fallback for enemies without EnemyStateStunned.
+            enemy.Freeze(delaySeconds);
+        }
+
+        private static bool TryResolveSpawnMetrics(EnemyParent enemyParent, out float metersFromLocalPlayer, out int roomSteps)
+        {
+            metersFromLocalPlayer = -1f;
+            roomSteps = -1;
+
+            if (enemyParent == null || !TryGetLocalPlayerPosition(out var playerPosition))
+            {
+                return false;
+            }
+
+            metersFromLocalPlayer = Vector3.Distance(playerPosition, enemyParent.transform.position);
+            roomSteps = GetRoomStepsBetween(playerPosition, enemyParent.transform.position);
+            return true;
+        }
+
+        private static bool TryGetLocalPlayerPosition(out Vector3 position)
+        {
+            position = Vector3.zero;
+            var player = PlayerController.instance?.playerAvatarScript;
+            if (player == null)
+            {
+                return false;
+            }
+
+            position = player.transform.position;
+            return true;
+        }
+
+        private static int GetRoomStepsBetween(Vector3 fromPosition, Vector3 toPosition)
+        {
+            if (LevelGenerator.Instance == null || s_levelPathPointsField == null)
+            {
+                return -1;
+            }
+
+            if (!(s_levelPathPointsField.GetValue(LevelGenerator.Instance) is IEnumerable rawPoints))
+            {
+                return -1;
+            }
+
+            var points = new List<object>();
+            foreach (var point in rawPoints)
+            {
+                if (point != null)
+                {
+                    points.Add(point);
+                }
+            }
+
+            if (points.Count == 0)
+            {
+                return -1;
+            }
+
+            var start = GetClosestLevelPoint(points, fromPosition);
+            var end = GetClosestLevelPoint(points, toPosition);
+            if (start == null || end == null)
+            {
+                return -1;
+            }
+
+            return ComputePointDistanceInSteps(start, end);
+        }
+
+        private static object? GetClosestLevelPoint(List<object> points, Vector3 position)
+        {
+            object? closest = null;
+            var best = float.MaxValue;
+            for (var i = 0; i < points.Count; i++)
+            {
+                var point = points[i];
+                if (!TryGetPointPosition(point, out var pointPos))
+                {
+                    continue;
+                }
+
+                var d = Vector3.Distance(position, pointPos);
+                if (d < best)
+                {
+                    best = d;
+                    closest = point;
+                }
+            }
+
+            return closest;
+        }
+
+        private static int ComputePointDistanceInSteps(object start, object end)
+        {
+            if (ReferenceEquals(start, end))
+            {
+                return 0;
+            }
+
+            var queue = new Queue<object>();
+            var visited = new HashSet<object>();
+            var distance = new Dictionary<object, int>();
+
+            queue.Enqueue(start);
+            visited.Add(start);
+            distance[start] = 0;
+
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                if (!distance.TryGetValue(current, out var currentDistance))
+                {
+                    continue;
+                }
+
+                var connected = GetConnectedPoints(current);
+                if (connected == null)
+                {
+                    continue;
+                }
+
+                foreach (var next in connected)
+                {
+                    if (next == null || visited.Contains(next))
+                    {
+                        continue;
+                    }
+
+                    visited.Add(next);
+                    distance[next] = currentDistance + 1;
+                    if (ReferenceEquals(next, end))
+                    {
+                        return currentDistance + 1;
+                    }
+
+                    queue.Enqueue(next);
+                }
+            }
+
+            return -1;
         }
 
         private static Vector3 GetSpawnOffset(int index)

@@ -19,11 +19,12 @@ namespace DeathHeadHopperFix.Modules.Config
         // Done "ceiling eye,hidden,heart hugger,tricycle,tumbler,thin man,spinny"
         // Check "";
         public static bool EnableDebugSpawnRuntime = true;
-        public static float DebugAutoSpawnDelaySeconds = 10f;
-        public static string DebugAutoSpawnMonsterNamesCsv =
-            "animal,bang,beamer,birthday boy,bomb thrower,bowtie,ceiling eye,duck,elsa,floater," +
-            "gnome,head,head grabber,heart hugger,hidden,hunter,oogly,robe,runner,shadow," +
-            "slow mouth,slow walker,spinny,thin man,tick,tricycle,tumbler,upscream,valuable thrower";
+        public static float DebugAutoSpawnDelaySeconds = 15f;
+        //public static string DebugAutoSpawnMonsterNamesCsv =
+        //    "animal,bang,beamer,birthday boy,bomb thrower,bowtie,ceiling eye,duck,elsa,floater," +
+        //    "gnome,head,head grabber,heart hugger,hidden,hunter,oogly,robe,runner,shadow," +
+        //    "slow mouth,slow walker,spinny,thin man,tick,tricycle,tumbler,upscream,valuable thrower";
+        public static string DebugAutoSpawnMonsterNamesCsv = "head grabber,head grabber,head grabber,head grabber";
 
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
         public static bool DebugLastChanceHiddenCarryFlow = false;
@@ -40,6 +41,10 @@ namespace DeathHeadHopperFix.Modules.Config
         // Temporary diagnostics for Spinny-like tumble lock pipelines in LastChance.
         public static bool DebugLastChanceSpinnyFlow = false;
         public static bool DebugLastChanceSpinnyVerbose = false;
+
+        // Temporary diagnostics for Headgrab target/grab state transitions in LastChance.
+        public static bool DebugLastChanceHeadgrabFlow = false;
+        public static bool DebugLastChanceHeadgrabVerbose = false;
 
         // Temporary diagnostics for Thin Man on-screen camera pipeline in LastChance.
         public static bool DebugLastChanceThinManFlow = false;
