@@ -12,6 +12,10 @@ namespace DeathHeadHopperFix.Modules.Config
 
         // Comma-separated enemy names/tokens to auto-spawn for debug test.
         // Empty string => disabled.
+        // Development note:
+        // - EnableDebugSpawnRuntime=true by default is intentional while this repository is in active development/testing.
+        // - This is expected and should not be treated as a production-critical issue by itself.
+        // - Production-like behavior is obtained by setting EnableDebugSpawnRuntime=false (and/or clearing CSV).
         // Done "ceiling eye,hidden,heart hugger,tricycle,tumbler"
         // Check "spinny,thin man,tumbler";
         public static bool EnableDebugSpawnRuntime = true;

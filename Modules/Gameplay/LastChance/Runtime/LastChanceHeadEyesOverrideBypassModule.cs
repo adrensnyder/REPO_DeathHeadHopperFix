@@ -26,6 +26,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
         [HarmonyPrefix]
         private static bool Prefix(PlayerEyes __instance, GameObject _obj)
         {
+            if (!FeatureFlags.LastChancePupilVisualsEnabled)
+            {
+                DebugLog("Override.Skip.FlagDisabled", "LastChancePupilVisualsEnabled=false");
+                return true;
+            }
+
             if (__instance == null || !LastChanceTimerController.IsActive)
             {
                 DebugLog("Override.Skip.Inactive", $"lastChance={LastChanceTimerController.IsActive} eyesNull={__instance == null}");

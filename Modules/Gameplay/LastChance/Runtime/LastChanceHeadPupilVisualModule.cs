@@ -40,6 +40,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
                 return;
             }
 
+            if (!FeatureFlags.LastChancePupilVisualsEnabled)
+            {
+                DebugLog("Skip.FlagDisabled", "LastChancePupilVisualsEnabled=false");
+                return;
+            }
+
             var player = HeadPlayerAvatarField?.GetValue(__instance) as PlayerAvatar;
             if (!LastChanceTimerController.IsActive || !LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
             {

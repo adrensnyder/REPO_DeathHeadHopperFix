@@ -69,6 +69,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceIndicatorDirectionCooldownSeconds = "Cooldown seconds before Direction can be triggered again.";
             public const string LastChanceIndicatorDirectionPenaltyMaxSeconds = "Maximum timer penalty per Direction trigger (low difficulty, and always used when dynamic timer is disabled).";
             public const string LastChanceIndicatorDirectionPenaltyMinSeconds = "Minimum timer penalty per Direction trigger (high difficulty).";
+            public const string LastChancePupilVisualsEnabled = "When true, LastChance keeps death-head pupils visible and unlocks eye look-at behavior for head proxy players. When false, eyes/pupils stay vanilla during LastChance.";
             public const string LastChanceMonstersSearchEnabled = "During LastChance, monsters treat disabled players as valid targets (harder return to truck).";
             public const string LastChanceMonstersVoiceEnemyOnlyEnabled = "During LastChance, disabled death-head voice keeps enemy reactions/talk animation but mutes playback to players (enemy-only voice aggro).";
             public const string LastChanceTimerPerMonsterSeconds = "Extra seconds added per active spawned monster when LastChanceMonstersSearch is enabled.";
@@ -232,6 +233,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.LastChanceGameplay, Descriptions.LastChanceIndicatorDirectionPenaltyMinSeconds, Min = 0f, Max = 60f)]
         public static float LastChanceIndicatorDirectionPenaltyMinSeconds = 4f;
+
+        [FeatureConfigEntry(Sections.LastChanceGameplay, Descriptions.LastChancePupilVisualsEnabled)]
+        public static bool LastChancePupilVisualsEnabled = true;
 
         [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayers)]
         public static bool SpectateDeadPlayers = true;
