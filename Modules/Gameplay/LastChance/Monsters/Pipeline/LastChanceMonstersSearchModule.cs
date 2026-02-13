@@ -24,6 +24,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private static readonly FieldInfo? s_enemyParentEnemyField =
             typeof(EnemyParent).GetField("Enemy", AnyInstanceField) ??
             typeof(EnemyParent).GetField("enemy", AnyInstanceField);
+        private static readonly MethodInfo? s_getAllPlayersWithinRangeMethod = AccessTools.Method(
+            typeof(SemiFunc),
+            "PlayerGetAllPlayerAvatarWithinRange",
+            new[] { typeof(float), typeof(Vector3), typeof(bool), typeof(LayerMask) });
+        private static readonly MethodInfo? s_getNearestPlayerWithinRangeMethod = AccessTools.Method(
+            typeof(SemiFunc),
+            "PlayerGetNearestPlayerAvatarWithinRange",
+            new[] { typeof(float), typeof(Vector3), typeof(bool), typeof(LayerMask) });
         private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.MonstersSearch");
         private static readonly HashSet<MethodBase> s_patchedMethods = new HashSet<MethodBase>();
         private static readonly Dictionary<Assembly, List<MethodBase>> s_discoveredMethodsByAssembly = new();
@@ -202,7 +210,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             for (var i = 0; i < types.Length; i++)
             {
                 var type = types[i];
-                if (type == null || !IsMonsterRelatedType(type) || IsTricycleType(type))
+                if (type == null || !IsMonsterRelatedType(type) || IsSharedEnemyBaseType(type))
                 {
                     continue;
                 }
@@ -218,6 +226,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                     }
 
                     if (!MethodReadsPlayerIsDisabled(method))
+                    {
+                        continue;
+                    }
+
+                    // Behavior-based scope: only methods participating in player search.
+                    // This avoids touching unrelated enemy movement/update code paths.
+                    if (!MethodCallsSharedPlayerSearch(method))
                     {
                         continue;
                     }
@@ -265,10 +280,54 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             return false;
         }
 
-        private static bool IsTricycleType(Type type)
+        private static bool IsSharedEnemyBaseType(Type type)
         {
-            return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+            return type == typeof(Enemy) ||
+                   type == typeof(EnemyParent) ||
+                   type == typeof(EnemyState) ||
+                   type == typeof(EnemyType);
+        }
+
+        private static bool MethodCallsSharedPlayerSearch(MethodBase method)
+        {
+            if (method == null || s_getAllPlayersWithinRangeMethod == null || s_getNearestPlayerWithinRangeMethod == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                var body = method.GetMethodBody();
+                var il = body?.GetILAsByteArray();
+                if (il == null || il.Length < 5)
+                {
+                    return false;
+                }
+
+                var allToken = s_getAllPlayersWithinRangeMethod.MetadataToken;
+                var nearestToken = s_getNearestPlayerWithinRangeMethod.MetadataToken;
+
+                for (var i = 0; i <= il.Length - 5; i++)
+                {
+                    var op = il[i];
+                    if (op != 0x28 && op != 0x6F)
+                    {
+                        continue;
+                    }
+
+                    var token = BitConverter.ToInt32(il, i + 1);
+                    if (token == allToken || token == nearestToken)
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+                // Optional IL probe.
+            }
+
+            return false;
         }
 
         private static bool MethodReadsPlayerIsDisabled(MethodBase method)

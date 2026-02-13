@@ -1,14 +1,22 @@
 #nullable enable
 
 using System.Reflection;
+using BepInEx.Logging;
+using DeathHeadHopperFix.Modules.Config;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters;
+using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 using UnityEngine;
+using Logger = BepInEx.Logging.Logger;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
 {
     [HarmonyPatch(typeof(EnemyOnScreen), "Awake")]
     internal static class LastChanceMonstersOnScreenCameraModule
     {
+        private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.ThinMan");
+        private static readonly System.Collections.Generic.Dictionary<string, bool> s_lastBoolStateByKey = new();
+
         [HarmonyPostfix]
         private static void AwakePostfix(EnemyOnScreen __instance)
         {
@@ -20,7 +28,43 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             if (__instance.GetComponent<OnScreenCameraSyncRuntime>() == null)
             {
                 __instance.gameObject.AddComponent<OnScreenCameraSyncRuntime>();
+                DebugLog("OnScreen.AwakeAttach", $"enemy={__instance.gameObject.name} attachedRuntimeSync=True");
             }
+        }
+
+        internal static void DebugLog(string reason, string detail)
+        {
+            if (!InternalDebugFlags.DebugLastChanceThinManFlow)
+            {
+                return;
+            }
+
+            if (!LogLimiter.ShouldLog($"ThinMan.{reason}", 300))
+            {
+                return;
+            }
+
+            Log.LogInfo($"[ThinMan][{reason}] {detail}");
+        }
+
+        internal static void DebugLogOnBoolTransition(string reason, string key, bool value, string detail)
+        {
+            if (!InternalDebugFlags.DebugLastChanceThinManFlow)
+            {
+                return;
+            }
+
+            var stateKey = $"{reason}.{key}";
+            if (s_lastBoolStateByKey.TryGetValue(stateKey, out var previous) && previous == value)
+            {
+                if (!LogLimiter.ShouldLog($"ThinMan.{stateKey}.Heartbeat", 600))
+                {
+                    return;
+                }
+            }
+
+            s_lastBoolStateByKey[stateKey] = value;
+            Log.LogInfo($"[ThinMan][{reason}] {detail}");
         }
     }
 
@@ -34,6 +78,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private bool _lastSyncedOnScreenLocal;
         private bool _lastSyncedCulledLocal;
         private bool _hasSyncSnapshot;
+        private int _lastCameraInstanceId;
+        private bool _hasCameraSnapshot;
 
         private void Awake()
         {
@@ -51,6 +97,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             if (current != null)
             {
                 s_mainCameraField.SetValue(_onScreen, current);
+
+                var currentCameraId = current.GetInstanceID();
+                var cameraChanged = !_hasCameraSnapshot || _lastCameraInstanceId != currentCameraId;
+                if (cameraChanged)
+                {
+                    LastChanceMonstersOnScreenCameraModule.DebugLog("Camera.Sync", $"enemy={_onScreen.gameObject.name} camera={current.name} changed={cameraChanged}");
+                }
+
+                _lastCameraInstanceId = currentCameraId;
+                _hasCameraSnapshot = true;
             }
 
             SyncLocalHeadProxyOnScreenState();
@@ -72,6 +128,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             if (!LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(localPlayer))
             {
                 _hasSyncSnapshot = false;
+                LastChanceMonstersOnScreenCameraModule.DebugLog("Sync.Skip.NoHeadProxy", $"enemy={_onScreen.gameObject.name} player={localPlayer.photonView.ViewID}");
                 return;
             }
 
@@ -88,6 +145,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             _hasSyncSnapshot = true;
 
             s_onScreenPlayerUpdateMethod.Invoke(_onScreen, new object[] { localPlayer.photonView.ViewID, onScreenLocal, culledLocal });
+            LastChanceMonstersOnScreenCameraModule.DebugLogOnBoolTransition(
+                "Sync.PlayerUpdate",
+                $"{_onScreen.GetInstanceID()}.{localPlayer.photonView.ViewID}.OnScreen",
+                onScreenLocal,
+                $"enemy={_onScreen.gameObject.name} player={localPlayer.photonView.ViewID} onScreenLocal={onScreenLocal} culledLocal={culledLocal}");
+            LastChanceMonstersOnScreenCameraModule.DebugLogOnBoolTransition(
+                "Sync.PlayerUpdate",
+                $"{_onScreen.GetInstanceID()}.{localPlayer.photonView.ViewID}.Culled",
+                culledLocal,
+                $"enemy={_onScreen.gameObject.name} player={localPlayer.photonView.ViewID} onScreenLocal={onScreenLocal} culledLocal={culledLocal}");
         }
 
         private static PlayerAvatar? GetLocalPlayerAvatar()
@@ -128,6 +195,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             if (!GameManager.Multiplayer())
             {
                 __result = s_onScreenLocalField?.GetValue(__instance) as bool? ?? false;
+                LastChanceMonstersOnScreenCameraModule.DebugLog(
+                    "GetOnScreen.Singleplayer",
+                    $"enemy={__instance.gameObject.name} player={( _playerAvatar != null && _playerAvatar.photonView != null ? _playerAvatar.photonView.ViewID.ToString() : "n/a")} result={__result}");
                 return false;
             }
 
@@ -137,6 +207,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 _playerAvatar.photonView.IsMine)
             {
                 __result = s_onScreenLocalField?.GetValue(__instance) as bool? ?? false;
+                LastChanceMonstersOnScreenCameraModule.DebugLog(
+                    "GetOnScreen.HeadProxyLocal",
+                    $"enemy={__instance.gameObject.name} player={_playerAvatar.photonView.ViewID} result={__result}");
                 return false;
             }
 
@@ -157,10 +230,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             {
                 dictionary[key] = false;
                 __result = false;
+                LastChanceMonstersOnScreenCameraModule.DebugLog(
+                    "GetOnScreen.DictMiss",
+                    $"enemy={__instance.gameObject.name} player={key} result={__result}");
                 return false;
             }
 
             __result = dictionary[key] as bool? ?? false;
+            LastChanceMonstersOnScreenCameraModule.DebugLogOnBoolTransition(
+                "GetOnScreen.DictHit",
+                $"{__instance.GetInstanceID()}.{key}",
+                __result,
+                $"enemy={__instance.gameObject.name} player={key} result={__result}");
             return false;
         }
     }

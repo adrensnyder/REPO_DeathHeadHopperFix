@@ -138,7 +138,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
             __result = customChargeCost;
 
-            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHCharge.Cost", 120))
+            if (FeatureFlags.DebugLogging &&
+                InternalDebugFlags.DebugDhhChargeTuningLog &&
+                LogLimiter.ShouldLog("DHHCharge.Cost", 120))
             {
                 Debug.Log($"[Fix:DHHCharge] Charge cost override: custom={customChargeCost:F3} base={abilityBaseCost:F3}");
             }
@@ -154,7 +156,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             var customCooldown = Mathf.Max(0f, (float)FeatureFlags.ChargeAbilityCooldown);
             __result = customCooldown;
 
-            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHCharge.Cooldown", 120))
+            if (FeatureFlags.DebugLogging &&
+                InternalDebugFlags.DebugDhhChargeTuningLog &&
+                LogLimiter.ShouldLog("DHHCharge.Cooldown", 120))
             {
                 Debug.Log($"[Fix:DHHCharge] Cooldown override: custom={customCooldown:F3}");
             }

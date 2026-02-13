@@ -151,6 +151,8 @@ namespace DeathHeadHopperFix.Modules.Battery
         {
             if (!FeatureFlags.DebugLogging || !FeatureFlags.BatteryJumpEnabled)
                 return;
+            if (!InternalDebugFlags.DebugDhhBatteryJumpAllowanceLog)
+                return;
 
             if (!IsDeathHeadContext())
                 return;
@@ -282,10 +284,12 @@ namespace DeathHeadHopperFix.Modules.Battery
         {
             if (!FeatureFlags.DebugLogging)
                 return;
+            if (!InternalDebugFlags.DebugDhhChargeRechargeLog)
+                return;
             if (!LogLimiter.ShouldLog("DHHBattery.Recharge", 240))
                 return;
 
-            Debug.Log($"[Fix:DHHBattery] Stamina recharge {amount:F3} (stamina={energy:F3} / {max:F3})");
+            Debug.Log($"[Fix:DHHCharge] Stamina recharge {amount:F3} (stamina={energy:F3} / {max:F3})");
         }
     }
 }

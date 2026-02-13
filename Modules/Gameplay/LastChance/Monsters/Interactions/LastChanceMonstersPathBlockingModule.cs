@@ -181,8 +181,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                 DefaultBlockingRadius,
                 heading.normalized,
                 DefaultBlockingDistance,
-                LayerMask.GetMask("Player", "PhysGrabObject"),
-                QueryTriggerInteraction.Ignore);
+                LayerMask.GetMask("Player", "PhysGrabObject"));
             if (tricycle)
             {
                 DebugLog("Probe", $"enemy={enemy.name} hits={hits.Length} center={enemy.CenterTransform.position} heading={heading.normalized}");
@@ -217,7 +216,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                     continue;
                 }
 
-                if (!TryResolveNavmeshPoint(player, out var candidatePoint))
+                if (!TryResolveNavmeshPoint(player, out var candidatePoint, out var fallbackPoint))
                 {
                     if (tricycle)
                     {
@@ -226,7 +225,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                     continue;
                 }
 
-                if (!InvokeOnNavmesh(navMeshAgent, candidatePoint, DefaultNavmeshRadius, true))
+                var onNavmesh = InvokeOnNavmesh(navMeshAgent, candidatePoint, DefaultNavmeshRadius, true);
+                if (!onNavmesh && fallbackPoint.HasValue)
+                {
+                    onNavmesh = InvokeOnNavmesh(navMeshAgent, fallbackPoint.Value, DefaultNavmeshRadius, true);
+                    if (onNavmesh)
+                    {
+                        candidatePoint = fallbackPoint.Value;
+                    }
+                }
+
+                if (!onNavmesh)
                 {
                     if (tricycle)
                     {
@@ -236,10 +245,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                     continue;
                 }
 
-                if (tricycle)
+                // Conservative behavior gate: accept blocking only if the candidate point
+                // is really inside the forward probe corridor, to avoid false positives
+                // that can perturb vanilla movement/state transitions.
+                if (!IsPointInsideProbeCorridor(enemy.CenterTransform.position, heading.normalized, candidatePoint))
                 {
-                    // Keep diagnostics only for Tricycle; no behavior override.
-                    DebugLog("Blocked.WouldSet", $"player={GetPlayerId(player)} point={candidatePoint}");
+                    if (tricycle)
+                    {
+                        DebugLog("Hit.Skip.OutsideProbe", $"player={GetPlayerId(player)} point={candidatePoint}");
+                    }
                     continue;
                 }
 
@@ -296,11 +310,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             return LastChanceMonstersReflectionHelper.TryResolvePlayerFromCollider(collider, out player);
         }
 
-        private static bool TryResolveNavmeshPoint(PlayerAvatar player, out Vector3 point)
+        private static bool TryResolveNavmeshPoint(PlayerAvatar player, out Vector3 point, out Vector3? fallbackPoint)
         {
+            fallbackPoint = null;
             if (LastChanceMonstersTargetProxyHelper.TryGetHeadProxyTarget(player, out var headCenter))
             {
                 point = headCenter;
+                fallbackPoint = player.transform.position;
                 return true;
             }
 
@@ -317,6 +333,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
 
             return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
                    (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+        }
+
+        private static bool IsPointInsideProbeCorridor(Vector3 origin, Vector3 headingNormalized, Vector3 point)
+        {
+            var toPoint = point - origin;
+            var along = Vector3.Dot(toPoint, headingNormalized);
+            if (along < 0f || along > DefaultBlockingDistance + 0.1f)
+            {
+                return false;
+            }
+
+            var projected = origin + headingNormalized * along;
+            var radial = Vector3.Distance(projected, point);
+            return radial <= DefaultBlockingRadius + 0.35f;
         }
 
         private static int GetPlayerId(PlayerAvatar player)

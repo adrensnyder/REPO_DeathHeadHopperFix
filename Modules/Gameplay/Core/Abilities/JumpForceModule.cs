@@ -177,6 +177,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
         {
             if (!FeatureFlags.DebugLogging)
                 return;
+            if (!InternalDebugFlags.DebugJumpForceLog)
+                return;
 
             if (!LogLimiter.ShouldLog(JumpForceLogKey, 30))
                 return;

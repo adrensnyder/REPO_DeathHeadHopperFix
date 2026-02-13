@@ -12,10 +12,10 @@ namespace DeathHeadHopperFix.Modules.Config
 
         // Comma-separated enemy names/tokens to auto-spawn for debug test.
         // Empty string => disabled.
-        // Done "ceiling eye,hidden,heart hugger"
-        // Check "tricycle,spinny,thin man,tumbler";
+        // Done "ceiling eye,hidden,heart hugger,tricycle,tumbler"
+        // Check "spinny,thin man,tumbler";
         public static bool EnableDebugSpawnRuntime = true;
-        public static string DebugAutoSpawnMonsterNamesCsv = "tricycle,tricycle,tricycle";
+        public static string DebugAutoSpawnMonsterNamesCsv = "thin man,thin man,thin man,thin man,thin man";
 
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
         public static bool DebugLastChanceHiddenCarryFlow = false;
@@ -27,6 +27,23 @@ namespace DeathHeadHopperFix.Modules.Config
         public static bool DebugLastChanceHeartHuggerFlow = false;
 
         // Temporary diagnostics for Tricycle path-blocking reaction flow in LastChance.
-        public static bool DebugLastChanceTricycleFlow = true;
+        public static bool DebugLastChanceTricycleFlow = false;
+
+        // Temporary diagnostics for Spinny-like tumble lock pipelines in LastChance.
+        public static bool DebugLastChanceSpinnyFlow = false;
+        public static bool DebugLastChanceSpinnyVerbose = false;
+
+        // Temporary diagnostics for Thin Man on-screen camera pipeline in LastChance.
+        public static bool DebugLastChanceThinManFlow = false;
+
+        // Extra diagnostics for JumpForceModule "[Fix:Jump]" logs.
+        public static bool DebugJumpForceLog = false;
+
+        // Extra diagnostics for charge tuning and stamina recharge logs.
+        public static bool DebugDhhChargeTuningLog = false;
+        public static bool DebugDhhChargeRechargeLog = false;
+
+        // Extra diagnostics for DHH battery jump-allowance logs.
+        public static bool DebugDhhBatteryJumpAllowanceLog = false;
     }
 }

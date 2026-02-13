@@ -239,11 +239,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Support
                 return;
             }
 
-            if (!FeatureFlags.LastChanceMonstersSearchEnabled || !FeatureFlags.LastChangeMode)
-            {
-                return;
-            }
-
             var director = EnemyDirector.instance;
             if (director == null)
             {
