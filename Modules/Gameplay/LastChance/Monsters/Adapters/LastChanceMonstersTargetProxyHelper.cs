@@ -16,6 +16,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
         private static readonly FieldInfo? s_deathHeadPhysGrabObjectField = AccessTools.Field(typeof(PlayerDeathHead), "physGrabObject");
         private static readonly FieldInfo? s_physGrabObjectCenterPointField = AccessTools.Field(typeof(PhysGrabObject), "centerPoint");
         private static readonly FieldInfo? s_deathHeadPlayerEyesField = AccessTools.Field(typeof(PlayerDeathHead), "playerEyes");
+        private static readonly FieldInfo? s_playerControllerAvatarField = AccessTools.Field(typeof(PlayerController), "playerAvatarScript");
 
         internal static bool IsRuntimeEnabled()
         {
@@ -155,6 +156,35 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
 
             player = deathHead.playerAvatar;
             return player != null;
+        }
+
+        internal static bool TryResolvePlayerAvatarFromTransform(Transform? transform, out PlayerAvatar? player)
+        {
+            player = null;
+            if (transform == null)
+            {
+                return false;
+            }
+
+            var direct = transform.GetComponentInParent<PlayerAvatar>();
+            if (direct != null)
+            {
+                player = direct;
+                return true;
+            }
+
+            var controller = transform.GetComponentInParent<PlayerController>();
+            if (controller != null)
+            {
+                var fromController = s_playerControllerAvatarField?.GetValue(controller) as PlayerAvatar;
+                if (fromController != null)
+                {
+                    player = fromController;
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         internal static bool IsLineOfSightToHead(Transform origin, Vector3 headCenter, LayerMask visionMask, PlayerAvatar player)

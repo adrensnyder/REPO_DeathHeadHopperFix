@@ -65,6 +65,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 return false;
             }
 
+            if (enemy.GetComponent<EnemyAnimal>() != null)
+            {
+                return true;
+            }
+
             if (enemy.CurrentState != EnemyState.Chase && enemy.CurrentState != EnemyState.LookUnder)
             {
                 return false;

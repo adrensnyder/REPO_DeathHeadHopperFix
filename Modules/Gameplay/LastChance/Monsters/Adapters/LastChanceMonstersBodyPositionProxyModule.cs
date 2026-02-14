@@ -11,7 +11,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
     [HarmonyPatch(typeof(EnemyDirector), "Update")]
     internal static class LastChanceMonstersBodyPositionProxyModule
     {
-        private static readonly Dictionary<Type, FieldInfo?> TricycleTargetFieldCache = new();
+        private static readonly Dictionary<Type, FieldInfo?> PlayerTargetFieldCache = new();
 
         [HarmonyPostfix]
         private static void Postfix()
@@ -40,9 +40,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
                     continue;
                 }
 
-                // Keep Tricycle as vanilla as possible: do not rewrite body position
-                // for players currently targeted by any Tricycle controller.
-                if (IsTargetedByActiveTricycle(player))
+                // General safety: if any enemy is already tracking this player as target,
+                // avoid rewriting the body position to prevent steering/path regressions.
+                if (IsTargetedByAnyEnemy(player))
                 {
                     continue;
                 }
@@ -51,7 +51,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
             }
         }
 
-        private static bool IsTargetedByActiveTricycle(PlayerAvatar player)
+        private static bool IsTargetedByAnyEnemy(PlayerAvatar player)
         {
             if (player == null)
             {
@@ -68,12 +68,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
                 }
 
                 var type = enemy.GetType();
-                if (!IsTricycleType(type))
-                {
-                    continue;
-                }
-
-                if (TryGetTricyclePlayerTarget(enemy, type) == player)
+                if (TryGetPlayerTarget(enemy, type) == player)
                 {
                     return true;
                 }
@@ -82,21 +77,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters
             return false;
         }
 
-        private static PlayerAvatar? TryGetTricyclePlayerTarget(Enemy enemy, Type type)
+        private static PlayerAvatar? TryGetPlayerTarget(Enemy enemy, Type type)
         {
-            if (!TricycleTargetFieldCache.TryGetValue(type, out var field))
+            if (!PlayerTargetFieldCache.TryGetValue(type, out var field))
             {
                 field = LastChanceMonstersReflectionHelper.FindFieldInHierarchy(type, "playerTarget");
-                TricycleTargetFieldCache[type] = field;
+                PlayerTargetFieldCache[type] = field;
             }
 
             return field?.GetValue(enemy) as PlayerAvatar;
-        }
-
-        private static bool IsTricycleType(Type type)
-        {
-            return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
         }
     }
 }

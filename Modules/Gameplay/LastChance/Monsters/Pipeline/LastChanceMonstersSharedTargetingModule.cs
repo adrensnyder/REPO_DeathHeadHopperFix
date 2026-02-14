@@ -148,7 +148,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private static bool IsTricycleType(Type type)
         {
             return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0 ||
+                   type.Name.IndexOf("Animal", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   (type.FullName?.IndexOf("Animal", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
         }
 
         private static bool MethodCallsSharedPlayerSearch(MethodBase method)
@@ -460,7 +462,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 return transform.position;
             }
 
-            var player = transform.GetComponentInParent<PlayerAvatar>();
+            LastChanceMonstersTargetProxyHelper.TryResolvePlayerAvatarFromTransform(transform, out var player);
             if (player != null && LastChanceMonstersTargetProxyHelper.TryGetHeadProxyTarget(player, out var headCenter))
             {
                 return headCenter;
@@ -487,7 +489,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private static bool IsTricycleType(Type type)
         {
             return type.Name.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
+                   (type.FullName?.IndexOf("Tricycle", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0 ||
+                   type.Name.IndexOf("Animal", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   (type.FullName?.IndexOf("Animal", StringComparison.OrdinalIgnoreCase) ?? -1) >= 0;
         }
 
     }

@@ -24,7 +24,7 @@ namespace DeathHeadHopperFix.Modules.Config
         //    "animal,bang,beamer,birthday boy,bomb thrower,bowtie,ceiling eye,duck,elsa,floater," +
         //    "gnome,head,head grabber,heart hugger,hidden,hunter,oogly,robe,runner,shadow," +
         //    "slow mouth,slow walker,spinny,thin man,tick,tricycle,tumbler,upscream,valuable thrower";
-        public static string DebugAutoSpawnMonsterNamesCsv = "";
+        public static string DebugAutoSpawnMonsterNamesCsv = "headman,headman,headman,headman";
 
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
         public static bool DebugLastChanceHiddenCarryFlow = false;
@@ -45,6 +45,14 @@ namespace DeathHeadHopperFix.Modules.Config
         // Temporary diagnostics for Headgrab target/grab state transitions in LastChance.
         public static bool DebugLastChanceHeadgrabFlow = false;
         public static bool DebugLastChanceHeadgrabVerbose = false;
+
+        // Temporary diagnostics for Headman (EnemyHeadController + shared chase states).
+        public static bool DebugLastChanceHeadmanFlow = false;
+        public static bool DebugLastChanceHeadmanVerbose = false;
+
+        // Temporary diagnostics for Animal collision/hit pipeline in LastChance.
+        public static bool DebugLastChanceAnimalCollisionFlow = false;
+        public static bool DebugLastChanceAnimalCollisionVerbose = false;
 
         // Temporary diagnostics for Thin Man on-screen camera pipeline in LastChance.
         public static bool DebugLastChanceThinManFlow = false;

@@ -45,6 +45,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 return;
             }
 
+            if (_enemy.GetComponent<EnemyAnimal>() != null)
+            {
+                return;
+            }
+
             if (!LastChanceMonstersTargetProxyHelper.IsMasterContext() || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
             {
                 return;

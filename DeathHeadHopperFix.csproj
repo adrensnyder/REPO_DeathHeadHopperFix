@@ -93,6 +93,11 @@
 			<Private>False</Private>
 		</Reference>
 
+		<Reference Include="Unity.InputSystem">
+			<HintPath>libs\Unity\Unity.InputSystem.dll</HintPath>
+			<Private>False</Private>
+		</Reference>
+
 		<Reference Include="MonoMod.RuntimeDetour">
 			<HintPath>Libs\BepInEx\Core\MonoMod.RuntimeDetour.dll</HintPath>
 			<Private>False</Private>
@@ -125,5 +130,3 @@
 	
 
 </Project>
-
-

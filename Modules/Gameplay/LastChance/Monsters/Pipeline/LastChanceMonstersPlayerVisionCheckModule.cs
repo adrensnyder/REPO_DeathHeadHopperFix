@@ -242,6 +242,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
             return true;
         }
 
+
         private static bool HeadProxyVisionCheckPosition(Vector3 startPosition, Vector3 endPosition, float range, PlayerAvatar player)
         {
             // Ceiling-eye specific resilience: test a few vertical samples so near-floor head proxies

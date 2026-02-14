@@ -121,6 +121,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
                     continue;
                 }
 
+                if (enemy.GetComponent<EnemyAnimal>() != null)
+                {
+                    continue;
+                }
+
                 var dist = Vector3.Distance(enemy.transform.position, headCenter);
                 if (dist > DefaultAggroRadius)
                 {

@@ -11,6 +11,7 @@ using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using Photon.Pun;
 using UnityEngine;
+using UnityEngine.InputSystem;
 using Logger = BepInEx.Logging.Logger;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.Debugging
@@ -20,6 +21,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
     {
         private sealed class CatalogWatchRunner : MonoBehaviour { }
         private sealed class DelayStunRunner : MonoBehaviour { }
+        private sealed class ManualCycleEntry
+        {
+            internal ManualCycleEntry(string label, EnemySetup setup)
+            {
+                Label = label;
+                Setup = setup;
+            }
+
+            internal string Label { get; }
+            internal EnemySetup Setup { get; }
+        }
+        private enum DebugInputKey
+        {
+            F8,
+            F9,
+            F10,
+        }
+
         private readonly struct SpawnVerifyResult
         {
             internal SpawnVerifyResult(bool success, EnemyParent? enemyParent)
@@ -91,7 +110,54 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             typeof(EnemyParent).GetField("Spawned", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) ??
             typeof(EnemyParent).GetField("spawned", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
         private static readonly System.Reflection.FieldInfo? s_enemyTeleportedTimerField = AccessTools.Field(typeof(Enemy), "TeleportedTimer");
+        private static readonly System.Reflection.FieldInfo? s_enemyHealthCurrentField =
+            AccessTools.Field(typeof(EnemyHealth), "healthCurrent") ??
+            AccessTools.Field(typeof(EnemyHealth), "HealthCurrent");
+        private static readonly System.Reflection.FieldInfo? s_enemyHealthDeadField =
+            AccessTools.Field(typeof(EnemyHealth), "dead") ??
+            AccessTools.Field(typeof(EnemyHealth), "Dead");
+        private static readonly System.Reflection.FieldInfo? s_enemyHealthDeadImpulseField =
+            AccessTools.Field(typeof(EnemyHealth), "deadImpulse") ??
+            AccessTools.Field(typeof(EnemyHealth), "DeadImpulse");
+        private static readonly System.Reflection.FieldInfo? s_enemyBangFuseActiveField =
+            AccessTools.Field(typeof(EnemyBang), "fuseActive");
+        private static readonly System.Reflection.FieldInfo? s_enemyBangFuseLerpField =
+            AccessTools.Field(typeof(EnemyBang), "fuseLerp");
+        private static readonly System.Reflection.FieldInfo? s_particleScriptExplosionHurtColliderField =
+            ResolveFieldNoWarning(typeof(ParticleScriptExplosion), "HurtCollider", "hurtCollider");
+        private static readonly System.Reflection.FieldInfo? s_hurtColliderOnImpactEnemyEnemyField =
+            AccessTools.Field(typeof(HurtCollider), "onImpactEnemyEnemy");
+        private static readonly MethodInfo? s_enemyParentDespawnMethod = AccessTools.Method(typeof(EnemyParent), "Despawn");
         private static List<MethodInfo>? s_enemyDirectorSpawnMethods;
+        private static readonly List<ManualCycleEntry> s_manualCycleEntries = new();
+        private static readonly List<EnemyParent> s_manualCycleAllSpawned = new();
+        private static readonly HashSet<int> s_manualCycleSpawnedIds = new();
+        private static readonly Dictionary<int, float> s_manualNaturalDespawnAllowUntil = new();
+        private static int s_manualCycleIndex = -1;
+        private static float s_manualCycleLastTriggerRealtime = -10f;
+        private static float s_manualCycleDespawnAllLastTriggerRealtime = -10f;
+        private static bool s_manualCycleF8WasDown;
+        private static bool s_manualCycleF10WasDown;
+        private static bool s_manualCycleF9WasDown;
+        private static bool s_manualCycleF8Armed;
+        private static bool s_manualCycleF10Armed;
+        private static bool s_manualCycleF9Armed;
+        private static bool s_allowManualTrackedDespawn;
+
+        private static System.Reflection.FieldInfo? ResolveFieldNoWarning(Type type, params string[] names)
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            for (var i = 0; i < names.Length; i++)
+            {
+                var field = type.GetField(names[i], flags);
+                if (field != null)
+                {
+                    return field;
+                }
+            }
+
+            return null;
+        }
 
         internal static void NotifyPluginAwake()
         {
@@ -142,12 +208,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
         [HarmonyPostfix]
         private static void LevelAwakePostfix()
         {
-            if (!IsDebugSpawnConfigured())
+            if (!IsDebugRuntimeEnabled())
             {
                 return;
             }
 
             s_spawnDoneForLevel = false;
+            s_manualCycleIndex = -1;
+            s_manualCycleEntries.Clear();
+            ResetManualCycleInputState();
+            DespawnAllManualCycleSpawned();
         }
 
         [HarmonyPatch(typeof(LevelGenerator), "GenerateDone")]
@@ -162,14 +232,311 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             TrySpawnDebugMonsters();
         }
 
+        [HarmonyPatch(typeof(RunManager), "Update")]
+        [HarmonyPostfix]
+        private static void RunManagerUpdatePostfix()
+        {
+            if (!IsDebugRuntimeEnabled())
+            {
+                return;
+            }
+
+            if (!SemiFunc.IsMasterClientOrSingleplayer() || !SemiFunc.RunIsLevel() || LevelGenerator.Instance == null || !LevelGenerator.Instance.Generated)
+            {
+                return;
+            }
+
+            if (IsManualCycleInputReleased(DebugInputKey.F8))
+            {
+                Log.LogInfo("[LastChance][DebugSpawn] Manual cycle trigger accepted: F8 release.");
+                DespawnAllManualCycleSpawned();
+            }
+            else if (IsManualCycleInputReleased(DebugInputKey.F10))
+            {
+                Log.LogInfo("[LastChance][DebugSpawn] Manual cycle trigger accepted: F10 release.");
+                CycleManualSpawn(forward: true);
+            }
+            else if (IsManualCycleInputReleased(DebugInputKey.F9))
+            {
+                Log.LogInfo("[LastChance][DebugSpawn] Manual cycle trigger accepted: F9 release.");
+                CycleManualSpawn(forward: false);
+            }
+        }
+
+        [HarmonyPatch(typeof(EnemyParent), "Despawn")]
+        [HarmonyPrefix]
+        private static bool EnemyParentDespawnPrefix(EnemyParent __instance)
+        {
+            if (__instance == null)
+            {
+                return true;
+            }
+
+            if (s_allowManualTrackedDespawn)
+            {
+                return true;
+            }
+
+            var id = __instance.GetInstanceID();
+            if (!s_manualCycleSpawnedIds.Contains(id))
+            {
+                return true;
+            }
+
+            if (ShouldAllowNaturalDespawnForManual(__instance))
+            {
+                return true;
+            }
+
+            Log.LogInfo($"[LastChance][DebugSpawn] Blocked vanilla despawn for manual enemy id={id} name='{__instance.name}'.");
+            return false;
+        }
+
+        [HarmonyPatch(typeof(EnemyHealth), "DeathRPC")]
+        [HarmonyPostfix]
+        private static void EnemyHealthDeathRpcPostfix(EnemyHealth __instance)
+        {
+            MarkNaturalDespawnAllowed(__instance, 3f);
+        }
+
+        [HarmonyPatch(typeof(EnemyHealth), "DeathImpulseRPC")]
+        [HarmonyPostfix]
+        private static void EnemyHealthDeathImpulseRpcPostfix(EnemyHealth __instance)
+        {
+            MarkNaturalDespawnAllowed(__instance, 3f);
+        }
+
+        [HarmonyPatch(typeof(EnemyBang), "FuseLogic")]
+        [HarmonyPrefix]
+        private static void EnemyBangFuseLogicPrefix(EnemyBang __instance)
+        {
+            if (__instance == null)
+            {
+                return;
+            }
+
+            var parent = __instance.GetComponentInParent<EnemyParent>();
+            if (parent == null || !s_manualCycleSpawnedIds.Contains(parent.GetInstanceID()))
+            {
+                return;
+            }
+
+            var fuseActive = s_enemyBangFuseActiveField?.GetValue(__instance);
+            var fuseLerp = s_enemyBangFuseLerpField?.GetValue(__instance);
+            if (fuseActive is bool active && active && fuseLerp is float lerp && lerp >= 0.98f)
+            {
+                MarkNaturalDespawnAllowed(parent, 4f);
+            }
+        }
+
+        [HarmonyPatch(typeof(EnemyBang), "OnExplodeHitEnemy")]
+        [HarmonyPrefix]
+        private static bool EnemyBangOnExplodeHitEnemyPrefix(EnemyBang __instance)
+        {
+            if (__instance == null)
+            {
+                return true;
+            }
+
+            var parent = __instance.GetComponentInParent<EnemyParent>();
+            if (parent == null || !s_manualCycleSpawnedIds.Contains(parent.GetInstanceID()))
+            {
+                return true;
+            }
+
+            var explosionScriptField = AccessTools.Field(typeof(EnemyBang), "explosionScript");
+            var explosionScript = explosionScriptField?.GetValue(__instance) as ParticleScriptExplosion;
+            var hurtCollider = explosionScript != null ? s_particleScriptExplosionHurtColliderField?.GetValue(explosionScript) as HurtCollider : null;
+            var impactEnemy = hurtCollider != null ? s_hurtColliderOnImpactEnemyEnemyField?.GetValue(hurtCollider) as Enemy : null;
+            if (hurtCollider == null || impactEnemy == null)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        [HarmonyPatch(typeof(EnemyParent), "Logic")]
+        [HarmonyPrefix]
+        private static bool EnemyParentLogicPrefix(EnemyParent __instance, ref IEnumerator __result)
+        {
+            if (__instance == null)
+            {
+                return true;
+            }
+
+            if (!s_manualCycleSpawnedIds.Contains(__instance.GetInstanceID()))
+            {
+                return true;
+            }
+
+            if (ShouldAllowNaturalDespawnForManual(__instance))
+            {
+                return true;
+            }
+
+            __result = ManualEnemyParentLogicNoop();
+            return false;
+        }
+
+        [HarmonyPatch(typeof(EnemyStateDespawn), "Update")]
+        [HarmonyPrefix]
+        private static bool EnemyStateDespawnUpdatePrefix(EnemyStateDespawn __instance)
+        {
+            if (__instance == null)
+            {
+                return true;
+            }
+
+            var enemy = __instance.GetComponent<Enemy>();
+            var parent = enemy != null ? enemy.GetComponentInParent<EnemyParent>() : null;
+            if (parent == null)
+            {
+                return true;
+            }
+
+            if (!s_manualCycleSpawnedIds.Contains(parent.GetInstanceID()))
+            {
+                return true;
+            }
+
+            return ShouldAllowNaturalDespawnForManual(parent);
+        }
+
         internal static void ResetRuntimeState()
         {
             s_spawnDoneForLevel = false;
+            s_manualCycleIndex = -1;
+            s_manualCycleEntries.Clear();
+            ResetManualCycleInputState();
+            DespawnAllManualCycleSpawned();
             if (s_delayStunRunner != null)
             {
                 UnityEngine.Object.Destroy(s_delayStunRunner.gameObject);
                 s_delayStunRunner = null;
             }
+        }
+
+        private static void ResetManualCycleInputState()
+        {
+            s_manualCycleF8WasDown = false;
+            s_manualCycleF10WasDown = false;
+            s_manualCycleF9WasDown = false;
+            s_manualCycleF8Armed = false;
+            s_manualCycleF10Armed = false;
+            s_manualCycleF9Armed = false;
+            s_manualCycleLastTriggerRealtime = -10f;
+            s_manualCycleDespawnAllLastTriggerRealtime = -10f;
+        }
+
+        private static IEnumerator ManualEnemyParentLogicNoop()
+        {
+            while (true)
+            {
+                yield return null;
+            }
+        }
+
+        private static bool ShouldAllowNaturalDespawnForManual(EnemyParent parent)
+        {
+            if (parent == null)
+            {
+                return true;
+            }
+
+            var enemy = parent.GetComponentInChildren<Enemy>();
+            if (enemy == null)
+            {
+                return true;
+            }
+
+            if (enemy.CurrentState == EnemyState.Despawn)
+            {
+                return true;
+            }
+
+            if (IsManualNaturalDespawnWindowOpen(parent))
+            {
+                return true;
+            }
+
+            var health = enemy.GetComponent<EnemyHealth>();
+            if (health != null)
+            {
+                var dead = s_enemyHealthDeadField?.GetValue(health);
+                if (dead is bool deadBool && deadBool)
+                {
+                    return true;
+                }
+
+                var deadImpulse = s_enemyHealthDeadImpulseField?.GetValue(health);
+                if (deadImpulse is bool deadImpulseBool && deadImpulseBool)
+                {
+                    return true;
+                }
+
+                var raw = s_enemyHealthCurrentField?.GetValue(health);
+                if (raw is int i && i <= 0)
+                {
+                    return true;
+                }
+
+                if (raw is float f && f <= 0f)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static void MarkNaturalDespawnAllowed(EnemyHealth health, float seconds)
+        {
+            if (health == null)
+            {
+                return;
+            }
+
+            var parent = health.GetComponentInParent<EnemyParent>();
+            MarkNaturalDespawnAllowed(parent, seconds);
+        }
+
+        private static void MarkNaturalDespawnAllowed(EnemyParent parent, float seconds)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            var id = parent.GetInstanceID();
+            if (!s_manualCycleSpawnedIds.Contains(id))
+            {
+                return;
+            }
+
+            s_manualNaturalDespawnAllowUntil[id] = Time.realtimeSinceStartup + Mathf.Max(0.1f, seconds);
+        }
+
+        private static bool IsManualNaturalDespawnWindowOpen(EnemyParent parent)
+        {
+            if (parent == null)
+            {
+                return false;
+            }
+
+            var id = parent.GetInstanceID();
+            if (!s_manualNaturalDespawnAllowUntil.TryGetValue(id, out var until))
+            {
+                return false;
+            }
+
+            if (Time.realtimeSinceStartup <= until)
+            {
+                return true;
+            }
+
+            s_manualNaturalDespawnAllowUntil.Remove(id);
+            return false;
         }
 
         private static void StartCatalogWatcher()
@@ -544,6 +911,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                    !string.IsNullOrWhiteSpace(InternalDebugFlags.DebugAutoSpawnMonsterNamesCsv);
         }
 
+        private static bool IsDebugRuntimeEnabled()
+        {
+            return InternalDebugFlags.EnableDebugSpawnRuntime;
+        }
+
         private static void TryLogAvailableEnemyCatalog(string reason)
         {
             if (s_loggedAvailableCatalog)
@@ -709,11 +1081,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                    requested.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static void SpawnEnemySetup(EnemySetup setup, Vector3 position)
+        private static List<EnemyParent> SpawnEnemySetupCollect(EnemySetup setup, Vector3 position)
         {
+            var spawned = new List<EnemyParent>();
             if (setup == null || setup.spawnObjects == null)
             {
-                return;
+                return spawned;
             }
 
             for (var i = 0; i < setup.spawnObjects.Count; i++)
@@ -740,8 +1113,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                     continue;
                 }
 
+                spawned.Add(parent);
                 s_setupDoneField?.SetValue(parent, true);
                 s_firstSpawnPointUsedField?.SetValue(parent, true);
+                TrySetEnemyParentSpawned(parent, true);
+                TryRegisterEnemyParentToDirector(parent);
 
                 var enemy = obj.GetComponentInChildren<Enemy>();
                 if (enemy != null)
@@ -749,6 +1125,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
                     enemy.EnemyTeleported(position);
                 }
             }
+
+            return spawned;
+        }
+
+        private static void SpawnEnemySetup(EnemySetup setup, Vector3 position)
+        {
+            _ = SpawnEnemySetupCollect(setup, position);
         }
 
         private static bool TrySpawnEnemySetupViaDirector(EnemyDirector director, EnemySetup setup, Vector3 preferredPosition)
@@ -1044,6 +1427,95 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             return s_enemyParentSpawnedProperty.GetValue(parent) is bool spawnedProp && spawnedProp;
         }
 
+        private static void TrySetEnemyParentSpawned(EnemyParent parent, bool value)
+        {
+            if (parent == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (s_enemyParentSpawnedProperty != null && s_enemyParentSpawnedProperty.CanWrite)
+                {
+                    s_enemyParentSpawnedProperty.SetValue(parent, value);
+                    return;
+                }
+            }
+            catch
+            {
+                // Try field fallback below.
+            }
+
+            try
+            {
+                s_enemyParentSpawnedField?.SetValue(parent, value);
+            }
+            catch
+            {
+            }
+        }
+
+        private static void TryRegisterEnemyParentToDirector(EnemyParent parent)
+        {
+            var director = EnemyDirector.instance;
+            if (parent == null || director == null || s_enemyDirectorSpawnedField == null)
+            {
+                return;
+            }
+
+            try
+            {
+                if (!(s_enemyDirectorSpawnedField.GetValue(director) is IList list))
+                {
+                    return;
+                }
+
+                for (var i = 0; i < list.Count; i++)
+                {
+                    if (ReferenceEquals(list[i], parent))
+                    {
+                        return;
+                    }
+                }
+
+                list.Add(parent);
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool IsEnemyParentRegisteredInDirector(EnemyParent parent)
+        {
+            var director = EnemyDirector.instance;
+            if (parent == null || director == null || s_enemyDirectorSpawnedField == null)
+            {
+                return false;
+            }
+
+            try
+            {
+                if (!(s_enemyDirectorSpawnedField.GetValue(director) is IList list))
+                {
+                    return false;
+                }
+
+                for (var i = 0; i < list.Count; i++)
+                {
+                    if (ReferenceEquals(list[i], parent))
+                    {
+                        return true;
+                    }
+                }
+            }
+            catch
+            {
+            }
+
+            return false;
+        }
+
         private static void ApplySpawnDelayStun(EnemyParent enemyParent)
         {
             if (enemyParent == null)
@@ -1288,6 +1760,236 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions.D
             }
 
             return -1;
+        }
+
+        private static bool IsManualCycleInputReleased(DebugInputKey key)
+        {
+            if (Keyboard.current == null)
+            {
+                return false;
+            }
+
+            switch (key)
+            {
+                case DebugInputKey.F8:
+                {
+                    var isDown = Keyboard.current.f8Key.isPressed;
+                    if (isDown && !s_manualCycleF8WasDown)
+                    {
+                        s_manualCycleF8Armed = true;
+                    }
+
+                    var released = s_manualCycleF8WasDown && !isDown && s_manualCycleF8Armed;
+                    if (released)
+                    {
+                        s_manualCycleF8Armed = false;
+                    }
+
+                    s_manualCycleF8WasDown = isDown;
+                    return released;
+                }
+                case DebugInputKey.F10:
+                {
+                    var isDown = Keyboard.current.f10Key.isPressed;
+                    if (isDown && !s_manualCycleF10WasDown)
+                    {
+                        s_manualCycleF10Armed = true;
+                    }
+
+                    var released = s_manualCycleF10WasDown && !isDown && s_manualCycleF10Armed;
+                    if (released)
+                    {
+                        s_manualCycleF10Armed = false;
+                    }
+
+                    s_manualCycleF10WasDown = isDown;
+                    return released;
+                }
+                case DebugInputKey.F9:
+                {
+                    var isDown = Keyboard.current.f9Key.isPressed;
+                    if (isDown && !s_manualCycleF9WasDown)
+                    {
+                        s_manualCycleF9Armed = true;
+                    }
+
+                    var released = s_manualCycleF9WasDown && !isDown && s_manualCycleF9Armed;
+                    if (released)
+                    {
+                        s_manualCycleF9Armed = false;
+                    }
+
+                    s_manualCycleF9WasDown = isDown;
+                    return released;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        private static void CycleManualSpawn(bool forward)
+        {
+            const float minTriggerIntervalSeconds = 0.25f;
+            var now = Time.realtimeSinceStartup;
+            if (now - s_manualCycleLastTriggerRealtime < minTriggerIntervalSeconds)
+            {
+                return;
+            }
+
+            s_manualCycleLastTriggerRealtime = now;
+
+            var director = EnemyDirector.instance;
+            if (director == null)
+            {
+                return;
+            }
+
+            EnsureManualCycleCatalog(director);
+            if (s_manualCycleEntries.Count == 0)
+            {
+                Log.LogWarning("[LastChance][DebugSpawn] Manual cycle catalog is empty.");
+                return;
+            }
+
+            if (s_manualCycleIndex < 0)
+            {
+                s_manualCycleIndex = forward ? 0 : s_manualCycleEntries.Count - 1;
+            }
+            else
+            {
+                s_manualCycleIndex = forward
+                    ? (s_manualCycleIndex + 1) % s_manualCycleEntries.Count
+                    : (s_manualCycleIndex - 1 + s_manualCycleEntries.Count) % s_manualCycleEntries.Count;
+            }
+
+            var entry = s_manualCycleEntries[s_manualCycleIndex];
+            var spawnCenter = ResolveManualSpawnCenterPosition();
+            var spawnPos = spawnCenter + GetSpawnOffset(0);
+
+            var beforeIds = CaptureSpawnedEnemyIds(director);
+            var spawnedNow = SpawnEnemySetupCollect(entry.Setup, spawnPos);
+            var verify = TryVerifySpawnSucceeded(director, beforeIds, spawnPos, 12f);
+            for (var i = 0; i < spawnedNow.Count; i++)
+            {
+                var parent = spawnedNow[i];
+                if (parent != null)
+                {
+                    if (!s_manualCycleAllSpawned.Contains(parent))
+                    {
+                        s_manualCycleAllSpawned.Add(parent);
+                    }
+                    s_manualCycleSpawnedIds.Add(parent.GetInstanceID());
+                    var spawnedFlag = IsEnemyParentSpawned(parent);
+                    var inDirector = IsEnemyParentRegisteredInDirector(parent);
+                    Log.LogInfo($"[LastChance][DebugSpawn] Manual spawn created id={parent.GetInstanceID()} name='{parent.name}' spawned={spawnedFlag} inDirector={inDirector} active={parent.gameObject.activeInHierarchy}.");
+                }
+            }
+
+            var indexDisplay = s_manualCycleIndex + 1;
+            var total = s_manualCycleEntries.Count;
+            Log.LogInfo($"[LastChance][DebugSpawn] Manual spawn {indexDisplay}/{total}: '{entry.Label}' {(verify.Success ? "OK" : "FAILED")}.");
+        }
+
+        private static void EnsureManualCycleCatalog(EnemyDirector director)
+        {
+            if (s_manualCycleEntries.Count > 0)
+            {
+                return;
+            }
+
+            var setups = CollectSetups(director);
+            if (setups.Count == 0)
+            {
+                setups = CollectAllKnownSetups();
+            }
+
+            var seen = new HashSet<EnemySetup>();
+            var entries = new List<ManualCycleEntry>();
+            for (var i = 0; i < setups.Count; i++)
+            {
+                var setup = setups[i];
+                if (setup == null || seen.Contains(setup))
+                {
+                    continue;
+                }
+
+                seen.Add(setup);
+                var label = NormalizeSetupName(setup.name);
+                if (string.IsNullOrWhiteSpace(label))
+                {
+                    continue;
+                }
+
+                entries.Add(new ManualCycleEntry(label, setup));
+            }
+
+            entries.Sort((a, b) => string.Compare(a.Label, b.Label, StringComparison.OrdinalIgnoreCase));
+            s_manualCycleEntries.Clear();
+            s_manualCycleEntries.AddRange(entries);
+        }
+
+        private static Vector3 ResolveManualSpawnCenterPosition()
+        {
+            var closest = SemiFunc.LevelPointsGetClosestToLocalPlayer();
+            if (closest != null)
+            {
+                return closest.transform.position;
+            }
+
+            return ResolveSpawnCenterPosition();
+        }
+
+        private static void DespawnAllManualCycleSpawned()
+        {
+            const float minTriggerIntervalSeconds = 0.25f;
+            var now = Time.realtimeSinceStartup;
+            if (now - s_manualCycleDespawnAllLastTriggerRealtime < minTriggerIntervalSeconds)
+            {
+                return;
+            }
+
+            s_manualCycleDespawnAllLastTriggerRealtime = now;
+            if (s_manualCycleAllSpawned.Count == 0)
+            {
+                return;
+            }
+
+            s_allowManualTrackedDespawn = true;
+            try
+            {
+                for (var i = 0; i < s_manualCycleAllSpawned.Count; i++)
+                {
+                    var parent = s_manualCycleAllSpawned[i];
+                    if (parent == null)
+                    {
+                        continue;
+                    }
+
+                    if (s_enemyParentDespawnMethod != null)
+                    {
+                        try
+                        {
+                            Log.LogInfo($"[LastChance][DebugSpawn] Manual despawn-all request id={parent.GetInstanceID()} name='{parent.name}' via=EnemyParent.Despawn");
+                            s_enemyParentDespawnMethod.Invoke(parent, null);
+                            continue;
+                        }
+                        catch
+                        {
+                        }
+                    }
+
+                    Log.LogInfo($"[LastChance][DebugSpawn] Manual despawn-all request id={parent.GetInstanceID()} name='{parent.name}' via=Destroy");
+                    UnityEngine.Object.Destroy(parent.gameObject);
+                }
+            }
+            finally
+            {
+                s_allowManualTrackedDespawn = false;
+            }
+
+            s_manualCycleAllSpawned.Clear();
+            s_manualCycleSpawnedIds.Clear();
+            s_manualNaturalDespawnAllowUntil.Clear();
         }
 
         private static Vector3 GetSpawnOffset(int index)
