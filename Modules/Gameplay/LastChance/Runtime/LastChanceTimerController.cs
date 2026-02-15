@@ -6,7 +6,6 @@ using System.Reflection;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Abilities;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap;
-using DeathHeadHopperFix.Modules.Gameplay.Core.Visuals;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance.UI;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
@@ -293,8 +292,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceMonstersDebugSpawnModule.ResetRuntimeState();
-            HeadPupilVisualModule.ResetRuntimeState();
-            LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
+            LastChancePupilVisualUIModule.ResetRuntimeState();
+            LastChanceEyesOverrideBypassUIModule.ResetRuntimeState();
         }
 
         internal static float GetDirectionIndicatorPenaltySecondsPreview()
@@ -2723,8 +2722,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
-            HeadPupilVisualModule.ResetRuntimeState();
-            LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
+            LastChancePupilVisualUIModule.ResetRuntimeState();
+            LastChanceEyesOverrideBypassUIModule.ResetRuntimeState();
         }
 
         private static void ResetLastChanceRuntimeModules(bool allowVanillaAllPlayersDead, bool allowAutoDelete)
@@ -2735,8 +2734,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceMonstersDebugSpawnModule.ResetRuntimeState();
-            HeadPupilVisualModule.ResetRuntimeState();
-            LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
+            LastChancePupilVisualUIModule.ResetRuntimeState();
+            LastChanceEyesOverrideBypassUIModule.ResetRuntimeState();
             LastChanceSpectateHelper.ResetForceState();
 
             if (allowAutoDelete)
