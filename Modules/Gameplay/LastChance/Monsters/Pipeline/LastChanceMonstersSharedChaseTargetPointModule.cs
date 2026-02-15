@@ -75,7 +75,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 return Vector3.zero;
             }
 
-            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return transform.position;
             }

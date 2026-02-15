@@ -81,7 +81,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
             player = null!;
             targetPoint = default;
 
-            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return false;
             }

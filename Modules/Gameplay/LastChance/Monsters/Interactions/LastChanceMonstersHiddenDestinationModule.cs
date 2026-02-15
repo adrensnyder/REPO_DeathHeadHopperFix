@@ -67,7 +67,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
         internal static LevelPoint? LevelPointGetPlayerDistanceLastChanceAware(Vector3 position, float minDistance, float maxDistance, bool includeTruck)
         {
             var point = SemiFunc.LevelPointGetPlayerDistance(position, minDistance, maxDistance, includeTruck);
-            if (point != null || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (point != null || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return point;
             }
@@ -82,7 +82,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
         internal static LevelPoint? LevelPointGetFurthestFromPlayerLastChanceAware(Vector3 position, float minDistance)
         {
             var point = SemiFunc.LevelPointGetFurthestFromPlayer(position, minDistance);
-            if (point != null || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (point != null || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return point;
             }

@@ -8,9 +8,9 @@ using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 {
-    internal sealed class LastChanceSurrenderNetwork : MonoBehaviourPunCallbacks, IOnEventCallback
+    internal sealed class LastChanceRuntimeNetwork : MonoBehaviourPunCallbacks, IOnEventCallback
     {
-        private static LastChanceSurrenderNetwork? s_instance;
+        private static LastChanceRuntimeNetwork? s_instance;
         private static float s_lastTruckHintSentAt;
         private static int s_lastTruckHintRoomHash;
         private static int s_lastTruckHintLevelStamp = -1;
@@ -25,7 +25,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 
             var go = new GameObject("DHHFix.LastChanceSurrender");
             Object.DontDestroyOnLoad(go);
-            s_instance = go.AddComponent<LastChanceSurrenderNetwork>();
+            s_instance = go.AddComponent<LastChanceRuntimeNetwork>();
         }
 
         internal static void NotifyLocalSurrender(int actorNumber)

@@ -197,7 +197,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private static List<PlayerAvatar> GetAllPlayersWithinRangeLastChanceAware(float range, Vector3 position, bool doRaycastCheck, LayerMask layerMask)
         {
             var list = SemiFunc.PlayerGetAllPlayerAvatarWithinRange(range, position, doRaycastCheck, layerMask) ?? new List<PlayerAvatar>();
-            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return list;
             }
@@ -457,7 +457,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
                 return Vector3.zero;
             }
 
-            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return transform.position;
             }

@@ -91,7 +91,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Interactions
         [HarmonyPrefix]
         private static bool Prefix(object __instance)
         {
-            if (__instance == null || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (__instance == null || !LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return true;
             }

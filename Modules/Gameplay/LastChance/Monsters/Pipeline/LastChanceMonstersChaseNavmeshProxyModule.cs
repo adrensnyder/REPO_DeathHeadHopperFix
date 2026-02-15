@@ -25,7 +25,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         [HarmonyPrefix]
         private static void Prefix(EnemyStateChase __instance)
         {
-            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled())
+            if (!LastChanceMonstersTargetProxyHelper.IsRuntimeEnabled() || !LastChanceMonstersTargetProxyHelper.IsMasterContext())
             {
                 return;
             }
@@ -63,4 +63,3 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         }
     }
 }
-

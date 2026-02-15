@@ -395,7 +395,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 
             if (SemiFunc.IsMultiplayer())
             {
-                LastChanceSurrenderNetwork.TryBroadcastLocalPlayerTruckHint();
+                LastChanceRuntimeNetwork.TryBroadcastLocalPlayerTruckHint();
             }
 
             var allDead = AllPlayersDeadGuard.AllPlayersDisabled();
@@ -497,7 +497,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
                 afterCaptureCurrency = Time.realtimeSinceStartup;
             }
 
-            LastChanceSurrenderNetwork.EnsureCreated();
+            LastChanceRuntimeNetwork.EnsureCreated();
             if (profileEnabled)
             {
                 afterEnsureNetwork = Time.realtimeSinceStartup;
@@ -926,7 +926,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             }
 
             s_lastNetworkTimerBroadcastSecond = wholeSeconds;
-            LastChanceSurrenderNetwork.NotifyTimerState(s_active, s_timerRemaining);
+            LastChanceRuntimeNetwork.NotifyTimerState(s_active, s_timerRemaining);
         }
 
         private static void UpdateSurrenderInput(bool allDead)
@@ -1055,7 +1055,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             var added = LastChanceSurrenderedPlayers.Add(actorNumber);
             if (added && broadcast)
             {
-                LastChanceSurrenderNetwork.NotifyLocalSurrender(actorNumber);
+                LastChanceRuntimeNetwork.NotifyLocalSurrender(actorNumber);
             }
 
             return true;
@@ -1205,7 +1205,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             }
 
             var payload = BuildUiStatePayload(snapshots);
-            LastChanceSurrenderNetwork.NotifyUiState(Mathf.Max(1, requiredOnTruck), payload);
+            LastChanceRuntimeNetwork.NotifyUiState(Mathf.Max(1, requiredOnTruck), payload);
             s_lastUiStateHash = hash;
             s_lastUiStateBroadcastAt = Time.time;
         }
@@ -1590,7 +1590,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
         {
             if (SemiFunc.IsMultiplayer() && !SemiFunc.IsMasterClient())
             {
-                LastChanceSurrenderNetwork.NotifyDirectionPenaltyRequest();
+                LastChanceRuntimeNetwork.NotifyDirectionPenaltyRequest();
                 return;
             }
 
