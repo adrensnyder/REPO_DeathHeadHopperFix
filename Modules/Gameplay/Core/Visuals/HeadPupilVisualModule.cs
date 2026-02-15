@@ -4,16 +4,50 @@ using System.Reflection;
 using System.Collections.Generic;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Config;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Adapters;
+using DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
 using UnityEngine;
 using Logger = BepInEx.Logging.Logger;
 
-namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
+namespace DeathHeadHopperFix.Modules.Gameplay.Core.Visuals
 {
     [HarmonyPatch(typeof(PlayerDeathHead), "Update")]
-    internal static class LastChanceHeadPupilVisualModule
+    internal static class HeadPupilVisualModule
     {
+        private sealed class HeadVisualState
+        {
+            internal HeadVisualState(
+                PlayerDeathHead head,
+                bool rightWasActive,
+                bool leftWasActive,
+                Vector3 rightScale,
+                Vector3 leftScale,
+                float pupilOverlayAmount,
+                Color pupilOverlayColor,
+                bool eyesWereEnabled)
+            {
+                Head = head;
+                RightWasActive = rightWasActive;
+                LeftWasActive = leftWasActive;
+                RightScale = rightScale;
+                LeftScale = leftScale;
+                PupilOverlayAmount = pupilOverlayAmount;
+                PupilOverlayColor = pupilOverlayColor;
+                EyesWereEnabled = eyesWereEnabled;
+            }
+
+            internal PlayerDeathHead Head { get; }
+            internal bool RightWasActive { get; }
+            internal bool LeftWasActive { get; }
+            internal Vector3 RightScale { get; }
+            internal Vector3 LeftScale { get; }
+            internal float PupilOverlayAmount { get; }
+            internal Color PupilOverlayColor { get; }
+            internal bool EyesWereEnabled { get; }
+        }
+
         private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.Eyes");
         private static readonly FieldInfo? HeadPlayerAvatarField = AccessTools.Field(typeof(PlayerDeathHead), "playerAvatar");
         private static readonly FieldInfo? HeadTriggeredField = AccessTools.Field(typeof(PlayerDeathHead), "triggered");
@@ -26,10 +60,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
         private static readonly FieldInfo? HeadEyeMaterialAmountField = AccessTools.Field(typeof(PlayerDeathHead), "eyeMaterialAmount");
         private static readonly FieldInfo? HeadEyeMaterialColorField = AccessTools.Field(typeof(PlayerDeathHead), "eyeMaterialColor");
         private static readonly Dictionary<int, Color> LastEyeColorByHeadId = new();
+        private static readonly Dictionary<int, HeadVisualState> BaselineByHeadId = new();
 
         internal static void ResetRuntimeState()
         {
+            RestoreAllTrackedVisuals();
             LastEyeColorByHeadId.Clear();
+            BaselineByHeadId.Clear();
         }
 
         [HarmonyPostfix]
@@ -40,25 +77,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
                 return;
             }
 
-            if (!FeatureFlags.LastChancePupilVisualsEnabled)
-            {
-                DebugLog("Skip.FlagDisabled", "LastChancePupilVisualsEnabled=false");
-                return;
-            }
-
             var player = HeadPlayerAvatarField?.GetValue(__instance) as PlayerAvatar;
-            if (!LastChanceTimerController.IsActive || !LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
+            if (!ShouldForceVisuals(__instance, player))
             {
-                DebugLog("Skip.Inactive", $"lastChance={LastChanceTimerController.IsActive} headProxy={LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player)}");
+                RestoreTrackedVisualsIfNeeded(__instance);
                 return;
             }
 
-            if (!(HeadTriggeredField?.GetValue(__instance) as bool? ?? false))
-            {
-                DebugLog("Skip.NotTriggered", $"playerId={GetPlayerId(player)}");
-                return;
-            }
-
+            EnsureBaselineCaptured(__instance);
             ForcePupilsVisible(__instance);
             ForcePupilOverlayVisible(__instance);
             ForceEyeLookPipeline(__instance);
@@ -166,6 +192,127 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             }
 
             DebugLog("Eyes.Enabled.Already", $"headId={head.GetInstanceID()}");
+        }
+
+        private static bool ShouldForceVisuals(PlayerDeathHead head, PlayerAvatar? player)
+        {
+            if (!FeatureFlags.LastChancePupilVisualsEnabled)
+            {
+                DebugLog("Skip.FlagDisabled", "LastChancePupilVisualsEnabled=false");
+                return false;
+            }
+
+            if (!LastChanceTimerController.IsActive || !LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player))
+            {
+                DebugLog("Skip.Inactive", $"lastChance={LastChanceTimerController.IsActive} headProxy={LastChanceMonstersTargetProxyHelper.IsHeadProxyActive(player)}");
+                return false;
+            }
+
+            if (!(HeadTriggeredField?.GetValue(head) as bool? ?? false))
+            {
+                DebugLog("Skip.NotTriggered", $"playerId={GetPlayerId(player)}");
+                return false;
+            }
+
+            return true;
+        }
+
+        private static void EnsureBaselineCaptured(PlayerDeathHead head)
+        {
+            var headId = head.GetInstanceID();
+            if (BaselineByHeadId.ContainsKey(headId))
+            {
+                return;
+            }
+
+            var right = HeadPupilScaleTransformRightField?.GetValue(head) as Transform;
+            var left = HeadPupilScaleTransformLeftField?.GetValue(head) as Transform;
+            var eyes = HeadPlayerEyesField?.GetValue(head) as PlayerEyes;
+            var pupilMaterial = HeadPupilMaterialField?.GetValue(head) as Material;
+            if (right == null || left == null || pupilMaterial == null)
+            {
+                DebugLog("Baseline.Skip.MissingRefs", $"headId={headId}");
+                return;
+            }
+
+            var amountPropertyId = HeadEyeMaterialAmountField?.GetValue(head) as int? ?? Shader.PropertyToID("_ColorOverlayAmount");
+            var colorPropertyId = HeadEyeMaterialColorField?.GetValue(head) as int? ?? Shader.PropertyToID("_ColorOverlay");
+            var state = new HeadVisualState(
+                head,
+                right.gameObject.activeSelf,
+                left.gameObject.activeSelf,
+                right.localScale,
+                left.localScale,
+                pupilMaterial.GetFloat(amountPropertyId),
+                pupilMaterial.GetColor(colorPropertyId),
+                eyes != null && eyes.enabled);
+            BaselineByHeadId[headId] = state;
+            DebugLog(
+                "Baseline.Captured",
+                $"headId={headId} rightActive={state.RightWasActive} leftActive={state.LeftWasActive} eyesEnabled={state.EyesWereEnabled} overlayAmount={state.PupilOverlayAmount:F3}");
+        }
+
+        private static void RestoreTrackedVisualsIfNeeded(PlayerDeathHead head)
+        {
+            var headId = head.GetInstanceID();
+            if (!BaselineByHeadId.TryGetValue(headId, out var state))
+            {
+                LastEyeColorByHeadId.Remove(headId);
+                return;
+            }
+
+            var right = HeadPupilScaleTransformRightField?.GetValue(head) as Transform;
+            var left = HeadPupilScaleTransformLeftField?.GetValue(head) as Transform;
+            var eyes = HeadPlayerEyesField?.GetValue(head) as PlayerEyes;
+            var pupilMaterial = HeadPupilMaterialField?.GetValue(head) as Material;
+            if (right != null)
+            {
+                right.localScale = state.RightScale;
+                right.gameObject.SetActive(state.RightWasActive);
+            }
+
+            if (left != null)
+            {
+                left.localScale = state.LeftScale;
+                left.gameObject.SetActive(state.LeftWasActive);
+            }
+
+            if (pupilMaterial != null)
+            {
+                var amountPropertyId = HeadEyeMaterialAmountField?.GetValue(head) as int? ?? Shader.PropertyToID("_ColorOverlayAmount");
+                var colorPropertyId = HeadEyeMaterialColorField?.GetValue(head) as int? ?? Shader.PropertyToID("_ColorOverlay");
+                pupilMaterial.SetFloat(amountPropertyId, state.PupilOverlayAmount);
+                pupilMaterial.SetColor(colorPropertyId, state.PupilOverlayColor);
+            }
+
+            if (eyes != null)
+            {
+                eyes.enabled = state.EyesWereEnabled;
+            }
+
+            LastEyeColorByHeadId.Remove(headId);
+            BaselineByHeadId.Remove(headId);
+            DebugLog("Baseline.Restored", $"headId={headId}");
+        }
+
+        private static void RestoreAllTrackedVisuals()
+        {
+            if (BaselineByHeadId.Count == 0)
+            {
+                return;
+            }
+
+            var states = new List<HeadVisualState>(BaselineByHeadId.Values);
+            for (var i = 0; i < states.Count; i++)
+            {
+                var state = states[i];
+                if (state.Head == null)
+                {
+                    continue;
+                }
+
+                RestoreTrackedVisualsIfNeeded(state.Head);
+            }
         }
 
         private static void DebugLog(string reason, string detail)

@@ -272,15 +272,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Spectate
 
         internal static bool ShouldForceLocalDeathHeadSpectate()
         {
-            // If dead-player spectate is explicitly enabled in Always mode,
-            // do not continuously re-force local spectate while everyone is disabled.
+            // When dead-player spectate is enabled, avoid continuously forcing
+            // local DeathHead spectate while everyone is disabled.
             if (FeatureFlags.SpectateDeadPlayers)
             {
-                var mode = (FeatureFlags.SpectateDeadPlayersMode ?? string.Empty).Trim();
-                if (mode.Equals("Always", StringComparison.OrdinalIgnoreCase))
-                {
-                    return false;
-                }
+                return false;
             }
 
             return true;

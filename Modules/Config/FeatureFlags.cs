@@ -76,7 +76,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string LastChanceTimerPerMonsterSeconds = "Extra seconds added per active spawned monster when LastChanceMonstersSearch is enabled.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
             public const string SpectateDeadPlayers = "Allow SpectateCamera to cycle through disabled players (dead bodies) when toggling targets.";
-            public const string SpectateDeadPlayersMode = "Mode for dead-player spectate switch: Always, LastChanceOnly, Disabled.";
+            public const string SpectateDeadPlayersEnabled = "Enable dead-player spectate support (disabled = vanilla behavior).";
         }
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpEnabled)]
@@ -241,11 +241,8 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.LastChanceGameplay, Descriptions.LastChancePupilVisualsEnabled)]
         public static bool LastChancePupilVisualsEnabled = true;
 
-        [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayers)]
+        [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayersEnabled)]
         public static bool SpectateDeadPlayers = true;
-
-        [FeatureConfigEntry(Sections.Spectate, Descriptions.SpectateDeadPlayersMode, Options = new[] { "Always", "LastChanceOnly", "Disabled" })]
-        public static string SpectateDeadPlayersMode = "Always";
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = false;

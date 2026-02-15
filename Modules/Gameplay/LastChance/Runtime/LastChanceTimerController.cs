@@ -6,6 +6,7 @@ using System.Reflection;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Abilities;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap;
+using DeathHeadHopperFix.Modules.Gameplay.Core.Visuals;
 using DeathHeadHopperFix.Modules.Gameplay.LastChance.UI;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
@@ -292,7 +293,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceMonstersDebugSpawnModule.ResetRuntimeState();
-            LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            HeadPupilVisualModule.ResetRuntimeState();
             LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
         }
 
@@ -2722,7 +2723,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
-            LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            HeadPupilVisualModule.ResetRuntimeState();
             LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
         }
 
@@ -2734,7 +2735,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceMonstersDebugSpawnModule.ResetRuntimeState();
-            LastChanceHeadPupilVisualModule.ResetRuntimeState();
+            HeadPupilVisualModule.ResetRuntimeState();
             LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
             LastChanceSpectateHelper.ResetForceState();
 

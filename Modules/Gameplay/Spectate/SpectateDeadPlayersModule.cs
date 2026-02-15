@@ -1,6 +1,5 @@
 #nullable enable
 
-using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -30,8 +29,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             AccessTools.Field(typeof(PhysGrabObject), "centerPoint");
         private static readonly FieldInfo? s_playerAvatarSpectatePointField =
             AccessTools.Field(typeof(PlayerAvatar), "spectatePoint");
-        private static readonly FieldInfo? s_playerAvatarDeadSetField =
-            AccessTools.Field(typeof(PlayerAvatar), "deadSet");
         private static readonly FieldInfo? s_spectateCurrentPlayerListIndexField =
             AccessTools.Field(typeof(SpectateCamera), "currentPlayerListIndex");
         private static readonly FieldInfo? s_spectatePlayerField =
@@ -276,25 +273,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
         private static bool IsDeadPlayersSpectateEnabledNow()
         {
-            if (!FeatureFlags.SpectateDeadPlayers)
-            {
-                return false;
-            }
-
-            var mode = (FeatureFlags.SpectateDeadPlayersMode ?? string.Empty).Trim();
-            if (mode.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
-            {
-                return false;
-            }
-
-            if (mode.Equals("LastChanceOnly", StringComparison.OrdinalIgnoreCase))
-            {
-                return FeatureFlags.LastChangeMode &&
-                       LastChanceTimerController.IsActive &&
-                       IsLocalPlayerDeadOrDisabled();
-            }
-
-            return true;
+            return FeatureFlags.SpectateDeadPlayers;
         }
 
         private static bool TryPlayerSwitchIncludingDisabled(SpectateCamera spectate, IList<PlayerAvatar> players, bool next)
@@ -406,31 +385,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             return true;
-        }
-
-        private static bool IsLocalPlayerDeadOrDisabled()
-        {
-            var local = PlayerAvatar.instance;
-            if (local == null)
-            {
-                return false;
-            }
-
-            if (s_playerIsDisabledField != null &&
-                s_playerIsDisabledField.GetValue(local) is bool disabled &&
-                disabled)
-            {
-                return true;
-            }
-
-            if (s_playerAvatarDeadSetField != null &&
-                s_playerAvatarDeadSetField.GetValue(local) is bool dead &&
-                dead)
-            {
-                return true;
-            }
-
-            return false;
         }
 
         private static Transform? EnsureStateNormalOrbitProxy()
