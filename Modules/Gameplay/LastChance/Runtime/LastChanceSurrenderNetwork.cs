@@ -177,6 +177,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
         {
             if (photonEvent.Code == PhotonEventCodes.LastChanceTimerState)
             {
+                if (!IsFromCurrentMaster(photonEvent))
+                {
+                    return;
+                }
+
                 if (photonEvent.CustomData is object[] timerPayload &&
                     timerPayload.Length >= 2 &&
                     timerPayload[0] is bool active &&
@@ -195,6 +200,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 
             if (photonEvent.Code == PhotonEventCodes.LastChanceUiState)
             {
+                if (!IsFromCurrentMaster(photonEvent))
+                {
+                    return;
+                }
+
                 if (photonEvent.CustomData is object[] uiPayload &&
                     uiPayload.Length >= 2 &&
                     uiPayload[0] is int required &&
@@ -242,6 +252,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
                     LastChanceTimerController.RegisterRemoteSurrender(payloadActor);
                 }
             }
+        }
+
+        private static bool IsFromCurrentMaster(EventData photonEvent)
+        {
+            if (!PhotonNetwork.InRoom || !SemiFunc.IsMultiplayer())
+            {
+                return true;
+            }
+
+            var masterActor = PhotonNetwork.MasterClient?.ActorNumber ?? -1;
+            return masterActor > 0 && photonEvent.Sender == masterActor;
         }
     }
 }
