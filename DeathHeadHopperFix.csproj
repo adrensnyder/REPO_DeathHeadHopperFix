@@ -24,87 +24,87 @@
 	<ItemGroup>
 		<!-- BepInEx -->
 		<Reference Include="BepInEx">
-			<HintPath>libs\BepInEx\core\BepInEx.dll</HintPath>
+			<HintPath>..\00Libs\BepInEx\core\BepInEx.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="BepInEx.Harmony">
-			<HintPath>libs\BepInEx\core\BepInEx.Harmony.dll</HintPath>
+			<HintPath>..\00Libs\BepInEx\core\BepInEx.Harmony.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="0Harmony">
-			<HintPath>libs\BepInEx\core\0Harmony.dll</HintPath>
+			<HintPath>..\00Libs\BepInEx\core\0Harmony.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
 		<!-- Mod -->
 		<Reference Include="DeathHeadHopper">
-			<HintPath>libs\OriginalMod\DeathHeadHopper.dll</HintPath>
+			<HintPath>..\00Libs\OriginalMod\DeathHeadHopper.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="REPOLib">
-			<HintPath>libs\OriginalMod\REPOLib.dll</HintPath>
+			<HintPath>..\00Libs\OriginalMod\REPOLib.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
 
 		<!-- Unity -->
 		<Reference Include="UnityEngine">
-			<HintPath>libs\Unity\UnityEngine.dll</HintPath>
+			<HintPath>..\00Libs\Unity\UnityEngine.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="UnityEngine.CoreModule">
-			<HintPath>libs\Unity\UnityEngine.CoreModule.dll</HintPath>
+			<HintPath>..\00Libs\Unity\UnityEngine.CoreModule.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
 		<!-- Assembly -->
 		<Reference Include="Assembly-CSharp">
-			<HintPath>libs\GameAssemblies\Assembly-CSharp.dll</HintPath>
+			<HintPath>..\00Libs\GameAssemblies\Assembly-CSharp.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
 		<!-- Photon -->
 		<Reference Include="Photon.Pun">
-			<HintPath>libs\GameAssemblies\PhotonUnityNetworking.dll</HintPath>
+			<HintPath>..\00Libs\GameAssemblies\PhotonUnityNetworking.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="PhotonRealtime">
-			<HintPath>libs\GameAssemblies\PhotonRealtime.dll</HintPath>
+			<HintPath>..\00Libs\GameAssemblies\PhotonRealtime.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="Photon3Unity3D">
-			<HintPath>libs\GameAssemblies\Photon3Unity3D.dll</HintPath>
+			<HintPath>..\00Libs\GameAssemblies\Photon3Unity3D.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
 		<!-- Additionals Unity Modules -->
 		<Reference Include="UnityEngine.AssetBundleModule">
-			<HintPath>libs\Unity\UnityEngine.AssetBundleModule.dll</HintPath>
+			<HintPath>..\00Libs\Unity\UnityEngine.AssetBundleModule.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 
 		<Reference Include="UnityEngine.AudioModule">
-			<HintPath>Libs\Unity\UnityEngine.AudioModule.dll</HintPath>
+			<HintPath>..\00Libs\Unity\UnityEngine.AudioModule.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 
 		<Reference Include="UnityEngine.PhysicsModule">
-			<HintPath>Libs\Unity\UnityEngine.PhysicsModule.dll</HintPath>
+			<HintPath>..\00Libs\Unity\UnityEngine.PhysicsModule.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 
 		<Reference Include="Unity.InputSystem">
-			<HintPath>libs\Unity\Unity.InputSystem.dll</HintPath>
+			<HintPath>..\00Libs\Unity\Unity.InputSystem.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 
 		<Reference Include="MonoMod.RuntimeDetour">
-			<HintPath>Libs\BepInEx\Core\MonoMod.RuntimeDetour.dll</HintPath>
+			<HintPath>..\00Libs\BepInEx\Core\MonoMod.RuntimeDetour.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 
 		<Reference Include="MonoMod.Utils">
-			<HintPath>Libs\BepInEx\Core\MonoMod.Utils.dll</HintPath>
+			<HintPath>..\00Libs\BepInEx\Core\MonoMod.Utils.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 

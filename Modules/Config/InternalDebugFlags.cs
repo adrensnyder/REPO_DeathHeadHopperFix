@@ -10,22 +10,6 @@ namespace DeathHeadHopperFix.Modules.Config
         public static bool DisableAbilityPatches = false;
         public static bool DisableSpectateChecks = false;
 
-        // Comma-separated enemy names/tokens to auto-spawn for debug test.
-        // Empty string => disabled.
-        // Development note:
-        // - EnableDebugSpawnRuntime=true by default is intentional while this repository is in active development/testing.
-        // - This is expected and should not be treated as a production-critical issue by itself.
-        // - Production-like behavior is obtained by setting EnableDebugSpawnRuntime=false (and/or clearing CSV).
-        // Done "ceiling eye,hidden,heart hugger,tricycle,tumbler,thin man,spinny"
-        // Check "";
-        public static bool EnableDebugSpawnRuntime = true;
-        public static float DebugAutoSpawnDelaySeconds = 15f;
-        //public static string DebugAutoSpawnMonsterNamesCsv =
-        //    "animal,bang,beamer,birthday boy,bomb thrower,bowtie,ceiling eye,duck,elsa,floater," +
-        //    "gnome,head,head grabber,heart hugger,hidden,hunter,oogly,robe,runner,shadow," +
-        //    "slow mouth,slow walker,spinny,thin man,tick,tricycle,tumbler,upscream,valuable thrower";
-        public static string DebugAutoSpawnMonsterNamesCsv = "headman,headman,headman,headman";
-
         // Temporary diagnostics for Hidden carry pipeline in LastChance.
         public static bool DebugLastChanceHiddenCarryFlow = false;
 

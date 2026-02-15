@@ -291,7 +291,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
-            LastChanceMonstersDebugSpawnModule.ResetRuntimeState();
             LastChanceHeadPupilVisualModule.ResetRuntimeState();
             LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
         }
@@ -2733,7 +2732,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersVoiceEnemyOnlyModule.ResetRuntimeState();
             LastChanceMonstersCameraForceLockModule.ResetRuntimeState();
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
-            LastChanceMonstersDebugSpawnModule.ResetRuntimeState();
             LastChanceHeadPupilVisualModule.ResetRuntimeState();
             LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
             LastChanceSpectateHelper.ResetForceState();
