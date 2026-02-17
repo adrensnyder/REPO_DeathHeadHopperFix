@@ -80,7 +80,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 var isDead = deadSet || disabled;
                 var isAlive = !isDead;
                 var isInTruck = IsPlayerInTruck(player, disabled);
-                var isSurrendered = LastChanceTimerController.IsPlayerSurrenderedForData(player);
+                var isSurrendered = LastChanceInteropBridge.IsPlayerSurrenderedForData(player);
 
                 snapshots.Add(
                     new PlayerStateSnapshot(

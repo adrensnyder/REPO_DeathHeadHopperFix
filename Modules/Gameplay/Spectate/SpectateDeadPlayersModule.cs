@@ -228,7 +228,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         [HarmonyPrefix]
         private static bool UpdateStatePrefix(SpectateCamera __instance, SpectateCamera.State _state)
         {
-            if (!FeatureFlags.LastChangeMode || __instance == null)
+            if (!LastChanceInteropBridge.IsLastChanceModeEnabled() || __instance == null)
             {
                 return true;
             }
@@ -239,13 +239,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             // During LastChance keep vanilla Head state disabled, even if disabled flags flicker.
-            if (LastChanceTimerController.IsActive)
+            if (LastChanceInteropBridge.IsLastChanceActive())
             {
                 return false;
             }
 
             // Fallback: if all players are disabled outside active timer setup, keep old behavior.
-            return !LastChanceSpectateHelper.AllPlayersDisabled();
+            return !LastChanceInteropBridge.AllPlayersDisabled();
         }
 
         private static bool ShouldSkipSpectateTarget(PlayerAvatar player)
@@ -276,12 +276,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
         private static bool IsDeadPlayersSpectateEnabledNow()
         {
-            if (!FeatureFlags.SpectateDeadPlayers)
+            if (!LastChanceInteropBridge.IsSpectateDeadPlayersEnabled())
             {
                 return false;
             }
 
-            var mode = (FeatureFlags.SpectateDeadPlayersMode ?? string.Empty).Trim();
+            var mode = LastChanceInteropBridge.GetSpectateDeadPlayersMode().Trim();
             if (mode.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
             {
                 return false;
@@ -289,8 +289,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
             if (mode.Equals("LastChanceOnly", StringComparison.OrdinalIgnoreCase))
             {
-                return FeatureFlags.LastChangeMode &&
-                       LastChanceTimerController.IsActive &&
+                return LastChanceInteropBridge.IsLastChanceModeEnabled() &&
+                       LastChanceInteropBridge.IsLastChanceActive() &&
                        IsLocalPlayerDeadOrDisabled();
             }
 
@@ -453,53 +453,53 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
         private static void HandleLastChanceStateNormalPostfix(SpectateCamera __instance)
         {
-            if (!FeatureFlags.LastChangeMode)
+            if (!LastChanceInteropBridge.IsLastChanceModeEnabled())
             {
                 return;
             }
 
-            if (!LastChanceTimerController.IsActive)
+            if (!LastChanceInteropBridge.IsLastChanceActive())
             {
-                LastChanceSpectateHelper.ResetForceState();
+                LastChanceInteropBridge.ResetSpectateForceState();
                 return;
             }
 
-            if (!LastChanceSpectateHelper.AllPlayersDisabled())
+            if (!LastChanceInteropBridge.AllPlayersDisabled())
             {
-                LastChanceSpectateHelper.ResetForceState();
+                LastChanceInteropBridge.ResetSpectateForceState();
                 return;
             }
 
-            if (LastChanceSpectateHelper.ShouldForceLocalDeathHeadSpectate())
+            if (LastChanceInteropBridge.ShouldForceLocalDeathHeadSpectate())
             {
                 if (__instance != null)
                 {
-                    LastChanceSpectateHelper.EnsureSpectatePlayerLocal(__instance);
+                    LastChanceInteropBridge.EnsureSpectatePlayerLocal(__instance);
                 }
-                LastChanceSpectateHelper.ForceDeathHeadSpectateIfPossible();
+                LastChanceInteropBridge.ForceDeathHeadSpectateIfPossible();
             }
 
-            LastChanceSpectateHelper.DebugLogState(__instance);
+            LastChanceInteropBridge.DebugLogState(__instance);
         }
 
         private static bool ShouldBlockPlayerSwitchForLastChance()
         {
-            if (!FeatureFlags.LastChangeMode)
+            if (!LastChanceInteropBridge.IsLastChanceModeEnabled())
             {
                 return false;
             }
 
-            if (LastChanceSpectateHelper.IsManualSwitchInputDown())
+            if (LastChanceInteropBridge.IsManualSwitchInputDown())
             {
                 return false;
             }
 
-            if (!LastChanceTimerController.IsActive)
+            if (!LastChanceInteropBridge.IsLastChanceActive())
             {
                 return false;
             }
 
-            if (!LastChanceSpectateHelper.AllPlayersDisabled())
+            if (!LastChanceInteropBridge.AllPlayersDisabled())
             {
                 return false;
             }

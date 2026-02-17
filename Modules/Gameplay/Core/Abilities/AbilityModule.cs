@@ -31,7 +31,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private const int DirectionIndicatorSlotIndex = 1;
         private const int ChargeAbilitySlotIndex = 0;
-        private const string DirectionIconFileName = "Direction.png";
 
         internal static void ApplyAbilitySpotLabelOverlay(Harmony harmony, Assembly asm)
         {
@@ -115,7 +114,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
             if (GetAbilityIndex(__instance) != DirectionIndicatorSlotIndex)
                 return;
-            if (!LastChanceTimerController.IsDirectionIndicatorUiVisible)
+            if (!LastChanceInteropBridge.IsDirectionIndicatorUiVisible())
                 return;
 
             // AbilitySpot.Update() pushes empty slots down every frame.
@@ -164,7 +163,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
                     SlotVisualOverrides.ApplyDirectionEnergyAvailability(
                         spot,
-                        LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview(),
+                        LastChanceInteropBridge.IsDirectionIndicatorEnergySufficientPreview(),
                         s_directionActivationProgress);
                 }
                 catch
@@ -189,13 +188,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     continue;
                 if (GetAbilityIndex(spot) != DirectionIndicatorSlotIndex)
                     continue;
-                if (!LastChanceTimerController.IsDirectionIndicatorUiVisible)
+                if (!LastChanceInteropBridge.IsDirectionIndicatorUiVisible())
                     continue;
 
                 SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
                 SlotVisualOverrides.ApplyDirectionEnergyAvailability(
                     spot,
-                    LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview(),
+                    LastChanceInteropBridge.IsDirectionIndicatorEnergySufficientPreview(),
                     s_directionActivationProgress);
             }
         }
@@ -268,14 +267,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (slotIndex != DirectionIndicatorSlotIndex)
                 return;
 
-            var visible = LastChanceTimerController.IsDirectionIndicatorUiVisible;
+            var visible = LastChanceInteropBridge.IsDirectionIndicatorUiVisible();
             var previousVisible = s_lastDirectionVisibilityBySpot.TryGetValue(spot, out var prev) ? prev : (bool?)null;
             s_lastDirectionVisibilityBySpot[spot] = visible;
             if (!visible)
             {
                 if (FeatureFlags.DebugLogging && previousVisible != false)
                 {
-                    Debug.Log($"[Fix:Ability] Slot2 hidden. slotIndex={slotIndex} visible={visible} mode={FeatureFlags.LastChanceIndicators}");
+                    Debug.Log($"[Fix:Ability] Slot2 hidden. slotIndex={slotIndex} visible={visible} mode={LastChanceInteropBridge.GetLastChanceIndicatorsMode()}");
                 }
                 if (previousVisible == false)
                 {
@@ -294,18 +293,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
             if (FeatureFlags.DebugLogging && previousVisible != true)
             {
-                Debug.Log($"[Fix:Ability] Slot2 apply icon. slotIndex={slotIndex} visible={visible} mode={FeatureFlags.LastChanceIndicators}");
+                Debug.Log($"[Fix:Ability] Slot2 apply icon. slotIndex={slotIndex} visible={visible} mode={LastChanceInteropBridge.GetLastChanceIndicatorsMode()}");
             }
             var costLabel = GetDirectionCostLabel();
             var roundedProgress = Mathf.Round(s_directionActivationProgress * 1000f) * 0.001f;
             var progressChanged = !s_lastDirectionProgressBySpot.TryGetValue(spot, out var lastProgress) ||
                                   Mathf.Abs(lastProgress - roundedProgress) > 0.0001f;
-            var hasDirectionEnergy = LastChanceTimerController.IsDirectionIndicatorEnergySufficientPreview();
+            var hasDirectionEnergy = LastChanceInteropBridge.IsDirectionIndicatorEnergySufficientPreview();
             if (FeatureFlags.DebugLogging &&
                 InternalDebugFlags.DebugDirectionSlotEnergyPreviewLog &&
                 LogLimiter.ShouldLog(DirectionEnergyLogKey, 120))
             {
-                LastChanceTimerController.GetDirectionIndicatorEnergyDebugSnapshot(
+                LastChanceInteropBridge.GetDirectionIndicatorEnergyDebugSnapshot(
                     out var directionVisible,
                     out var timerRemaining,
                     out var penaltyPreview,
@@ -327,7 +326,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (becameVisible || costChanged)
             {
                 SlotCostOverrides.SetDirectionCostText(spot, costLabel);
-                SlotVisualOverrides.ApplyDirectionIcon(spot, DirectionIconFileName);
                 SlotLayoutOverrides.EnsureBasePosition(spot);
                 s_lastDirectionCostLabelBySpot[spot] = costLabel;
             }
@@ -344,7 +342,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private static string GetDirectionCostLabel()
         {
-            var preview = LastChanceTimerController.GetDirectionIndicatorPenaltySecondsPreview();
+            var preview = LastChanceInteropBridge.GetDirectionIndicatorPenaltySecondsPreview();
             var seconds = Mathf.RoundToInt(Mathf.Max(0f, preview));
             return $"{seconds}s";
         }
@@ -728,46 +726,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private static class SlotVisualOverrides
         {
-            private static FieldInfo? s_backgroundIconField;
             private static FieldInfo? s_cooldownIconField;
             private static FieldInfo? s_noAbilityField;
             private static MethodInfo? s_currentAbilityGetter;
             private static FieldInfo? s_abilityIconField;
             private static MethodInfo? s_setIconMethod;
-            private static Sprite? s_directionSprite;
-            private static string s_loadedFrom = string.Empty;
             private static PropertyInfo? s_behaviourEnabledProp;
             private static PropertyInfo? s_imageSpriteProp;
             private static PropertyInfo? s_imageColorProp;
             private static PropertyInfo? s_imageFillAmountProp;
             private static readonly Dictionary<object, Color> s_cooldownIconBaseColors = new();
             private static readonly Dictionary<object, Color> s_backgroundIconBaseColors = new();
-
-            internal static void ApplyDirectionIcon(object spot, string fileName)
-            {
-                if (spot is not Component)
-                    return;
-
-                var type = spot.GetType();
-                s_backgroundIconField ??= type.GetField("backgroundIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                s_noAbilityField ??= type.GetField("noAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                var sprite = GetOrLoadDirectionSprite(fileName);
-                if (sprite == null)
-                    return;
-
-                var backgroundImage = s_backgroundIconField?.GetValue(spot);
-                SetImageSpriteAndEnable(backgroundImage, sprite);
-
-                var cooldownImage = s_cooldownIconField?.GetValue(spot);
-                SetImageSpriteAndEnable(cooldownImage, sprite);
-
-                if (s_noAbilityField?.GetValue(spot) is Behaviour noAbilityText)
-                {
-                    noAbilityText.enabled = false;
-                }
-            }
 
             internal static void RestoreDefaultIcon(object spot)
             {
@@ -997,31 +966,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 var newColor = baseColor;
                 newColor.a = Mathf.Clamp01(alpha);
                 s_imageColorProp.SetValue(imageLikeObject, newColor);
-            }
-
-            private static Sprite? GetOrLoadDirectionSprite(string fileName)
-            {
-                if (s_directionSprite != null)
-                    return s_directionSprite;
-
-                if (!ImageAssetLoader.TryLoadSprite(fileName, ImageAssetLoader.GetDefaultAssetsDirectory(), out var sprite, out var resolvedPath))
-                {
-                    if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("AbilityModule.DirectionIconLoadFail", 60))
-                    {
-                        var baseDir = ImageAssetLoader.GetDefaultAssetsDirectory();
-                        Debug.LogWarning($"[Fix:Ability] Failed to load slot2 direction icon. file={fileName} baseDir={baseDir}");
-                    }
-                    return null;
-                }
-
-                s_directionSprite = sprite;
-                s_loadedFrom = resolvedPath;
-                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("AbilityModule.DirectionIconLoaded", 60))
-                {
-                    Debug.Log($"[Fix:Ability] Loaded slot2 direction icon from: {s_loadedFrom}");
-                }
-
-                return s_directionSprite;
             }
         }
     }

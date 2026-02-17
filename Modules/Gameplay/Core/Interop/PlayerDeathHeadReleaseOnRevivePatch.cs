@@ -3,9 +3,9 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
 using Photon.Pun;
+using DeathHeadHopperFix.Modules.Utilities;
 using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
@@ -24,7 +24,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         [HarmonyPostfix]
         private static void PlayerAvatar_Update_Postfix(PlayerAvatar __instance)
         {
-            if (__instance == null || !FeatureFlags.LastChangeMode)
+            if (__instance == null || !LastChanceInteropBridge.IsLastChanceModeEnabled())
             {
                 return;
             }

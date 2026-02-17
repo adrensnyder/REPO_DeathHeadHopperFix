@@ -32,7 +32,6 @@ namespace DeathHeadHopperFix.Modules.Config
             base.OnEnable();
             PhotonNetwork.AddCallbackTarget(this);
             ConfigManager.HostControlledChanged += OnHostControlledChanged;
-            CompatibilityGate.HostApprovalChanged += OnHostControlledChanged;
             TrySendSnapshot();
         }
 
@@ -41,7 +40,6 @@ namespace DeathHeadHopperFix.Modules.Config
             base.OnDisable();
             PhotonNetwork.RemoveCallbackTarget(this);
             ConfigManager.HostControlledChanged -= OnHostControlledChanged;
-            CompatibilityGate.HostApprovalChanged -= OnHostControlledChanged;
         }
 
         private void OnHostControlledChanged()
