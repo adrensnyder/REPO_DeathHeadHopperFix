@@ -47,6 +47,7 @@ namespace DeathHeadHopperFix
             AppDomain.CurrentDomain.AssemblyLoad += OnAssemblyLoad;
             SceneManager.sceneLoaded += OnSceneLoaded;
             ConfigManager.HostControlledChanged += OnHostControlledChanged;
+            LastChanceTimerController.ActiveStateChanged += OnLastChanceActiveStateChanged;
 
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 TryPatchIfTargetAssembly(asm);
@@ -57,6 +58,7 @@ namespace DeathHeadHopperFix
             AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
             SceneManager.sceneLoaded -= OnSceneLoaded;
             ConfigManager.HostControlledChanged -= OnHostControlledChanged;
+            LastChanceTimerController.ActiveStateChanged -= OnLastChanceActiveStateChanged;
         }
 
         private void OnAssemblyLoad(object sender, AssemblyLoadEventArgs args)
@@ -74,6 +76,11 @@ namespace DeathHeadHopperFix
         private void OnHostControlledChanged()
         {
             LastChanceTimerController.OnHostControlledConfigChanged();
+            ReconcileConditionalMonsterPatches();
+        }
+
+        private void OnLastChanceActiveStateChanged()
+        {
             ReconcileConditionalMonsterPatches();
         }
 
@@ -139,17 +146,22 @@ namespace DeathHeadHopperFix
 
             var enableMonsterPipelinePatches =
                 FeatureFlags.LastChangeMode &&
-                FeatureFlags.LastChanceMonstersSearchEnabled;
+                FeatureFlags.LastChanceMonstersSearchEnabled &&
+                LastChanceTimerController.IsActive;
 
             if (enableMonsterPipelinePatches)
             {
                 LastChanceMonstersSearchModule.Apply(harmony, asm);
                 LastChanceMonstersNoiseAggroModule.Apply(harmony, asm);
+                LastChanceMonstersCameraForceLockModule.Apply();
+                LastChanceMonstersPlayerVisionCheckModule.Apply();
                 return;
             }
 
             LastChanceMonstersNoiseAggroModule.Unapply();
             LastChanceMonstersSearchModule.Unapply();
+            LastChanceMonstersCameraForceLockModule.Unapply();
+            LastChanceMonstersPlayerVisionCheckModule.Unapply();
         }
 
         private void WarnUnsafeDebugFlagsInRelease()

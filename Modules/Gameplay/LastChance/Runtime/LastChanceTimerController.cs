@@ -278,6 +278,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 
         internal static bool IsActive => s_active;
         internal static bool IsSuppressedForRoom => s_suppressedForRoom;
+        internal static event Action? ActiveStateChanged;
         internal static bool IsDirectionIndicatorUiVisible =>
             s_active &&
             AllPlayersDeadGuard.AllPlayersDisabled() &&
@@ -2708,10 +2709,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
 
         private static void SetLastChanceActive(bool active)
         {
+            var previous = s_active;
             s_active = active;
             if (active)
             {
                 ApplyLastChanceHostRuntimeOverrides();
+                if (!previous)
+                {
+                    ActiveStateChanged?.Invoke();
+                }
                 return;
             }
 
@@ -2723,6 +2729,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime
             LastChanceMonstersPlayerVisionCheckModule.ResetRuntimeState();
             LastChanceHeadPupilVisualModule.ResetRuntimeState();
             LastChanceHeadEyesOverrideBypassModule.ResetRuntimeState();
+            if (previous)
+            {
+                ActiveStateChanged?.Invoke();
+            }
         }
 
         private static void ResetLastChanceRuntimeModules(bool allowVanillaAllPlayersDead, bool allowAutoDelete)

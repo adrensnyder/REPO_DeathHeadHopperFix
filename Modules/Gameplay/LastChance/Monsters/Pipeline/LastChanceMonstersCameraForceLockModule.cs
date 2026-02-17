@@ -16,6 +16,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
     [HarmonyPatch]
     internal static class LastChanceMonstersCameraForceLockModule
     {
+        private const string PatchId = "DeathHeadHopperFix.Gameplay.LastChance.MonstersCameraForceLock";
         private static readonly ManualLogSource Log = Logger.CreateLogSource("DeathHeadHopperFix.LastChance.CeilingEye");
 
         private sealed class LockState
@@ -27,7 +28,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         }
 
         private static readonly Dictionary<int, LockState> s_lockBySource = new();
+        private static readonly HashSet<MethodBase> s_patchedMethods = new();
         private static float s_nextCleanupAt;
+        private static Harmony? s_harmony;
 
         private static readonly MethodInfo? s_aimTargetSoftSetVanilla =
             AccessTools.Method(typeof(CameraAim), "AimTargetSoftSet", new[] { typeof(Vector3), typeof(float), typeof(float), typeof(float), typeof(GameObject), typeof(int) });
@@ -43,6 +46,55 @@ namespace DeathHeadHopperFix.Modules.Gameplay.LastChance.Monsters.Pipeline
         private static readonly FieldInfo? s_spectatePlayerField = AccessTools.Field(typeof(SpectateCamera), "player");
         private static readonly FieldInfo? s_normalAimHorizontalField = AccessTools.Field(typeof(SpectateCamera), "normalAimHorizontal");
         private static readonly FieldInfo? s_normalAimVerticalField = AccessTools.Field(typeof(SpectateCamera), "normalAimVertical");
+
+        [HarmonyPrepare]
+        private static bool Prepare()
+        {
+            return false;
+        }
+
+        internal static void Apply()
+        {
+            if (s_harmony != null)
+            {
+                return;
+            }
+
+            s_harmony = new Harmony(PatchId);
+            var transpiler = new HarmonyMethod(typeof(LastChanceMonstersCameraForceLockModule), nameof(ReplaceCameraAimCalls));
+            var methods = TargetMethods();
+            foreach (var method in methods)
+            {
+                if (method == null || s_patchedMethods.Contains(method))
+                {
+                    continue;
+                }
+
+                s_harmony.Patch(method, transpiler: transpiler);
+                s_patchedMethods.Add(method);
+            }
+        }
+
+        internal static void Unapply()
+        {
+            if (s_harmony == null)
+            {
+                return;
+            }
+
+            try
+            {
+                s_harmony.UnpatchSelf();
+            }
+            catch
+            {
+                // Best-effort unpatch.
+            }
+
+            s_patchedMethods.Clear();
+            s_harmony = null;
+            ResetRuntimeState();
+        }
 
         [HarmonyTargetMethods]
         private static IEnumerable<MethodBase> TargetMethods()
