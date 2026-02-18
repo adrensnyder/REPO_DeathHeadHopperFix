@@ -326,6 +326,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (becameVisible || costChanged)
             {
                 SlotCostOverrides.SetDirectionCostText(spot, costLabel);
+                if (LastChanceInteropBridge.TryGetDirectionSlotSprite(out var directionSprite) && directionSprite != null)
+                {
+                    SlotVisualOverrides.ApplyDirectionIcon(spot, directionSprite);
+                }
                 SlotLayoutOverrides.EnsureBasePosition(spot);
                 s_lastDirectionCostLabelBySpot[spot] = costLabel;
             }
@@ -726,6 +730,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private static class SlotVisualOverrides
         {
+            private static FieldInfo? s_backgroundIconField;
             private static FieldInfo? s_cooldownIconField;
             private static FieldInfo? s_noAbilityField;
             private static MethodInfo? s_currentAbilityGetter;
@@ -737,6 +742,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             private static PropertyInfo? s_imageFillAmountProp;
             private static readonly Dictionary<object, Color> s_cooldownIconBaseColors = new();
             private static readonly Dictionary<object, Color> s_backgroundIconBaseColors = new();
+            private static readonly Dictionary<object, Color> s_chargeHoldRestoreColors = new();
+            private static readonly Dictionary<object, float> s_chargeHoldRestoreFillAmounts = new();
+
+            internal static void ApplyDirectionIcon(object spot, Sprite sprite)
+            {
+                if (spot is not Component)
+                    return;
+
+                var type = spot.GetType();
+                s_backgroundIconField ??= type.GetField("backgroundIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                s_noAbilityField ??= type.GetField("noAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+                var backgroundImage = s_backgroundIconField?.GetValue(spot);
+                SetImageSpriteAndEnable(backgroundImage, sprite);
+
+                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                SetImageSpriteAndEnable(cooldownImage, sprite);
+
+                if (s_noAbilityField?.GetValue(spot) is Behaviour noAbilityText)
+                {
+                    noAbilityText.enabled = false;
+                }
+            }
 
             internal static void RestoreDefaultIcon(object spot)
             {
@@ -902,9 +931,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 var clamped = Mathf.Clamp01(progress01);
                 if (clamped <= 0f)
                 {
-                    s_imageFillAmountProp?.SetValue(cooldownImage, 0f);
-                    s_imageColorProp?.SetValue(cooldownImage, baseColor);
+                    // Restore the visual state that existed before hold started
+                    // (ready/cooling/energy-limited), instead of forcing "empty/off".
+                    if (s_chargeHoldRestoreFillAmounts.TryGetValue(cooldownImage, out var restoreFill))
+                    {
+                        s_imageFillAmountProp?.SetValue(cooldownImage, restoreFill);
+                        s_chargeHoldRestoreFillAmounts.Remove(cooldownImage);
+                    }
+
+                    if (s_chargeHoldRestoreColors.TryGetValue(cooldownImage, out var restoreColor))
+                    {
+                        s_imageColorProp?.SetValue(cooldownImage, restoreColor);
+                        s_chargeHoldRestoreColors.Remove(cooldownImage);
+                    }
                     return;
+                }
+
+                if (!s_chargeHoldRestoreFillAmounts.ContainsKey(cooldownImage))
+                {
+                    var currentFill = s_imageFillAmountProp?.GetValue(cooldownImage) as float? ?? 0f;
+                    s_chargeHoldRestoreFillAmounts[cooldownImage] = currentFill;
+                }
+
+                if (!s_chargeHoldRestoreColors.ContainsKey(cooldownImage))
+                {
+                    var currentColor = s_imageColorProp?.GetValue(cooldownImage) as Color? ?? baseColor;
+                    s_chargeHoldRestoreColors[cooldownImage] = currentColor;
                 }
 
                 // Slot1 charge hold: red while below minimum hold threshold, green when release will activate.

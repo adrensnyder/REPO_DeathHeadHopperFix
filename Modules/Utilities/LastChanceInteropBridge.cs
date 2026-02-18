@@ -2,6 +2,7 @@
 
 using System;
 using System.Reflection;
+using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Utilities
 {
@@ -11,6 +12,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
         private static Type? s_timerControllerType;
         private static Type? s_spectateHelperType;
         private static Type? s_featureFlagsType;
+        private static Type? s_imageAssetLoaderType;
 
         private static PropertyInfo? s_isActiveProperty;
         private static PropertyInfo? s_directionUiVisibleProperty;
@@ -30,6 +32,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
         private static FieldInfo? s_spectateDeadPlayersField;
         private static FieldInfo? s_spectateDeadPlayersModeField;
         private static FieldInfo? s_lastChanceIndicatorsField;
+        private static MethodInfo? s_tryLoadSpriteMethod;
 
         internal static bool IsLastChanceActive() =>
             TryGetBoolProperty(ref s_isActiveProperty, "DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime.LastChanceTimerController", "IsActive");
@@ -196,6 +199,26 @@ namespace DeathHeadHopperFix.Modules.Utilities
             return s_lastChanceIndicatorsField.GetValue(null) as string ?? string.Empty;
         }
 
+        internal static bool TryGetDirectionSlotSprite(out Sprite? sprite)
+        {
+            sprite = null;
+            ResolveMembers();
+            if (s_tryLoadSpriteMethod == null)
+            {
+                return false;
+            }
+
+            var args = new object?[] { "Direction.png", null, null, string.Empty, 100f };
+            var loaded = s_tryLoadSpriteMethod.Invoke(null, args) as bool? ?? false;
+            if (!loaded)
+            {
+                return false;
+            }
+
+            sprite = args[2] as Sprite;
+            return sprite != null;
+        }
+
         private static bool TryGetBoolProperty(ref PropertyInfo? property, string typeName, string propertyName)
         {
             ResolveMembers();
@@ -214,6 +237,7 @@ namespace DeathHeadHopperFix.Modules.Utilities
             s_timerControllerType ??= ResolveType("DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime.LastChanceTimerController");
             s_spectateHelperType ??= ResolveType("DeathHeadHopperFix.Modules.Gameplay.LastChance.Spectate.LastChanceSpectateHelper");
             s_featureFlagsType ??= ResolveType("DHHFLastChanceMode.Modules.Config.FeatureFlags");
+            s_imageAssetLoaderType ??= ResolveType("DeathHeadHopperFix.Modules.Utilities.ImageAssetLoader");
 
             if (s_timerControllerType != null)
             {
@@ -240,6 +264,11 @@ namespace DeathHeadHopperFix.Modules.Utilities
                 s_spectateDeadPlayersField ??= s_featureFlagsType.GetField("SpectateDeadPlayers", StaticAny);
                 s_spectateDeadPlayersModeField ??= s_featureFlagsType.GetField("SpectateDeadPlayersMode", StaticAny);
                 s_lastChanceIndicatorsField ??= s_featureFlagsType.GetField("LastChanceIndicators", StaticAny);
+            }
+
+            if (s_imageAssetLoaderType != null)
+            {
+                s_tryLoadSpriteMethod ??= s_imageAssetLoaderType.GetMethod("TryLoadSprite", StaticAny);
             }
         }
 
