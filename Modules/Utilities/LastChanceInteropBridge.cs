@@ -11,7 +11,6 @@ namespace DeathHeadHopperFix.Modules.Utilities
         private static Type? s_timerControllerType;
         private static Type? s_spectateHelperType;
         private static Type? s_featureFlagsType;
-        private static bool s_resolvedTypes;
 
         private static PropertyInfo? s_isActiveProperty;
         private static PropertyInfo? s_directionUiVisibleProperty;
@@ -211,13 +210,10 @@ namespace DeathHeadHopperFix.Modules.Utilities
 
         private static void ResolveMembers()
         {
-            if (!s_resolvedTypes)
-            {
-                s_timerControllerType = ResolveType("DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime.LastChanceTimerController");
-                s_spectateHelperType = ResolveType("DeathHeadHopperFix.Modules.Gameplay.LastChance.Spectate.LastChanceSpectateHelper");
-                s_featureFlagsType = ResolveType("DHHFLastChanceMode.Modules.Config.FeatureFlags");
-                s_resolvedTypes = true;
-            }
+            // Keep retrying unresolved types: core code may query this bridge before LastChance assembly is loaded.
+            s_timerControllerType ??= ResolveType("DeathHeadHopperFix.Modules.Gameplay.LastChance.Runtime.LastChanceTimerController");
+            s_spectateHelperType ??= ResolveType("DeathHeadHopperFix.Modules.Gameplay.LastChance.Spectate.LastChanceSpectateHelper");
+            s_featureFlagsType ??= ResolveType("DHHFLastChanceMode.Modules.Config.FeatureFlags");
 
             if (s_timerControllerType != null)
             {
