@@ -53,8 +53,10 @@ namespace DeathHeadHopperFix.Modules.Config
         private static readonly Dictionary<string, RangeF> s_floatRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, RangeI> s_intRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, FieldInfo> s_hostControlledFields = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, ConfigEntryBase> s_hostControlledEntries = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, string> s_hostRuntimeOverrides = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, string> s_localHostControlledBaseline = new(StringComparer.Ordinal);
+        private static readonly HashSet<string> s_suppressHostControlledEntryChange = new(StringComparer.Ordinal);
 
         internal static event Action? HostControlledChanged;
 
@@ -92,6 +94,7 @@ namespace DeathHeadHopperFix.Modules.Config
                     var entry = config.Bind(section, key, defaultValue,
                         new ConfigDescription(description, new AcceptableValueList<bool>(false, true)));
                     RegisterHostControlledField(attribute, key, field);
+                    RegisterHostControlledEntry(attribute, key, entry);
                     ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
                 }
@@ -115,6 +118,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
                     ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     RegisterHostControlledField(attribute, key, field);
+                    RegisterHostControlledEntry(attribute, key, entry);
                     continue;
                 }
 
@@ -137,6 +141,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
                     ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     RegisterHostControlledField(attribute, key, field);
+                    RegisterHostControlledEntry(attribute, key, entry);
                     continue;
                 }
 
@@ -154,6 +159,7 @@ namespace DeathHeadHopperFix.Modules.Config
                         entry = config.Bind(section, key, defaultValue, description);
                     }
                     RegisterHostControlledField(attribute, key, field);
+                    RegisterHostControlledEntry(attribute, key, entry);
                     ApplyAndWatch(entry, rangeKey, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
                 }
@@ -163,6 +169,7 @@ namespace DeathHeadHopperFix.Modules.Config
                     var defaultValue = (Color)field.GetValue(null)!;
                     var entry = config.Bind(section, key, ColorToString(defaultValue), description);
                     RegisterHostControlledField(attribute, key, field);
+                    RegisterHostControlledEntry(attribute, key, entry);
                     ApplyAndWatch(entry, ColorFromString, value => field.SetValue(null, value), attribute.HostControlled);
                     continue;
                 }
@@ -204,6 +211,21 @@ namespace DeathHeadHopperFix.Modules.Config
 
             void Update()
             {
+                var hostKey = entry.Definition.Key;
+                if (notifyHostControlled &&
+                    ShouldRejectClientHostControlledWrite(hostKey, out var authoritativeSerialized) &&
+                    TryDeserialize(authoritativeSerialized, typeof(T), out var authoritativeObj) &&
+                    authoritativeObj is T authoritativeTyped)
+                {
+                    if (!IsSuppressedHostControlledEntryChange(hostKey))
+                    {
+                        SetHostControlledEntryValue(hostKey, authoritativeTyped);
+                    }
+
+                    setter(authoritativeTyped);
+                    return;
+                }
+
                 setter(SanitizeValue(entry.Value, rangeKey));
                 if (notifyHostControlled)
                 {
@@ -229,6 +251,18 @@ namespace DeathHeadHopperFix.Modules.Config
             }
             entry.SettingChanged += (_, _) =>
             {
+                if (notifyHostControlled &&
+                    ShouldRejectClientHostControlledWrite(entry.Definition.Key, out var authoritativeSerialized))
+                {
+                    if (!IsSuppressedHostControlledEntryChange(entry.Definition.Key))
+                    {
+                        SetHostControlledEntryValue(entry.Definition.Key, authoritativeSerialized);
+                    }
+
+                    setter(parser(authoritativeSerialized));
+                    return;
+                }
+
                 setter(parser(entry.Value));
                 if (notifyHostControlled)
                 {
@@ -245,6 +279,16 @@ namespace DeathHeadHopperFix.Modules.Config
             }
 
             s_hostControlledFields[key] = field;
+        }
+
+        private static void RegisterHostControlledEntry(FeatureConfigEntryAttribute attribute, string key, ConfigEntryBase entry)
+        {
+            if (!attribute.HostControlled || entry == null)
+            {
+                return;
+            }
+
+            s_hostControlledEntries[key] = entry;
         }
 
         internal static Dictionary<string, string> SnapshotHostControlled()
@@ -364,6 +408,8 @@ namespace DeathHeadHopperFix.Modules.Config
                     }
                     field.SetValue(null, parsed);
                 }
+
+                SetHostControlledEntryValue(kvp.Key, kvp.Value);
             }
 
             if (changed)
@@ -440,6 +486,23 @@ namespace DeathHeadHopperFix.Modules.Config
             }
 
             return null;
+        }
+
+        private static bool TryDeserialize(string value, Type targetType, out object? parsed)
+        {
+            parsed = DeserializeValue(value, targetType);
+            if (parsed != null)
+            {
+                return true;
+            }
+
+            if (targetType == typeof(string))
+            {
+                parsed = value ?? string.Empty;
+                return true;
+            }
+
+            return false;
         }
 
         private static string ColorToString(Color input)
@@ -536,6 +599,132 @@ namespace DeathHeadHopperFix.Modules.Config
             foreach (var kvp in snapshot)
             {
                 s_localHostControlledBaseline[kvp.Key] = kvp.Value;
+            }
+        }
+
+        private static bool ShouldRejectClientHostControlledWrite(string key, out string authoritativeSerialized)
+        {
+            authoritativeSerialized = string.Empty;
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return false;
+            }
+
+            // During plugin/config bootstrap SemiFunc internals may not be ready yet.
+            // Fail open here and wait for runtime snapshots.
+            if (!TryGetClientInRoomState(out var shouldRejectClientWrite) || !shouldRejectClientWrite)
+            {
+                return false;
+            }
+
+            if (!s_hostControlledFields.TryGetValue(key, out var field))
+            {
+                return false;
+            }
+
+            authoritativeSerialized = SerializeValue(field.GetValue(null), field.FieldType);
+            return true;
+        }
+
+        private static bool TryGetClientInRoomState(out bool shouldRejectClientWrite)
+        {
+            shouldRejectClientWrite = false;
+            try
+            {
+                if (!SemiFunc.IsMultiplayer())
+                {
+                    return true;
+                }
+
+                shouldRejectClientWrite = !SemiFunc.IsMasterClientOrSingleplayer();
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static bool IsSuppressedHostControlledEntryChange(string key)
+        {
+            return !string.IsNullOrWhiteSpace(key) && s_suppressHostControlledEntryChange.Contains(key);
+        }
+
+        private static void SetHostControlledEntryValue(string key, object value)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            if (!s_hostControlledEntries.TryGetValue(key, out var entry) || entry == null)
+            {
+                return;
+            }
+
+            var valueType = value?.GetType() ?? typeof(string);
+            var targetType = GetEntrySettingType(entry) ?? valueType;
+            if (!TryConvertForEntry(value, targetType, out var converted))
+            {
+                return;
+            }
+
+            s_suppressHostControlledEntryChange.Add(key);
+            try
+            {
+                entry.BoxedValue = converted;
+            }
+            finally
+            {
+                s_suppressHostControlledEntryChange.Remove(key);
+            }
+        }
+
+        private static Type? GetEntrySettingType(ConfigEntryBase entry)
+        {
+            if (entry == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                var property = entry.GetType().GetProperty("SettingType", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (property?.GetValue(entry) is Type settingType)
+                {
+                    return settingType;
+                }
+            }
+            catch
+            {
+            }
+
+            return entry.BoxedValue?.GetType();
+        }
+
+        private static bool TryConvertForEntry(object? value, Type targetType, out object converted)
+        {
+            converted = value ?? string.Empty;
+            if (value != null && targetType.IsInstanceOfType(value))
+            {
+                return true;
+            }
+
+            var text = value as string ?? value?.ToString() ?? string.Empty;
+            if (TryDeserialize(text, targetType, out var parsed) && parsed != null)
+            {
+                converted = parsed;
+                return true;
+            }
+
+            try
+            {
+                converted = Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

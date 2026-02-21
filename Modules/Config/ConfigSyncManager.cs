@@ -8,6 +8,7 @@ using ExitGames.Client.Photon;
 using Photon.Pun;
 using Photon.Realtime;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace DeathHeadHopperFix.Modules.Config
 {
@@ -32,6 +33,7 @@ namespace DeathHeadHopperFix.Modules.Config
             base.OnEnable();
             PhotonNetwork.AddCallbackTarget(this);
             ConfigManager.HostControlledChanged += OnHostControlledChanged;
+            SceneManager.sceneLoaded += OnSceneLoaded;
             TrySendSnapshot();
         }
 
@@ -40,6 +42,7 @@ namespace DeathHeadHopperFix.Modules.Config
             base.OnDisable();
             PhotonNetwork.RemoveCallbackTarget(this);
             ConfigManager.HostControlledChanged -= OnHostControlledChanged;
+            SceneManager.sceneLoaded -= OnSceneLoaded;
         }
 
         private void OnHostControlledChanged()
@@ -72,6 +75,15 @@ namespace DeathHeadHopperFix.Modules.Config
 
         public override void OnMasterClientSwitched(Player newMasterClient)
         {
+            if (PhotonNetwork.IsMasterClient)
+            {
+                TrySendSnapshot();
+            }
+        }
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            // Re-assert host-controlled values after scene transitions (including procedural level loads).
             if (PhotonNetwork.IsMasterClient)
             {
                 TrySendSnapshot();
