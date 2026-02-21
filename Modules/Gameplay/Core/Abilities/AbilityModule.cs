@@ -933,16 +933,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 {
                     // Restore the visual state that existed before hold started
                     // (ready/cooling/energy-limited), instead of forcing "empty/off".
+                    var restoredFill = false;
+                    var restoredColor = false;
                     if (s_chargeHoldRestoreFillAmounts.TryGetValue(cooldownImage, out var restoreFill))
                     {
                         s_imageFillAmountProp?.SetValue(cooldownImage, restoreFill);
                         s_chargeHoldRestoreFillAmounts.Remove(cooldownImage);
+                        restoredFill = true;
                     }
 
                     if (s_chargeHoldRestoreColors.TryGetValue(cooldownImage, out var restoreColor))
                     {
                         s_imageColorProp?.SetValue(cooldownImage, restoreColor);
                         s_chargeHoldRestoreColors.Remove(cooldownImage);
+                        restoredColor = true;
+                    }
+
+                    // Fallback: if no snapshot was captured (can happen on remote clients),
+                    // force icon back to its default non-hold visual state.
+                    if (!restoredFill)
+                    {
+                        s_imageFillAmountProp?.SetValue(cooldownImage, 1f);
+                    }
+
+                    if (!restoredColor)
+                    {
+                        s_imageColorProp?.SetValue(cooldownImage, baseColor);
                     }
                     return;
                 }
