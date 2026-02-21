@@ -43,6 +43,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private static readonly Dictionary<int, ChargeHoldState> s_chargeHoldStates = new();
         private static float s_lastLocalHoldInputStartTime;
         private static bool s_localHoldUiActive;
+        private static bool s_localHoldInputPending;
 
         private sealed class ChargeHoldState
         {
@@ -186,6 +187,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
             if (!s_chargeHoldStates.TryGetValue(id, out var state))
             {
+                // Non-host clients do not execute ChargeWindup locally (RPC goes to master).
+                // Bootstrap local hold preview when authoritative state sync reaches Windup.
+                if (IsChargeState(__instance, "Windup") && s_localHoldInputPending)
+                {
+                    state = GetOrCreateChargeHoldState(id);
+                    state.StartTime = s_lastLocalHoldInputStartTime > 0f ? s_lastLocalHoldInputStartTime : Time.time;
+                    state.IsHolding = true;
+                    state.LaunchScale = 1f;
+                    s_localHoldUiActive = true;
+                    AbilityModule.SetChargeSlotActivationProgress(0f);
+                }
+                else
+                {
+                    if (!s_localHoldUiActive)
+                        AbilityModule.SetChargeSlotActivationProgress(0f);
+                    return;
+                }
+            }
+
+            if (!IsChargeState(__instance, "Windup"))
+            {
+                s_chargeHoldStates.Remove(id);
+                s_localHoldUiActive = false;
+                AbilityModule.SetChargeSlotActivationProgress(0f);
                 if (!s_localHoldUiActive)
                     AbilityModule.SetChargeSlotActivationProgress(0f);
                 return;
@@ -344,6 +369,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private static void ChargeAbility_OnAbilityDown_Postfix()
         {
             s_lastLocalHoldInputStartTime = Time.time;
+            s_localHoldInputPending = true;
             AbilityModule.SetChargeSlotActivationProgress(0f);
 
             var chargeHandler = GetLocalChargeHandler();
@@ -355,6 +381,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
         private static void ChargeAbility_OnAbilityCancel_Postfix()
         {
+            s_localHoldInputPending = false;
             s_localHoldUiActive = false;
             AbilityModule.SetChargeSlotActivationProgress(0f);
 
@@ -370,6 +397,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             var chargeHandler = GetLocalChargeHandler();
             if (chargeHandler == null)
             {
+                s_localHoldInputPending = false;
                 s_localHoldUiActive = false;
                 AbilityModule.SetChargeSlotActivationProgress(0f);
                 return true;
@@ -377,6 +405,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
             if (!IsChargeState(chargeHandler, "Windup"))
             {
+                s_localHoldInputPending = false;
                 s_localHoldUiActive = false;
                 AbilityModule.SetChargeSlotActivationProgress(0f);
                 return true;
@@ -385,6 +414,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             var id = GetUnityObjectInstanceId(chargeHandler);
             if (id == 0)
             {
+                s_localHoldInputPending = false;
                 s_localHoldUiActive = false;
                 AbilityModule.SetChargeSlotActivationProgress(0f);
                 return true;
@@ -404,6 +434,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             if (isRemoteClient)
             {
                 state.IsHolding = false;
+                s_localHoldInputPending = false;
                 s_localHoldUiActive = false;
                 AbilityModule.SetChargeSlotActivationProgress(0f);
                 // Remote client sends only "release input"; host computes scale/threshold authoritatively.
@@ -418,6 +449,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             {
                 state.IsHolding = false;
                 state.LaunchScale = 0f;
+                s_localHoldInputPending = false;
                 s_localHoldUiActive = false;
                 AbilityModule.SetChargeSlotActivationProgress(0f);
                 StopChargeWindupLoop(chargeHandler);
@@ -443,6 +475,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 s_chargeHandlerWindupTimerField.SetValue(chargeHandler, -1f);
             }
 
+            s_localHoldInputPending = false;
             s_localHoldUiActive = false;
             AbilityModule.SetChargeSlotActivationProgress(0f);
             return true;
