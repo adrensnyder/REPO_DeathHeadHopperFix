@@ -6,6 +6,7 @@ using System.Reflection;
 using BepInEx.Logging;
 using HarmonyLib;
 using Photon.Pun;
+using Photon.Realtime;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
@@ -16,6 +17,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
     {
         private const string DhhPunViewIdRoomKey = "DHHFix.PunViewId";
         private static ManualLogSource? _log;
+        private static readonly MethodInfo? VersionCheckMethodInfo = AccessTools.Method("DeathHeadHopper.Managers.DHHPunManager:VersionCheck");
 
         internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
         {
@@ -53,6 +55,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     return;
 
                 BindDedicatedPhotonView(__instance);
+                EnsureRoomSyncRelay(__instance);
             }
             catch (Exception ex)
             {
@@ -68,6 +71,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     return true;
 
                 BindDedicatedPhotonView(__instance);
+                EnsureRoomSyncRelay(__instance);
             }
             catch (Exception ex)
             {
@@ -163,13 +167,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
                     var viewId = photonView.ViewID;
                     var roomProps = PhotonNetwork.CurrentRoom.CustomProperties;
-                    if (roomProps == null || !roomProps.TryGetValue(DhhPunViewIdRoomKey, out var existing) || existing is not int existingId || existingId != viewId)
+                    if (roomProps != null && roomProps.TryGetValue(DhhPunViewIdRoomKey, out var existingObj) && existingObj is int existingId && existingId > 0)
                     {
-                        var set = new Hashtable
+                        TryAssignViewId(photonView, existingId, "master-sync-existing");
+                        return;
+                    }
+
+                    var set = new Hashtable
+                    {
+                        [DhhPunViewIdRoomKey] = viewId
+                    };
+
+                    var expected = new Hashtable
+                    {
+                        [DhhPunViewIdRoomKey] = null
+                    };
+
+                    if (!PhotonNetwork.CurrentRoom.SetCustomProperties(set, expected))
+                    {
+                        var updatedProps = PhotonNetwork.CurrentRoom.CustomProperties;
+                        if (updatedProps != null && updatedProps.TryGetValue(DhhPunViewIdRoomKey, out var updatedObj) && updatedObj is int updatedId && updatedId > 0)
                         {
-                            [DhhPunViewIdRoomKey] = viewId
-                        };
-                        PhotonNetwork.CurrentRoom.SetCustomProperties(set);
+                            TryAssignViewId(photonView, updatedId, "master-sync-after-cas-fail");
+                        }
                     }
                     return;
                 }
@@ -178,10 +198,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 if (props == null || !props.TryGetValue(DhhPunViewIdRoomKey, out var syncedObj) || syncedObj is not int syncedId || syncedId <= 0)
                     return;
 
-                if (photonView.ViewID != syncedId)
-                {
-                    photonView.ViewID = syncedId;
-                }
+                TryAssignViewId(photonView, syncedId, "client-sync");
             }
             catch (Exception ex)
             {
@@ -189,6 +206,99 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 {
                     _log?.LogWarning($"DHHPunViewFix sync failed: {ex.GetType().Name}");
                 }
+            }
+        }
+
+        private static bool TryAssignViewId(PhotonView photonView, int viewId, string reason)
+        {
+            if (photonView == null || viewId <= 0)
+                return false;
+
+            if (photonView.ViewID == viewId)
+                return true;
+
+            var existing = PhotonView.Find(viewId);
+            if (existing != null && existing != photonView)
+            {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHPunView.Sync.Conflict", 15))
+                {
+                    _log?.LogWarning($"[Fix:DHHPunView] Refusing ViewID {viewId} ({reason}) because it is already owned by '{existing.gameObject.name}'.");
+                }
+                return false;
+            }
+
+            photonView.ViewID = viewId;
+            return photonView.ViewID == viewId;
+        }
+
+        private static void EnsureRoomSyncRelay(MonoBehaviour sourceInstance)
+        {
+            if (sourceInstance == null || sourceInstance.gameObject == null)
+                return;
+
+            var relay = sourceInstance.gameObject.GetComponent<DHHPunViewRoomSyncRelay>();
+            if (relay == null)
+                relay = sourceInstance.gameObject.AddComponent<DHHPunViewRoomSyncRelay>();
+
+            relay.Bind(sourceInstance);
+        }
+
+        private static void OnRoomSyncChanged(MonoBehaviour? sourceInstance)
+        {
+            if (sourceInstance == null)
+                return;
+
+            BindDedicatedPhotonView(sourceInstance);
+            TryInvokeVersionCheck(sourceInstance);
+        }
+
+        private static void TryInvokeVersionCheck(MonoBehaviour sourceInstance)
+        {
+            if (sourceInstance == null)
+                return;
+
+            if (sourceInstance.GetComponent<PhotonView>() is not PhotonView pv || pv.ViewID <= 0)
+                return;
+
+            try
+            {
+                VersionCheckMethodInfo?.Invoke(sourceInstance, Array.Empty<object>());
+            }
+            catch (Exception ex)
+            {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHPunView.VersionCheck.InvokeFail", 30))
+                {
+                    _log?.LogWarning($"DHHPunViewFix VersionCheck invoke failed: {ex.GetType().Name}");
+                }
+            }
+        }
+
+        private sealed class DHHPunViewRoomSyncRelay : MonoBehaviourPunCallbacks
+        {
+            private MonoBehaviour? _sourceInstance;
+
+            internal void Bind(MonoBehaviour sourceInstance)
+            {
+                _sourceInstance = sourceInstance;
+                UnityEngine.Object.DontDestroyOnLoad(gameObject);
+            }
+
+            public override void OnJoinedRoom()
+            {
+                OnRoomSyncChanged(_sourceInstance);
+            }
+
+            public override void OnRoomPropertiesUpdate(Hashtable propertiesThatChanged)
+            {
+                if (propertiesThatChanged == null || !propertiesThatChanged.ContainsKey(DhhPunViewIdRoomKey))
+                    return;
+
+                OnRoomSyncChanged(_sourceInstance);
+            }
+
+            public override void OnMasterClientSwitched(Player newMasterClient)
+            {
+                OnRoomSyncChanged(_sourceInstance);
             }
         }
     }
