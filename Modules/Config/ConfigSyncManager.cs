@@ -17,6 +17,7 @@ namespace DeathHeadHopperFix.Modules.Config
         private static ConfigSyncManager? s_instance;
         private static readonly string HostFixPresenceRoomKey = NetworkProtocol.BuildRoomKey("HostFixPresence");
         private const string ConfigSyncMessageType = "ConfigSync";
+        private static float s_remoteHostFixPresencePendingSince = -1f;
 
         internal static void EnsureCreated()
         {
@@ -64,7 +65,11 @@ namespace DeathHeadHopperFix.Modules.Config
             {
                 TrySendSnapshot();
                 TryPublishHostFixPresence();
+                s_remoteHostFixPresencePendingSince = -1f;
+                return;
             }
+
+            s_remoteHostFixPresencePendingSince = Time.realtimeSinceStartup;
         }
 
         public override void OnPlayerEnteredRoom(Player newPlayer)
@@ -83,7 +88,11 @@ namespace DeathHeadHopperFix.Modules.Config
             {
                 TrySendSnapshot();
                 TryPublishHostFixPresence();
+                s_remoteHostFixPresencePendingSince = -1f;
+                return;
             }
+
+            s_remoteHostFixPresencePendingSince = Time.realtimeSinceStartup;
         }
 
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -98,6 +107,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
         public override void OnLeftRoom()
         {
+            s_remoteHostFixPresencePendingSince = -1f;
             ConfigManager.RestoreLocalHostControlledBaseline();
         }
 
@@ -105,11 +115,13 @@ namespace DeathHeadHopperFix.Modules.Config
         {
             if (!PhotonNetwork.InRoom || !SemiFunc.IsMultiplayer())
             {
+                s_remoteHostFixPresencePendingSince = -1f;
                 return true;
             }
 
             if (PhotonNetwork.IsMasterClient)
             {
+                s_remoteHostFixPresencePendingSince = -1f;
                 return true;
             }
 
@@ -117,9 +129,21 @@ namespace DeathHeadHopperFix.Modules.Config
             var props = room?.CustomProperties;
             if (props == null || !props.TryGetValue(HostFixPresenceRoomKey, out var raw))
             {
+                var now = Time.realtimeSinceStartup;
+                if (s_remoteHostFixPresencePendingSince < 0f)
+                {
+                    s_remoteHostFixPresencePendingSince = now;
+                }
+
+                if (now - s_remoteHostFixPresencePendingSince < InternalConfig.HostFixPresenceGraceSeconds)
+                {
+                    return true;
+                }
+
                 return false;
             }
 
+            s_remoteHostFixPresencePendingSince = -1f;
             return raw is int protocol && protocol == NetworkProtocol.ProtocolVersion;
         }
 

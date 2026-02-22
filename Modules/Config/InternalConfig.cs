@@ -5,6 +5,6 @@ namespace DeathHeadHopperFix.Modules.Config
     // Internal runtime tunables for core-only behaviors.
     internal static class InternalConfig
     {
-        // Reserved for future core-specific internal knobs.
+        internal static float HostFixPresenceGraceSeconds = 5f;
     }
 }

@@ -80,7 +80,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return false;
             }
 
-            return SpectateContextHelper.IsSpectatingLocalDeathHead();
+            // During LastChance, Direction UI demand may be active even when vanilla DHH
+            // does not mark the local head as spectated in the original Head state flow.
+            if (HasExternalAbilityUiDemand())
+            {
+                return true;
+            }
+
+            return SpectateContextHelper.IsLocalDeathHeadSpectated();
         }
 
         private static bool HasNativeEquippedAbility()

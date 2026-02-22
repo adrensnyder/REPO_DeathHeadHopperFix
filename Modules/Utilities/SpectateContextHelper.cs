@@ -41,5 +41,16 @@ namespace DeathHeadHopperFix.Modules.Utilities
 
             return s_playerDeathHeadSpectatedField.GetValue(localHead) as bool? ?? false;
         }
+
+        internal static bool IsLocalDeathHeadSpectated()
+        {
+            var localHead = PlayerController.instance?.playerAvatarScript?.playerDeathHead;
+            if (localHead == null || s_playerDeathHeadSpectatedField == null)
+            {
+                return false;
+            }
+
+            return s_playerDeathHeadSpectatedField.GetValue(localHead) as bool? ?? false;
+        }
     }
 }

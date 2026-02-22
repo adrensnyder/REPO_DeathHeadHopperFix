@@ -57,6 +57,7 @@ namespace DeathHeadHopperFix.Modules.Config
         private static readonly Dictionary<string, string> s_hostRuntimeOverrides = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, string> s_localHostControlledBaseline = new(StringComparer.Ordinal);
         private static readonly HashSet<string> s_suppressHostControlledEntryChange = new(StringComparer.Ordinal);
+        private static int s_localBaselineRestoreDepth;
 
         internal static event Action? HostControlledChanged;
 
@@ -213,6 +214,7 @@ namespace DeathHeadHopperFix.Modules.Config
             {
                 var hostKey = entry.Definition.Key;
                 if (notifyHostControlled &&
+                    !IsLocalBaselineRestoreInProgress() &&
                     ShouldRejectClientHostControlledWrite(hostKey, out var authoritativeSerialized) &&
                     TryDeserialize(authoritativeSerialized, typeof(T), out var authoritativeObj) &&
                     authoritativeObj is T authoritativeTyped)
@@ -253,6 +255,7 @@ namespace DeathHeadHopperFix.Modules.Config
             entry.SettingChanged += (_, _) =>
             {
                 if (notifyHostControlled &&
+                    !IsLocalBaselineRestoreInProgress() &&
                     ShouldRejectClientHostControlledWrite(entry.Definition.Key, out var authoritativeSerialized))
                 {
                     if (!IsSuppressedHostControlledEntryChange(entry.Definition.Key))
@@ -393,7 +396,10 @@ namespace DeathHeadHopperFix.Modules.Config
             }
 
             var changed = false;
-            foreach (var kvp in snapshot)
+            // Snapshot values can come from local baseline dictionaries that are updated by
+            // SettingChanged callbacks while we apply them. Iterate over a stable copy.
+            var entries = new List<KeyValuePair<string, string>>(snapshot);
+            foreach (var kvp in entries)
             {
                 if (!s_hostControlledFields.TryGetValue(kvp.Key, out var field))
                 {
@@ -427,7 +433,15 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
-            ApplyHostSnapshot(s_localHostControlledBaseline);
+            s_localBaselineRestoreDepth++;
+            try
+            {
+                ApplyHostSnapshot(s_localHostControlledBaseline);
+            }
+            finally
+            {
+                s_localBaselineRestoreDepth = Math.Max(0, s_localBaselineRestoreDepth - 1);
+            }
         }
 
         private static string SerializeValue(object? value, Type fieldType)
@@ -666,6 +680,11 @@ namespace DeathHeadHopperFix.Modules.Config
         private static bool IsSuppressedHostControlledEntryChange(string key)
         {
             return !string.IsNullOrWhiteSpace(key) && s_suppressHostControlledEntryChange.Contains(key);
+        }
+
+        private static bool IsLocalBaselineRestoreInProgress()
+        {
+            return s_localBaselineRestoreDepth > 0;
         }
 
         private static void SetHostControlledEntryValue(string key, object value)
