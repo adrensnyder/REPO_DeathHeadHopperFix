@@ -41,6 +41,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private static MethodInfo? s_chargeAbilityOnAbilityCancelPostfixMethod;
         private static MethodInfo? s_stunHandlerStunDurationGetter;
         private static FieldInfo? s_stunHandlerChargeHandlerField;
+        private static Type? s_dhhStatsManagerType;
+        private static MethodInfo? s_dhhStatsGetHeadChargeUpgradeMethod;
         private static readonly Dictionary<int, ChargeHoldState> s_chargeHoldStates = new();
         private static float s_lastLocalHoldInputStartTime;
         private static bool s_localHoldUiActive;
@@ -620,10 +622,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 required = Mathf.Max(required, RequiredScaleForMinimumOne(maxBounces));
             }
 
-            if (s_chargeHandlerAbilityLevelGetter != null)
+            if (TryGetEffectiveChargeAbilityLevel(chargeHandler, out var abilityLevel))
             {
-                var levelObj = s_chargeHandlerAbilityLevelGetter.Invoke(chargeHandler, null);
-                var abilityLevel = levelObj is int v ? v : 0;
                 var enemiesBase = Mathf.FloorToInt(EvaluateStatWithDiminishingReturns(1f, 0.5f, abilityLevel, 20, 0.9f).FinalValue);
                 var stunBase = 5f + (1f * abilityLevel);
 
@@ -635,6 +635,67 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 return 1f;
 
             return Mathf.Clamp01(required);
+        }
+
+        private static bool TryGetEffectiveChargeAbilityLevel(object chargeHandler, out int abilityLevel)
+        {
+            abilityLevel = 0;
+
+            if (s_chargeHandlerAbilityLevelGetter != null)
+            {
+                var levelObj = s_chargeHandlerAbilityLevelGetter.Invoke(chargeHandler, null);
+                if (levelObj is int value && value > 0)
+                {
+                    abilityLevel = value;
+                    return true;
+                }
+            }
+
+            // On non-master local clients, ChargeWindup/ResetState is authoritative on host.
+            // During that phase the local ChargeHandler can transiently report level 0, causing UI threshold=100%.
+            // Fallback to local stats entry only for local preview path.
+            if (!SemiFunc.IsMasterClientOrSingleplayer() && IsLocalChargeHandler(chargeHandler) && TryGetLocalPlayerChargeUpgrade(out var localUpgrade))
+            {
+                abilityLevel = Mathf.Max(0, localUpgrade);
+                return true;
+            }
+
+            return abilityLevel >= 0;
+        }
+
+        private static bool TryGetLocalPlayerChargeUpgrade(out int upgrade)
+        {
+            upgrade = 0;
+
+            var avatar = PlayerAvatar.instance;
+            var steamId = avatar != null ? SemiFunc.PlayerGetSteamID(avatar) : null;
+            if (string.IsNullOrWhiteSpace(steamId))
+                return false;
+
+            try
+            {
+                s_dhhStatsManagerType ??= AccessTools.TypeByName("DeathHeadHopper.Managers.DHHStatsManager");
+                if (s_dhhStatsManagerType == null)
+                    return false;
+
+                s_dhhStatsGetHeadChargeUpgradeMethod ??=
+                    AccessTools.Method(s_dhhStatsManagerType, "GetHeadChargeUpgrade", new[] { typeof(string) });
+                if (s_dhhStatsGetHeadChargeUpgradeMethod == null)
+                    return false;
+
+                var result = s_dhhStatsGetHeadChargeUpgradeMethod.Invoke(null, new object[] { steamId! });
+                if (result is int value)
+                {
+                    upgrade = value;
+                    return true;
+                }
+            }
+            catch
+            {
+                return false;
+            }
+
+            return false;
         }
 
         private static float RequiredScaleForMinimumOne(float baseValue)
