@@ -229,6 +229,7 @@ namespace DeathHeadHopperFix.Modules.Config
                 setter(SanitizeValue(entry.Value, rangeKey));
                 if (notifyHostControlled)
                 {
+                    CaptureLocalHostControlledBaselineValue(hostKey);
                     HostControlledChanged?.Invoke();
                 }
             }
@@ -266,6 +267,7 @@ namespace DeathHeadHopperFix.Modules.Config
                 setter(parser(entry.Value));
                 if (notifyHostControlled)
                 {
+                    CaptureLocalHostControlledBaselineValue(entry.Definition.Key);
                     HostControlledChanged?.Invoke();
                 }
             };
@@ -600,6 +602,22 @@ namespace DeathHeadHopperFix.Modules.Config
             {
                 s_localHostControlledBaseline[kvp.Key] = kvp.Value;
             }
+        }
+
+        private static void CaptureLocalHostControlledBaselineValue(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key))
+            {
+                return;
+            }
+
+            if (!s_hostControlledFields.TryGetValue(key, out var field))
+            {
+                return;
+            }
+
+            var value = field.GetValue(null);
+            s_localHostControlledBaseline[key] = SerializeValue(value, field.FieldType);
         }
 
         private static bool ShouldRejectClientHostControlledWrite(string key, out string authoritativeSerialized)
