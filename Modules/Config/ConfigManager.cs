@@ -52,6 +52,8 @@ namespace DeathHeadHopperFix.Modules.Config
         private static readonly char[] ColorSeparators = { ',', ';' };
         private static readonly Dictionary<string, RangeF> s_floatRanges = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, RangeI> s_intRanges = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, HashSet<string>> s_stringOptions = new(StringComparer.Ordinal);
+        private static readonly Dictionary<string, string> s_stringDefaults = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, FieldInfo> s_hostControlledFields = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, ConfigEntryBase> s_hostControlledEntries = new(StringComparer.Ordinal);
         private static readonly Dictionary<string, string> s_hostRuntimeOverrides = new(StringComparer.Ordinal);
@@ -149,6 +151,7 @@ namespace DeathHeadHopperFix.Modules.Config
                 if (field.FieldType == typeof(string))
                 {
                     var defaultValue = field.GetValue(null) as string ?? string.Empty;
+                    RegisterStringOptions(rangeKey, attribute.Options, defaultValue);
                     ConfigEntry<string> entry;
                     if (attribute.Options != null && attribute.Options.Length > 0)
                     {
@@ -580,7 +583,56 @@ namespace DeathHeadHopperFix.Modules.Config
                 return (T)(object)clamped;
             }
 
+            if (value is string s &&
+                s_stringOptions.TryGetValue(key, out var allowed) &&
+                s_stringDefaults.TryGetValue(key, out var fallback) &&
+                allowed.Count > 0 &&
+                !allowed.Contains(s))
+            {
+                return (T)(object)fallback;
+            }
+
             return value;
+        }
+
+
+        private static void RegisterStringOptions(string key, string[]? options, string defaultValue)
+        {
+            if (options == null || options.Length == 0)
+            {
+                s_stringOptions.Remove(key);
+                s_stringDefaults.Remove(key);
+                return;
+            }
+
+            var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            string firstAllowed = string.Empty;
+            var hasFirstAllowed = false;
+            foreach (var option in options)
+            {
+                if (string.IsNullOrWhiteSpace(option))
+                {
+                    continue;
+                }
+
+                if (!hasFirstAllowed)
+                {
+                    firstAllowed = option;
+                    hasFirstAllowed = true;
+                }
+
+                allowed.Add(option);
+            }
+
+            if (allowed.Count == 0)
+            {
+                s_stringOptions.Remove(key);
+                s_stringDefaults.Remove(key);
+                return;
+            }
+
+            s_stringOptions[key] = allowed;
+            s_stringDefaults[key] = allowed.Contains(defaultValue) ? defaultValue : firstAllowed;
         }
 
 
