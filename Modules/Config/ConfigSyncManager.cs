@@ -16,6 +16,7 @@ namespace DeathHeadHopperFix.Modules.Config
     {
         private static ConfigSyncManager? s_instance;
         private static readonly string HostFixPresenceRoomKey = NetworkProtocol.BuildRoomKey("HostFixPresence");
+        private const string ConfigSyncMessageType = "ConfigSync";
 
         internal static void EnsureCreated()
         {
@@ -157,7 +158,13 @@ namespace DeathHeadHopperFix.Modules.Config
                 TargetActors = targetActors
             };
 
-            PhotonNetwork.RaiseEvent(PhotonEventCodes.ConfigSync, payload, options, SendOptions.SendReliable);
+            var envelope = new NetworkEnvelope(
+                NetworkProtocol.ModId,
+                NetworkProtocol.ProtocolVersion,
+                ConfigSyncMessageType,
+                0,
+                payload);
+            PhotonNetwork.RaiseEvent(PhotonEventCodes.ConfigSync, envelope.ToEventPayload(), options, SendOptions.SendReliable);
         }
 
         private static void TryPublishHostFixPresence()
@@ -202,7 +209,16 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
-            if (photonEvent.CustomData is not ExitGames.Client.Photon.Hashtable table)
+            var masterActor = PhotonNetwork.MasterClient?.ActorNumber ?? -1;
+            if (masterActor <= 0 || photonEvent.Sender != masterActor)
+            {
+                return;
+            }
+
+            if (!NetworkEnvelope.TryParse(photonEvent.CustomData, out var envelope) ||
+                !envelope.IsExpectedSource() ||
+                !string.Equals(envelope.MessageType, ConfigSyncMessageType, StringComparison.Ordinal) ||
+                envelope.Payload is not ExitGames.Client.Photon.Hashtable table)
             {
                 return;
             }
