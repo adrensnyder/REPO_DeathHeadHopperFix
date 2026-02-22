@@ -16,6 +16,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
     internal static class ChargeHoldReleaseModule
     {
         private const string ChargeStrengthLogKey = "Fix:Charge.Strength";
+        private const string ChargePermissiveFallbackLogKey = "Fix:Charge.PermissiveFallback";
         private const float RemoteReleaseCommandTag = -777f;
         private const float RemoteCancelCommandTag = -778f;
 
@@ -433,6 +434,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
             if (isRemoteClient)
             {
+                if (!ConfigSyncManager.IsRemoteHostFixCompatible())
+                {
+                    s_localHoldInputPending = false;
+                    s_localHoldUiActive = false;
+                    AbilityModule.SetChargeSlotActivationProgress(0f);
+                    if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog(ChargePermissiveFallbackLogKey, 120))
+                    {
+                        Debug.Log("[Fix:DHHCharge][PermissiveGate] Host fix marker missing. Falling back to vanilla release path.");
+                    }
+
+                    // Permissive mismatch fallback: do not send custom RPC tags when host is not known compatible.
+                    return true;
+                }
+
                 state.IsHolding = false;
                 s_localHoldInputPending = false;
                 s_localHoldUiActive = false;

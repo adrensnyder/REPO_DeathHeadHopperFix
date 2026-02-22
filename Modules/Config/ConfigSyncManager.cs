@@ -15,6 +15,7 @@ namespace DeathHeadHopperFix.Modules.Config
     internal sealed class ConfigSyncManager : MonoBehaviourPunCallbacks, IOnEventCallback
     {
         private static ConfigSyncManager? s_instance;
+        private static readonly string HostFixPresenceRoomKey = NetworkProtocol.BuildRoomKey("HostFixPresence");
 
         internal static void EnsureCreated()
         {
@@ -35,6 +36,7 @@ namespace DeathHeadHopperFix.Modules.Config
             ConfigManager.HostControlledChanged += OnHostControlledChanged;
             SceneManager.sceneLoaded += OnSceneLoaded;
             TrySendSnapshot();
+            TryPublishHostFixPresence();
         }
 
         public override void OnDisable()
@@ -60,6 +62,7 @@ namespace DeathHeadHopperFix.Modules.Config
             if (PhotonNetwork.IsMasterClient)
             {
                 TrySendSnapshot();
+                TryPublishHostFixPresence();
             }
         }
 
@@ -78,6 +81,7 @@ namespace DeathHeadHopperFix.Modules.Config
             if (PhotonNetwork.IsMasterClient)
             {
                 TrySendSnapshot();
+                TryPublishHostFixPresence();
             }
         }
 
@@ -87,12 +91,35 @@ namespace DeathHeadHopperFix.Modules.Config
             if (PhotonNetwork.IsMasterClient)
             {
                 TrySendSnapshot();
+                TryPublishHostFixPresence();
             }
         }
 
         public override void OnLeftRoom()
         {
             ConfigManager.RestoreLocalHostControlledBaseline();
+        }
+
+        internal static bool IsRemoteHostFixCompatible()
+        {
+            if (!PhotonNetwork.InRoom || !SemiFunc.IsMultiplayer())
+            {
+                return true;
+            }
+
+            if (PhotonNetwork.IsMasterClient)
+            {
+                return true;
+            }
+
+            var room = PhotonNetwork.CurrentRoom;
+            var props = room?.CustomProperties;
+            if (props == null || !props.TryGetValue(HostFixPresenceRoomKey, out var raw))
+            {
+                return false;
+            }
+
+            return raw is int protocol && protocol == NetworkProtocol.ProtocolVersion;
         }
 
         internal static void RequestHostSnapshotBroadcast()
@@ -131,6 +158,36 @@ namespace DeathHeadHopperFix.Modules.Config
             };
 
             PhotonNetwork.RaiseEvent(PhotonEventCodes.ConfigSync, payload, options, SendOptions.SendReliable);
+        }
+
+        private static void TryPublishHostFixPresence()
+        {
+            if (!PhotonNetwork.InRoom || !PhotonNetwork.IsMasterClient || PhotonNetwork.CurrentRoom == null)
+            {
+                return;
+            }
+
+            try
+            {
+                var roomProps = PhotonNetwork.CurrentRoom.CustomProperties;
+                if (roomProps != null &&
+                    roomProps.TryGetValue(HostFixPresenceRoomKey, out var existing) &&
+                    existing is int existingProtocol &&
+                    existingProtocol == NetworkProtocol.ProtocolVersion)
+                {
+                    return;
+                }
+
+                var set = new ExitGames.Client.Photon.Hashtable
+                {
+                    [HostFixPresenceRoomKey] = NetworkProtocol.ProtocolVersion
+                };
+                PhotonNetwork.CurrentRoom.SetCustomProperties(set);
+            }
+            catch
+            {
+                // Presence marker is best-effort for permissive compatibility mode.
+            }
         }
 
         public void OnEvent(EventData photonEvent)
