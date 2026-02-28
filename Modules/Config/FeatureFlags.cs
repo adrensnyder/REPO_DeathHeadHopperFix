@@ -94,35 +94,35 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.ChargeVanilla, Descriptions.DHHChargeStrengthDiminishingFactor, Min = 0.1f, Max = 0.99f)]
         public static float DHHChargeStrengthDiminishingFactor = 0.75f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpBaseValue, Min = 1f, Max = 10f)]
-        public static int DHHHopJumpBaseValue = 2;
-
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpIncreasePerLevel, Min = 0.1f, Max = 1f)]
-        public static float DHHHopJumpIncreasePerLevel = 0.3f;
-
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceBaseValue, Min = 0.1f, Max = 5f)]
         public static float DHHJumpForceBaseValue = 0.5f;
 
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceIncreasePerLevel, Min = 0.1f, Max = 2f)]
-        public static float DHHJumpForceIncreasePerLevel = 0.3f;
-
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 10f)]
-        public static int DHHHopJumpThresholdLevel = 2;
-
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpDiminishingFactor, Min = 0.1f, Max = 0.99f)]
-        public static float DHHHopJumpDiminishingFactor = 0.9f;
+        public static float DHHJumpForceIncreasePerLevel = 0.25f;
 
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceThresholdLevel, Min = 1f, Max = 10f)]
-        public static int DHHJumpForceThresholdLevel = 2;
+        public static int DHHJumpForceThresholdLevel = 5;
 
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceDiminishingFactor, Min = 0.1f, Max = 0.99f)]
         public static float DHHJumpForceDiminishingFactor = 0.9f;
 
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpIncreasePerLevel, Min = 0.1f, Max = 1f)]
+        public static float DHHHopJumpIncreasePerLevel = 0.25f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpDiminishingFactor, Min = 0.1f, Max = 0.99f)]
+        public static float DHHHopJumpDiminishingFactor = 0.9f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpBaseValue, Min = 1f, Max = 10f)]
+        public static int DHHHopJumpBaseValue = 2;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 10f)]
+        public static int DHHHopJumpThresholdLevel = 5;
+
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.DHHShopMaxItems, Min = -1f, Max = 12f)]
-        public static int DHHShopMaxItems = 6;
+        public static int DHHShopMaxItems = 8;
 
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.DHHShopSpawnChance, Min = 0.1f, Max = 1f)]
-        public static float DHHShopSpawnChance = 0.5f;
+        public static float DHHShopSpawnChance = 0.75f;
 
         [FeatureConfigEntry(Sections.Upgrades, Descriptions.ShopItemsSpawnChance, Min = 0.1f, Max = 1f)]
         public static float ShopItemsSpawnChance = 0.75f;
