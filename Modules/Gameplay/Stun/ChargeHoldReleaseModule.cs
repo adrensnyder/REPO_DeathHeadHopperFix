@@ -980,6 +980,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                             return;
                         }
                     }
+
+                    return;
                 }
 
                 var photonViewField = AccessTools.Field(impactDetector.GetType(), "photonView");
