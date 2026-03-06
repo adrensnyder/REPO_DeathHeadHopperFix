@@ -1,4 +1,3 @@
-using System.Reflection;
 using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
@@ -13,12 +12,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
     internal static class PlayerDeathHeadUpdatePatch
     {
         private const string JumpTraceKey = "Fix:Jump.Trace";
-        private static readonly FieldInfo s_triggeredField = AccessTools.Field(typeof(PlayerDeathHead), "triggered");
-        private static readonly FieldInfo s_spectatePlayerField = AccessTools.Field(typeof(SpectateCamera), "player");
-        private static readonly MethodInfo? s_grabLinkRpcMethod = AccessTools.Method(
-            typeof(PhysGrabObject),
-            "GrabLinkRPC",
-            new[] { typeof(int), typeof(int), typeof(Vector3), typeof(Vector3), typeof(Vector3) });
         private static float s_jumpTimer = 1f;
 
         [HarmonyPrefix]
@@ -36,15 +29,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (avatar == null)
                 return;
 
-            if (s_triggeredField == null || s_triggeredField.GetValue(__instance) is not bool triggered || !triggered)
+            if (!__instance.triggered)
                 return;
 
             avatar.transform.position = ___physGrabObject.transform.position;
 
             if (SemiFunc.InputMovementX() != 0f || SemiFunc.InputMovementY() != 0f)
             {
-                if (s_spectatePlayerField != null && SpectateCamera.instance != null)
-                    s_spectatePlayerField.SetValue(SpectateCamera.instance, avatar);
+                if (SpectateCamera.instance != null)
+                    SpectateCamera.instance.player = avatar;
             }
 
             if (s_jumpTimer > 0f)
@@ -108,12 +101,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             var grabPoint = grabber.physGrabPointPullerPosition - dir;
             if (!GameManager.Multiplayer())
             {
-                if (s_grabLinkRpcMethod == null)
-                    return;
-
-                s_grabLinkRpcMethod.Invoke(
-                    ___physGrabObject,
-                    new object[] { grabberView.ViewID, 0, grabPoint, Vector3.zero, Vector3.zero });
+                ApplyLocalGrabLink(___physGrabObject, grabber, grabPoint, 0);
             }
             else
             {
@@ -144,6 +132,36 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                         Debug.Log($"[Fix:Jump] Applied battery consumption. usage={usage:0.000} ref={reference:0.000}");
                     }
                 }
+            }
+        }
+
+        private static void ApplyLocalGrabLink(PhysGrabObject grabObject, PhysGrabber grabber, Vector3 point, int colliderId)
+        {
+            if (grabObject == null || grabber == null)
+                return;
+
+            grabber.physGrabPoint.position = point;
+            grabber.localGrabPosition = grabObject.transform.InverseTransformPoint(point);
+            grabber.grabbedObjectTransform = grabObject.transform;
+            var colliderTransform = grabObject.FindColliderFromID(colliderId);
+            grabber.grabbedPhysGrabObjectColliderID = colliderId;
+            grabber.grabbedPhysGrabObjectCollider = colliderTransform != null ? colliderTransform.GetComponent<Collider>() : null;
+            grabber.prevGrabbed = grabber.grabbed;
+            grabber.grabbed = true;
+            grabber.grabbedObject = grabObject.rb;
+            grabber.grabbedPhysGrabObject = grabObject;
+
+            var cameraTransform = grabber.playerAvatar?.localCamera?.transform;
+            if (cameraTransform != null)
+            {
+                grabber.cameraRelativeGrabbedForward = cameraTransform.InverseTransformDirection(grabObject.transform.forward).normalized;
+                grabber.cameraRelativeGrabbedUp = cameraTransform.InverseTransformDirection(grabObject.transform.up).normalized;
+            }
+
+            if (grabObject.playerGrabbing.Count == 0)
+            {
+                grabObject.camRelForward = grabObject.transform.InverseTransformDirection(grabObject.transform.forward);
+                grabObject.camRelUp = grabObject.transform.InverseTransformDirection(grabObject.transform.up);
             }
         }
     }

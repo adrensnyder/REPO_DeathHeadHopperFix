@@ -63,7 +63,7 @@
 
 		<!-- Assembly -->
 		<Reference Include="Assembly-CSharp">
-			<HintPath>..\00Libs\GameAssemblies\Assembly-CSharp.dll</HintPath>
+			<HintPath>..\00Libs\GameAssemblies\Assembly-CSharp-publicized.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
