@@ -271,6 +271,9 @@ namespace DeathHeadHopperFix.Modules.Battery
                 return;
 
             _lastSyncedEyeWarningState = blocked;
+            if (!SemiFunc.IsMultiplayer() || !PhotonNetwork.InRoom)
+                return;
+
             try
             {
                 _photonView.RPC(nameof(SyncEyeWarningStateRPC), RpcTarget.OthersBuffered, blocked);
