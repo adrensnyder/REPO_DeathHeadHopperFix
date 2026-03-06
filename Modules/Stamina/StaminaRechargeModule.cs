@@ -36,7 +36,7 @@ namespace DeathHeadHopperFix.Modules.Stamina
             }
 
             _photonView = GetComponent<PhotonView>();
-            _isOwner = _photonView == null || _photonView.IsMine;
+            _isOwner = !SemiFunc.IsMultiplayer() || (_photonView != null && _photonView.IsMine);
 
             _rb = GetComponent<Rigidbody>();
         }
