@@ -24,7 +24,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 return;
 
             var avatar = __instance.playerAvatar;
-            if (avatar == null || avatar.photonView == null || !avatar.photonView.IsMine)
+            var isLocalAvatar = avatar != null &&
+                                (!GameManager.Multiplayer() ||
+                                 (avatar.photonView != null && avatar.photonView.IsMine));
+            if (!isLocalAvatar)
+                return;
+            if (avatar == null)
                 return;
 
             if (s_triggeredField == null || s_triggeredField.GetValue(__instance) is not bool triggered || !triggered)
