@@ -15,6 +15,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         private const string JumpTraceKey = "Fix:Jump.Trace";
         private static readonly FieldInfo s_triggeredField = AccessTools.Field(typeof(PlayerDeathHead), "triggered");
         private static readonly FieldInfo s_spectatePlayerField = AccessTools.Field(typeof(SpectateCamera), "player");
+        private static readonly MethodInfo? s_grabLinkRpcMethod = AccessTools.Method(
+            typeof(PhysGrabObject),
+            "GrabLinkRPC",
+            new[] { typeof(int), typeof(int), typeof(Vector3), typeof(Vector3), typeof(Vector3) });
         private static float s_jumpTimer = 1f;
 
         [HarmonyPrefix]
@@ -97,15 +101,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             }
 
             var grabber = avatar.physGrabber;
-            if (grabber == null || avatar.photonView == null)
+            var grabberView = grabber?.photonView;
+            if (grabber == null || grabberView == null)
                 return;
 
-            ___physGrabObject.GrabLink(
-                avatar.photonView.ViewID,
-                0,
-                grabber.physGrabPointPullerPosition - dir,
-                Vector3.zero,
-                Vector3.zero);
+            var grabPoint = grabber.physGrabPointPullerPosition - dir;
+            if (!GameManager.Multiplayer())
+            {
+                if (s_grabLinkRpcMethod == null)
+                    return;
+
+                s_grabLinkRpcMethod.Invoke(
+                    ___physGrabObject,
+                    new object[] { grabberView.ViewID, 0, grabPoint, Vector3.zero, Vector3.zero });
+            }
+            else
+            {
+                ___physGrabObject.GrabLink(
+                    grabberView.ViewID,
+                    0,
+                    grabPoint,
+                    Vector3.zero,
+                    Vector3.zero);
+            }
             ___physGrabObject.GrabStarted(grabber);
             ___physGrabObject.GrabEnded(grabber);
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog(JumpTraceKey + ".Applied", 2))
