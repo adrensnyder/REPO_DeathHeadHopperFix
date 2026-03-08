@@ -83,6 +83,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             var mCancelCharge = AccessTools.Method(chargeHandlerType, "CancelCharge", Type.EmptyTypes);
             var mEnemyHit = AccessTools.Method(chargeHandlerType, "EnemyHit");
             var mUpdateWindupDirection = AccessTools.Method(chargeHandlerType, "UpdateWindupDirection", new[] { typeof(Vector3) });
+            var mSyncChargeState = AccessTools.Method(chargeHandlerType, "SyncChargeStateRPC");
             if (s_chargeHandlerChargeStrengthField == null)
             {
                 s_chargeHandlerChargeStrengthField = AccessTools.Field(chargeHandlerType, "chargeStrength");
@@ -122,6 +123,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             var updateWindupDirectionPrefix = typeof(ChargeHoldReleaseModule).GetMethod(nameof(ChargeHandler_UpdateWindupDirection_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
             if (mUpdateWindupDirection != null && updateWindupDirectionPrefix != null)
                 harmony.Patch(mUpdateWindupDirection, prefix: new HarmonyMethod(updateWindupDirectionPrefix));
+            var syncChargeStatePostfix = typeof(ChargeHoldReleaseModule).GetMethod(nameof(ChargeHandler_SyncChargeStateRPC_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mSyncChargeState != null && syncChargeStatePostfix != null)
+                harmony.Patch(mSyncChargeState, postfix: new HarmonyMethod(syncChargeStatePostfix));
         }
 
         private static bool ChargeHandler_ChargeWindup_Prefix(object __instance)
@@ -312,6 +316,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
         private static void ChargeHandler_CancelCharge_Postfix(object __instance)
         {
+            StopChargeWindupLoop(__instance);
+            ClearChargeHoldState(__instance);
+        }
+
+        private static void ChargeHandler_SyncChargeStateRPC_Postfix(object __instance)
+        {
+            if (__instance == null)
+                return;
+
+            if (IsChargeState(__instance, "Windup") || IsChargeState(__instance, "Charging"))
+                return;
+
+            StopChargeWindupLoop(__instance);
             ClearChargeHoldState(__instance);
         }
 
@@ -440,16 +457,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             {
                 if (!ConfigSyncManager.IsRemoteHostFixCompatible())
                 {
+                    state.IsHolding = false;
+                    state.LaunchScale = 0f;
                     s_localHoldInputPending = false;
                     s_localHoldUiActive = false;
                     AbilityModule.SetChargeSlotActivationProgress(0f);
+                    StopChargeWindupLoop(chargeHandler);
                     if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog(ChargePermissiveFallbackLogKey, 120))
                     {
-                        Debug.Log("[Fix:DHHCharge][PermissiveGate] Host fix marker missing. Falling back to vanilla release path.");
+                        Debug.Log("[Fix:DHHCharge][PermissiveGate] Host fix marker missing. Sending authoritative cancel fallback.");
                     }
 
-                    // Permissive mismatch fallback: do not send custom RPC tags when host is not known compatible.
-                    return true;
+                    TrySendVanillaRemoteCancelCommand(chargeHandler);
+                    return false;
                 }
 
                 state.IsHolding = false;
@@ -457,7 +477,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 s_localHoldUiActive = false;
                 AbilityModule.SetChargeSlotActivationProgress(0f);
                 // Remote client sends only "release input"; host computes scale/threshold authoritatively.
-                SendRemoteReleaseCommand(chargeHandler);
+                if (!TrySendRemoteReleaseCommand(chargeHandler))
+                {
+                    StopChargeWindupLoop(chargeHandler);
+                    TrySendVanillaRemoteCancelCommand(chargeHandler);
+                }
                 return false;
             }
 
@@ -549,40 +573,40 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             return false;
         }
 
-        private static void SendRemoteReleaseCommand(object chargeHandler)
+        private static bool TrySendRemoteReleaseCommand(object chargeHandler)
         {
-            var pv = GetDhhInputManagerHeadPhotonView();
+            var pv = GetChargePhotonView(chargeHandler);
             if (pv == null || pv.ViewID <= 0)
-            {
-                if (chargeHandler is Component component)
-                {
-                    pv = component.GetComponent<PhotonView>();
-                }
-            }
-            if (pv == null || pv.ViewID <= 0)
-                return;
+                return false;
             if (!PhotonNetwork.InRoom || PhotonNetwork.IsMasterClient)
-                return;
+                return false;
 
             pv.RPC("UpdateWindupDirection", RpcTarget.MasterClient, new object[] { new Vector3(RemoteReleaseCommandTag, 0f, 0f) });
+            return true;
         }
 
-        private static void SendRemoteCancelCommand(object chargeHandler)
+        private static bool TrySendVanillaRemoteCancelCommand(object chargeHandler)
         {
-            var pv = GetDhhInputManagerHeadPhotonView();
+            var pv = GetChargePhotonView(chargeHandler);
             if (pv == null || pv.ViewID <= 0)
-            {
-                if (chargeHandler is Component component)
-                {
-                    pv = component.GetComponent<PhotonView>();
-                }
-            }
-            if (pv == null || pv.ViewID <= 0)
-                return;
+                return false;
             if (!PhotonNetwork.InRoom || PhotonNetwork.IsMasterClient)
-                return;
+                return false;
 
-            pv.RPC("UpdateWindupDirection", RpcTarget.MasterClient, new object[] { new Vector3(RemoteCancelCommandTag, 0f, 0f) });
+            pv.RPC("CancelCharge", RpcTarget.MasterClient, Array.Empty<object>());
+            return true;
+        }
+
+        private static PhotonView? GetChargePhotonView(object chargeHandler)
+        {
+            if (chargeHandler is Component component)
+            {
+                var componentPhotonView = component.GetComponent<PhotonView>();
+                if (componentPhotonView != null && componentPhotonView.ViewID > 0)
+                    return componentPhotonView;
+            }
+
+            return GetDhhInputManagerHeadPhotonView();
         }
 
         private static PhotonView? GetDhhInputManagerHeadPhotonView()
