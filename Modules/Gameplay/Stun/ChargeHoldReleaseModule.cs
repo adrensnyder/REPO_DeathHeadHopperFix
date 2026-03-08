@@ -25,6 +25,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private static MethodInfo? s_chargeHandlerAbilityLevelGetter;
         private static FieldInfo? s_chargeHandlerImpactDetectorField;
         private static FieldInfo? s_chargeHandlerControllerField;
+        private static FieldInfo? s_chargeHandlerBaseMaxBouncesField;
         private static FieldInfo? s_chargeHandlerMaxBouncesField;
         private static FieldInfo? s_chargeHandlerWindupTimerField;
         private static FieldInfo? s_chargeHandlerWindupTimeField;
@@ -94,6 +95,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             {
                 s_chargeHandlerControllerField = AccessTools.Field(chargeHandlerType, "controller");
             }
+            s_chargeHandlerBaseMaxBouncesField ??= AccessTools.Field(chargeHandlerType, "baseMaxBounces");
             s_chargeHandlerMaxBouncesField ??= AccessTools.Field(chargeHandlerType, "maxBounces");
             s_chargeHandlerWindupTimerField ??= AccessTools.Field(chargeHandlerType, "windupTimer");
             s_chargeHandlerWindupTimeField ??= AccessTools.Field(chargeHandlerType, "windupTime");
@@ -611,23 +613,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 return 0f;
 
             var required = 0f;
+            TryGetEffectiveChargeAbilityLevel(chargeHandler, out var abilityLevel);
 
-            if (s_chargeHandlerChargeStrengthField?.GetValue(chargeHandler) is float chargeStrength)
+            var chargeStrength = GetEffectiveChargeStrengthForThreshold(chargeHandler, abilityLevel);
+            if (chargeStrength > 0f)
             {
                 required = Mathf.Max(required, RequiredScaleForMinimumOne(chargeStrength));
             }
 
-            if (s_chargeHandlerMaxBouncesField?.GetValue(chargeHandler) is float maxBounces)
+            var maxBounces = GetEffectiveMaxBouncesForThreshold(chargeHandler, abilityLevel);
+            if (maxBounces > 0f)
             {
                 required = Mathf.Max(required, RequiredScaleForMinimumOne(maxBounces));
             }
 
-            if (TryGetEffectiveChargeAbilityLevel(chargeHandler, out var abilityLevel))
+            if (abilityLevel > 0)
             {
-                var enemiesBase = Mathf.FloorToInt(EvaluateStatWithDiminishingReturns(1f, 0.5f, abilityLevel, 20, 0.9f).FinalValue);
                 var stunBase = 5f + (1f * abilityLevel);
-
-                required = Mathf.Max(required, RequiredScaleForMinimumOne(enemiesBase));
                 required = Mathf.Max(required, RequiredScaleForMinimumOne(stunBase));
             }
 
@@ -635,6 +637,46 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 return 1f;
 
             return Mathf.Clamp01(required);
+        }
+
+        private static float GetEffectiveChargeStrengthForThreshold(object chargeHandler, int abilityLevel)
+        {
+            if (s_chargeHandlerChargeStrengthField?.GetValue(chargeHandler) is float runtimeStrength &&
+                runtimeStrength > 0f)
+            {
+                return runtimeStrength;
+            }
+
+            if (abilityLevel <= 0)
+                return 0f;
+
+            return EvaluateStatWithDiminishingReturns(
+                FeatureFlags.DHHChargeStrengthBaseValue,
+                FeatureFlags.DHHChargeStrengthIncreasePerLevel,
+                abilityLevel,
+                FeatureFlags.DHHChargeStrengthThresholdLevel,
+                FeatureFlags.DHHChargeStrengthDiminishingFactor).FinalValue;
+        }
+
+        private static float GetEffectiveMaxBouncesForThreshold(object chargeHandler, int abilityLevel)
+        {
+            if (s_chargeHandlerMaxBouncesField?.GetValue(chargeHandler) is float runtimeMaxBounces &&
+                runtimeMaxBounces > 0f)
+            {
+                return runtimeMaxBounces;
+            }
+
+            if (abilityLevel <= 0)
+                return 0f;
+
+            var baseMaxBounces = 3f;
+            if (s_chargeHandlerBaseMaxBouncesField?.GetValue(chargeHandler) is int baseMaxBouncesInt &&
+                baseMaxBouncesInt > 0)
+            {
+                baseMaxBounces = baseMaxBouncesInt;
+            }
+
+            return Mathf.FloorToInt(EvaluateStatWithDiminishingReturns(baseMaxBounces, 0.5f, abilityLevel, 20, 0.9f).FinalValue);
         }
 
         private static bool TryGetEffectiveChargeAbilityLevel(object chargeHandler, out int abilityLevel)
