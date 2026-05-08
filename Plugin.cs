@@ -18,13 +18,14 @@ using System.Reflection;
 
 namespace DeathHeadHopperFix
 {
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.0")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.2")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
 
         private Harmony? _harmony;
         private bool _patched;
+        private bool _patchAttempted;
         private Assembly? _targetAssembly;
         private static ManualLogSource? _log;
 
@@ -67,13 +68,14 @@ namespace DeathHeadHopperFix
 
         private void TryPatchIfTargetAssembly(Assembly asm)
         {
-            if (_patched || asm == null)
+            if (_patched || _patchAttempted || asm == null)
                 return;
 
             var name = asm.GetName().Name;
             if (!string.Equals(name, TargetAssemblyName, StringComparison.OrdinalIgnoreCase))
                 return;
 
+            _patchAttempted = true;
             try
             {
                 _log?.LogInfo($"Detected {TargetAssemblyName} assembly load. Applying patches...");

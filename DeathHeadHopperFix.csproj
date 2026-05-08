@@ -5,7 +5,7 @@
 		<OutputType>Library</OutputType>
 		<AssemblyName>DeathHeadHopperFix</AssemblyName>
 		<RootNamespace>DeathHeadHopperFix</RootNamespace>
-		<Version>0.2.0</Version>
+		<Version>0.2.2</Version>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<LangVersion>latest</LangVersion>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -42,7 +42,7 @@
 
 		<!-- Mod -->
 		<Reference Include="DeathHeadHopper">
-			<HintPath>..\00Libs\OriginalMod\DeathHeadHopper.dll</HintPath>
+			<HintPath>..\00Libs\OriginalMod\DeathHeadHopper-publicized.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="REPOLib">
@@ -58,6 +58,14 @@
 		</Reference>
 		<Reference Include="UnityEngine.CoreModule">
 			<HintPath>..\00Libs\Unity\UnityEngine.CoreModule.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="Unity.TextMeshPro">
+			<HintPath>..\00Libs\Unity\Unity.TextMeshPro-publicized.dll</HintPath>
+			<Private>false</Private>
+		</Reference>
+		<Reference Include="UnityEngine.UI">
+			<HintPath>..\00Libs\Unity\UnityEngine.UI-publicized.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 
@@ -99,16 +107,6 @@
 
 		<Reference Include="Unity.InputSystem">
 			<HintPath>..\00Libs\Unity\Unity.InputSystem.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-
-		<Reference Include="MonoMod.RuntimeDetour">
-			<HintPath>..\00Libs\BepInEx\Core\MonoMod.RuntimeDetour.dll</HintPath>
-			<Private>False</Private>
-		</Reference>
-
-		<Reference Include="MonoMod.Utils">
-			<HintPath>..\00Libs\BepInEx\Core\MonoMod.Utils.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 

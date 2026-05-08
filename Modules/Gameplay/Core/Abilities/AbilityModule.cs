@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using DeathHeadHopper.UI;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
@@ -39,19 +40,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
 
             var mStart = AccessTools.Method(tAbilitySpot, "Start");
-            var mUpdate = AccessTools.Method(tAbilitySpot, "Update");
             var mUpdateUi = AccessTools.Method(tAbilitySpot, "UpdateUI");
             var mOnDestroy = tAbilitySpot.GetMethod("OnDestroy", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
             var startPostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_Start_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            var updatePostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_Update_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             var updateUiPostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_UpdateUI_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
             var destroyPostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_OnDestroy_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
 
             if (mStart != null && startPostfix != null)
                 harmony.Patch(mStart, postfix: new HarmonyMethod(startPostfix));
-            if (mUpdate != null && updatePostfix != null)
-                harmony.Patch(mUpdate, postfix: new HarmonyMethod(updatePostfix));
             if (mUpdateUi != null && updateUiPostfix != null)
                 harmony.Patch(mUpdateUi, postfix: new HarmonyMethod(updateUiPostfix));
             if (mOnDestroy != null && destroyPostfix != null)
@@ -93,6 +90,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             }
             AbilitySpotLabelOverlay.EnsureLabel(__instance);
             ApplySlot2DirectionVisual(__instance);
+            if (__instance is AbilitySpot spot)
+            {
+                var driver = spot.GetComponent<AbilitySpotUpdateDriver>() ?? spot.gameObject.AddComponent<AbilitySpotUpdateDriver>();
+                driver.Initialize(spot);
+                spot.enabled = false;
+            }
         }
 
         private static void AbilitySpot_UpdateUI_Postfix(object? __instance)
@@ -106,7 +109,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             ApplySlot2DirectionVisual(__instance);
         }
 
-        private static void AbilitySpot_Update_Postfix(object? __instance)
+        private static void AfterAbilitySpotUpdate(object? __instance)
         {
             if (__instance == null)
                 return;
@@ -136,6 +139,77 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             s_lastDirectionProgressBySpot.Remove(__instance);
             s_lastDirectionEnergySufficientBySpot.Remove(__instance);
             AbilitySpotLabelOverlay.ClearLabel(__instance);
+        }
+
+        private sealed class AbilitySpotUpdateDriver : MonoBehaviour
+        {
+            private AbilitySpot? _spot;
+
+            internal void Initialize(AbilitySpot spot)
+            {
+                _spot = spot;
+            }
+
+            private void Update()
+            {
+                var spot = _spot;
+                if (spot == null)
+                    return;
+                if (InternalDebugFlags.DisableAbilityPatches)
+                    return;
+
+                var ability = spot.CurrentAbility;
+                if (ability == null)
+                {
+                    spot.SemiUIScoot(new Vector2(0f, -20f), 0.2f);
+                }
+                else
+                {
+                    spot.level.text = $"LV. {ability.AbilityLevel}";
+                }
+
+                RunSemiUiUpdate(spot);
+                AfterAbilitySpotUpdate(spot);
+            }
+
+            private static void RunSemiUiUpdate(SemiUI ui)
+            {
+                if (ui.initializedTimer > 0f)
+                {
+                    ui.initializedTimer -= Time.deltaTime;
+                    return;
+                }
+
+                var deltaTime = Time.deltaTime;
+                if (ui.scootTimer >= 0f)
+                {
+                    ui.scootTimer -= deltaTime;
+                }
+
+                ui.FlashColorLogic(deltaTime);
+                ui.HideAnimationLogic(deltaTime);
+                ui.HideTimer(deltaTime);
+                ui.SpringScaleLogic(deltaTime);
+                ui.ScootPositionLogic(deltaTime);
+                ui.SpringShakeLogic(deltaTime);
+                ui.UpdatePositionLogic();
+                ui.prevShowTimer = ui.showTimer;
+                ui.prevHideTimer = ui.hideTimer;
+                ui.prevScootTimer = ui.scootTimer;
+                ui.prevStopHidingTimer = ui.stopHidingTimer;
+                ui.prevStopShowingTimer = ui.stopShowingTimer;
+
+                if (ui.hideTimer >= 0f)
+                    ui.hideTimer -= deltaTime;
+                if (ui.showTimer >= 0f)
+                    ui.showTimer -= deltaTime;
+                if (ui.stopShowingTimer >= 0f)
+                    ui.stopShowingTimer -= deltaTime;
+                if (ui.stopHidingTimer >= 0f)
+                    ui.stopHidingTimer -= deltaTime;
+                if (ui.stopScootingTimer >= 0f)
+                    ui.stopScootingTimer -= deltaTime;
+            }
         }
 
         internal static void TriggerDirectionSlotCooldown(float cooldownSeconds)
