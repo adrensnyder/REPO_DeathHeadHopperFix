@@ -9,7 +9,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string ChargeAbility = "3. Charge ability tunables (DHH)";
             public const string Jump = "4. Jump (DHH)";
             public const string ChargeVanilla = "5. Charge (DHH)";
-            public const string Upgrades = "6. Upgrades";
+            public const string Shop = "6. Shop";
             public const string Debug = "7. Debug";
             
         }
@@ -40,9 +40,8 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHHopJumpDiminishingFactor = "Curve factor that controls how quickly extra hop levels taper off.";
             public const string DHHJumpForceThresholdLevel = "Threshold level where jump force increases start to diminish.";
             public const string DHHJumpForceDiminishingFactor = "Diminishing factor that cuts additional force beyond the threshold.";
-            public const string DHHShopMaxItems = "Maximum number of DeathHeadHopper mod items that can spawn in the shop (-1 = unlimited).";
-            public const string DHHShopSpawnChance = "Chance each DeathHeadHopper shop slot actually spawns an item.";
-            public const string ShopItemsSpawnChance = "Second-tier chance that a DeathHeadHopper slot produces an item after it was selected.";
+            public const string HeadChargerShopWeightPercent = "Relative shop list weight for Item DHH Head Charger compared to vanilla normal items. 100 = vanilla weight, 0 = never eligible, values above 100 add extra list weight.";
+            public const string DHHUpgradesShopWeightPercent = "Relative shop list weight for Item Upgrade DHH Charge and Item Upgrade DHH Power compared to vanilla upgrades. 100 = vanilla weight, 0 = never eligible, values above 100 add extra list weight.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
         }
 
@@ -118,14 +117,11 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 10f)]
         public static int DHHHopJumpThresholdLevel = 5;
 
-        [FeatureConfigEntry(Sections.Upgrades, Descriptions.DHHShopMaxItems, Min = -1f, Max = 12f)]
-        public static int DHHShopMaxItems = 8;
+        [FeatureConfigEntry(Sections.Shop, Descriptions.HeadChargerShopWeightPercent, Min = 0f, Max = 500f)]
+        public static int HeadChargerShopWeightPercent = 120;
 
-        [FeatureConfigEntry(Sections.Upgrades, Descriptions.DHHShopSpawnChance, Min = 0.1f, Max = 1f)]
-        public static float DHHShopSpawnChance = 0.75f;
-
-        [FeatureConfigEntry(Sections.Upgrades, Descriptions.ShopItemsSpawnChance, Min = 0.1f, Max = 1f)]
-        public static float ShopItemsSpawnChance = 0.75f;
+        [FeatureConfigEntry(Sections.Shop, Descriptions.DHHUpgradesShopWeightPercent, Min = 0f, Max = 500f)]
+        public static int DHHUpgradesShopWeightPercent = 50;
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = false;

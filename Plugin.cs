@@ -86,7 +86,7 @@ namespace DeathHeadHopperFix
 
                 PrefabModule.Apply(harmony, asm, _log);
                 AudioModule.Apply(harmony, asm, _log);
-                DHHShopModule.Apply(harmony, asm, _log);
+                DHHShopVanillaPoolModule.Apply(harmony, asm, _log);
                 _targetAssembly = asm;
                 DHHApiGuardModule.Apply(harmony, asm);
                 BatteryJumpPatchModule.Apply(harmony, asm);

@@ -1,17 +1,18 @@
 #nullable enable
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using DeathHeadHopper.Managers;
 using HarmonyLib;
-using UnityEngine;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
-using DeathHeadHopperFix.Modules.Utilities;
+using Photon.Pun;
+using REPOLib.Modules;
+using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 {
@@ -28,27 +29,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (harmony == null || asm == null)
                 return;
 
-            PatchDhhAssetManagerIfPossible(harmony, asm);
-            PatchDhhShopManagerIfPossible(harmony, asm);
+            PatchDhhAssetManagerIfPossible(harmony);
             PatchRunManagerAwakeIfPossible(harmony);
+            PatchMultiplayerPoolIfPossible(harmony);
             PatchPhotonDefaultPoolIfPossible(harmony);
         }
 
-        private static void PatchDhhAssetManagerIfPossible(Harmony harmony, Assembly asm)
+        private static void PatchDhhAssetManagerIfPossible(Harmony harmony)
         {
-            var tAssetMgr = asm.GetType("DeathHeadHopper.Managers.DHHAssetManager", throwOnError: false);
-            if (tAssetMgr == null)
-                return;
-
-            var mLoadAssets = AccessTools.Method(tAssetMgr, "LoadAssets");
+            var mLoadAssets = AccessTools.Method(typeof(DHHAssetManager), nameof(DHHAssetManager.LoadAssets));
             if (mLoadAssets == null)
                 return;
 
-            var prefix = typeof(PrefabModule).GetMethod(nameof(DHHAssetManager_LoadAssets_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (prefix == null)
-                return;
-
-            harmony.Patch(mLoadAssets, prefix: new HarmonyMethod(prefix));
+            harmony.Patch(mLoadAssets, prefix: new HarmonyMethod(typeof(PrefabModule), nameof(DHHAssetManager_LoadAssets_Prefix)));
         }
 
         private static bool DHHAssetManager_LoadAssets_Prefix()
@@ -109,25 +102,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     _dhhBundle = bundle;
                 }
 
-                SetStaticFieldIfExists(
-                    "DeathHeadHopper.Managers.DHHAssetManager",
-                    "headPhaseMaterial",
-                    bundle.LoadAsset<Material>("Assets/DeathHeadHopper/Materials/Head Phase.mat"));
+                DHHAssetManager.headPhaseMaterial = bundle.LoadAsset<Material>("Assets/DeathHeadHopper/Materials/Head Phase.mat");
 
                 LoadItemsCompatible(bundle);
 
-                InvokeStaticIfExists("DeathHeadHopper.Managers.DHHAssetManager", "LoadAbilities", bundle);
-                InvokeStaticIfExists("DeathHeadHopper.Managers.DHHAssetManager", "LoadChargeAssets", bundle);
+                DHHAssetManager.LoadAbilities(bundle);
+                DHHAssetManager.LoadChargeAssets(bundle);
 
-                SetStaticFieldIfExists(
-                    "DeathHeadHopper.Managers.DHHShopManager",
-                    "shopAtticShelvesPrefab",
-                    bundle.LoadAsset<GameObject>("Assets/DeathHeadHopper/Shop Attic Shelves.prefab"));
-
-                SetStaticFieldIfExists(
-                    "DeathHeadHopper.Managers.DHHUIManager",
-                    "abilityUIPrefab",
-                    bundle.LoadAsset<GameObject>("Assets/DeathHeadHopper/Ability UI.prefab"));
+                DHHUIManager.abilityUIPrefab = bundle.LoadAsset<GameObject>("Assets/DeathHeadHopper/Ability UI.prefab");
 
                 _log?.LogInfo("[Fix] LoadAssets compatible flow completed.");
 
@@ -142,41 +124,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         private static void LoadItemsCompatible(AssetBundle bundle)
         {
-            var tAssetMgr = AccessTools.TypeByName("DeathHeadHopper.Managers.DHHAssetManager");
-            if (tAssetMgr == null)
-            {
-                _log?.LogError("[Fix] DHHAssetManager type not found.");
-                return;
-            }
-
-            var fShopItems = AccessTools.Field(tAssetMgr, "shopItems");
-            if (fShopItems == null)
-            {
-                _log?.LogError("[Fix] DHHAssetManager.shopItems field not found.");
-                return;
-            }
-
-            if (fShopItems.GetValue(null) is not IDictionary shopItemsDict)
-            {
-                _log?.LogError("[Fix] DHHAssetManager.shopItems is not an IDictionary.");
-                return;
-            }
-
-            var tItem = AccessTools.TypeByName("Item");
-            if (tItem == null)
-            {
-                _log?.LogError("[Fix] Game type Item not found.");
-                return;
-            }
-
-            var fItemPrefab = AccessTools.Field(tItem, "prefab");
-            if (fItemPrefab == null)
-            {
-                _log?.LogError("[Fix] Field Item.prefab not found.");
-                return;
-            }
-
-            var mSetPrefab = AccessTools.Method(fItemPrefab.FieldType, "SetPrefab", new[] { typeof(GameObject), typeof(string) });
+            var shopItemsDict = DHHAssetManager.shopItems;
+            shopItemsDict.Clear();
 
             var assetNames = bundle.GetAllAssetNames()
                 .Where(x => x.EndsWith(".asset", StringComparison.OrdinalIgnoreCase) &&
@@ -187,10 +136,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
             foreach (var itemAssetPath in assetNames)
             {
-                UnityEngine.Object? itemObj = null;
+                Item? itemObj = null;
                 try
                 {
-                    itemObj = bundle.LoadAsset(itemAssetPath, tItem);
+                    itemObj = bundle.LoadAsset<Item>(itemAssetPath);
                 }
                 catch (Exception ex)
                 {
@@ -211,18 +160,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     continue;
                 }
 
-                var prefabRefObj = fItemPrefab.GetValue(itemObj) ?? Activator.CreateInstance(fItemPrefab.FieldType);
-                if (prefabRefObj == null)
-                {
-                    _log?.LogError("[Fix] Failed to create PrefabRef instance.");
-                    continue;
-                }
-
-                fItemPrefab.SetValue(itemObj, prefabRefObj);
-                mSetPrefab?.Invoke(prefabRefObj, new object?[] { prefab, prefabPath });
+                itemObj.prefab ??= new PrefabRef();
+                itemObj.prefab.SetPrefab(prefab, prefabPath);
 
                 var key = itemObj.name;
-                var assetKey = ItemHelpers.GetItemAssetName(itemObj) ?? key;
 
                 CachePrefabEntry(prefabPath, prefab);
 
@@ -230,13 +171,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 if (!string.IsNullOrEmpty(prefabFileName))
                     CachePrefabEntry(prefabFileName, prefab);
 
-                if (!string.IsNullOrWhiteSpace(assetKey))
-                {
-                    CachePrefabEntry(assetKey, prefab);
-                    CachePrefabEntry($"Items/{assetKey}", prefab);
-                }
+                CachePrefabEntry(key, prefab);
+                CachePrefabEntry($"Items/{key}", prefab);
 
-                CacheShopItemKey(shopItemsDict, assetKey, itemObj);
                 CacheShopItemKey(shopItemsDict, key, itemObj);
 
                 TryRegisterItemWithRepolib(itemObj);
@@ -246,100 +183,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             }
         }
 
-        private static void PatchDhhShopManagerIfPossible(Harmony harmony, Assembly asm)
-        {
-            var tShopMgr = asm.GetType("DeathHeadHopper.Managers.DHHShopManager", throwOnError: false);
-            if (tShopMgr == null)
-                return;
-
-            var mShopLoadItems = AccessTools.Method(tShopMgr, "LoadItems");
-            if (mShopLoadItems == null)
-                return;
-
-            var prefix = typeof(PrefabModule).GetMethod(nameof(DHHShopManager_LoadItems_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (prefix == null)
-                return;
-
-            harmony.Patch(mShopLoadItems, prefix: new HarmonyMethod(prefix));
-        }
-
-        private static bool DHHShopManager_LoadItems_Prefix()
-        {
-            try
-            {
-                var shopManager = ReflectionHelper.GetStaticInstanceByName("ShopManager");
-                if (shopManager == null)
-                    return false;
-
-                var tAssetMgr = AccessTools.TypeByName("DeathHeadHopper.Managers.DHHAssetManager");
-                var shopItemsDict = tAssetMgr != null ? AccessTools.Field(tAssetMgr, "shopItems")?.GetValue(null) as IDictionary : null;
-                if (shopItemsDict == null)
-                    return false;
-
-                var tDhhShopMgr = AccessTools.TypeByName("DeathHeadHopper.Managers.DHHShopManager");
-                var fPotential = tDhhShopMgr != null ? AccessTools.Field(tDhhShopMgr, "potentialItems") : null;
-                if (fPotential?.GetValue(null) is not IList dhhPotential)
-                    return false;
-
-                var fUpgrades = AccessTools.Field(shopManager.GetType(), "potentialItemUpgrades");
-                var fItems = AccessTools.Field(shopManager.GetType(), "potentialItems");
-
-                var upgradesList = fUpgrades?.GetValue(shopManager) as IList;
-                var itemsList = fItems?.GetValue(shopManager) as IList;
-
-                dhhPotential.Clear();
-
-                void CollectAndRemove(IList? source)
-                {
-                    if (source == null)
-                        return;
-
-                    var toRemove = new List<object>();
-                    foreach (var it in source)
-                    {
-                        if (it is UnityEngine.Object uo)
-                        {
-                            if (TryResolveShopItemKey(shopItemsDict, uo, out var resolvedKey, out var resolveMode))
-                            {
-                                dhhPotential.Add(it);
-                                toRemove.Add(it);
-                                _log?.LogInfo($"[Fix] DHHShopManager selecting '{resolvedKey}' into dhhPotential");
-                                if (FeatureFlags.DebugLogging && !string.Equals(resolveMode, "strict-itemAssetName", StringComparison.Ordinal))
-                                    _log?.LogInfo($"[Fix] DHHShopManager fallback match mode={resolveMode} item='{uo.name}' key='{resolvedKey}'");
-                            }
-                            else if (FeatureFlags.DebugLogging)
-                            {
-                                var strictKey = TryGetStrictItemAssetName(uo);
-                                var flexibleKey = ItemHelpers.GetItemAssetName(uo);
-                                _log?.LogInfo($"[Fix] DHHShopManager skip item='{uo.name}' strict='{strictKey ?? "<null>"}' flexible='{flexibleKey ?? "<null>"}'");
-                            }
-                        }
-                    }
-
-                    foreach (var entry in toRemove)
-                        source.Remove(entry);
-                }
-
-                CollectAndRemove(upgradesList);
-                CollectAndRemove(itemsList);
-
-                _log?.LogInfo($"[Fix] DHHShopManager potential list size {dhhPotential.Count} (upgrades left={upgradesList?.Count ?? 0}, items left={itemsList?.Count ?? 0})");
-            }
-            catch (Exception ex)
-            {
-                _log?.LogError(ex);
-            }
-
-            return false;
-        }
-
         private static void PatchRunManagerAwakeIfPossible(Harmony harmony)
         {
-            var tRunManager = AccessTools.TypeByName("RunManager");
-            if (tRunManager == null)
-                return;
-
-            var mAwake = AccessTools.Method(tRunManager, "Awake");
+            var mAwake = AccessTools.Method(typeof(RunManager), nameof(RunManager.Awake));
             if (mAwake == null)
                 return;
 
@@ -347,11 +193,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (pi != null && pi.Postfixes.Any(p => p.owner == harmony.Id))
                 return;
 
-            var postfix = typeof(PrefabModule).GetMethod(nameof(RunManager_Awake_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (postfix == null)
-                return;
-
-            harmony.Patch(mAwake, postfix: new HarmonyMethod(postfix));
+            harmony.Patch(mAwake, postfix: new HarmonyMethod(typeof(PrefabModule), nameof(RunManager_Awake_Postfix)));
         }
 
         private static void RunManager_Awake_Postfix()
@@ -371,18 +213,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (PendingPool.Count == 0)
                 return;
 
-            var tRunManager = AccessTools.TypeByName("RunManager");
-            if (tRunManager == null)
-                return;
-
-            var runMgr = ReflectionHelper.GetStaticInstanceValue(tRunManager, "instance");
+            var runMgr = RunManager.instance;
             if (runMgr == null)
                 return;
 
-            var fPool = AccessTools.Field(tRunManager, "singleplayerPool");
-            var poolObj = fPool?.GetValue(runMgr);
-            if (poolObj is not IDictionary<string, GameObject> pool)
-                return;
+            var pool = runMgr.singleplayerPool;
 
             int added = 0;
             foreach (var kv in PendingPool.ToList())
@@ -402,19 +237,37 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         private static void PatchPhotonDefaultPoolIfPossible(Harmony harmony)
         {
-            var tDefaultPool = AccessTools.TypeByName("Photon.Pun.DefaultPool");
-            if (tDefaultPool == null)
-                return;
-
-            var mInstantiate = AccessTools.Method(tDefaultPool, "Instantiate", new[] { typeof(string), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion) });
+            var mInstantiate = AccessTools.Method(typeof(DefaultPool), nameof(DefaultPool.Instantiate), new[] { typeof(string), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion) });
             if (mInstantiate == null)
                 return;
 
-            var prefix = typeof(PrefabModule).GetMethod(nameof(DefaultPool_Instantiate_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (prefix == null)
+            harmony.Patch(mInstantiate, prefix: new HarmonyMethod(typeof(PrefabModule), nameof(DefaultPool_Instantiate_Prefix)));
+        }
+
+        private static void PatchMultiplayerPoolIfPossible(Harmony harmony)
+        {
+            var mInstantiate = AccessTools.Method(typeof(MultiplayerPool), nameof(MultiplayerPool.Instantiate), new[] { typeof(string), typeof(UnityEngine.Vector3), typeof(UnityEngine.Quaternion) });
+            if (mInstantiate == null)
                 return;
 
-            harmony.Patch(mInstantiate, prefix: new HarmonyMethod(prefix));
+            harmony.Patch(mInstantiate, prefix: new HarmonyMethod(typeof(PrefabModule), nameof(MultiplayerPool_Instantiate_Prefix)));
+        }
+
+        private static bool MultiplayerPool_Instantiate_Prefix(MultiplayerPool __instance, string prefabId, UnityEngine.Vector3 position, UnityEngine.Quaternion rotation, ref GameObject __result)
+        {
+            if (string.IsNullOrWhiteSpace(prefabId))
+                return true;
+
+            if (!TryGetPendingPrefab(prefabId, out var prefab, out var normalized) || prefab == null)
+                return true;
+
+            if (__instance != null && !__instance.ResourceCache.ContainsKey(prefabId))
+                __instance.ResourceCache[prefabId] = prefab;
+
+            __result = UnityEngine.Object.Instantiate(prefab, position, rotation);
+            __result.SetActive(false);
+            _log?.LogInfo($"[Fix] MultiplayerPool cached prefab '{prefabId}' (normalized '{normalized}')");
+            return false;
         }
 
         private static bool DefaultPool_Instantiate_Prefix(string prefabId, UnityEngine.Vector3 position, UnityEngine.Quaternion rotation, ref GameObject __result)
@@ -545,106 +398,33 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             return string.IsNullOrEmpty(trimmed) ? string.Empty : trimmed!.ToLowerInvariant();
         }
 
-        private static void CacheShopItemKey(IDictionary dict, string? key, UnityEngine.Object value)
+        private static void CacheShopItemKey(IDictionary<string, Item> dict, string? key, Item value)
         {
-            if (dict == null || value == null || string.IsNullOrWhiteSpace(key))
+            if (value == null || string.IsNullOrWhiteSpace(key))
                 return;
 
-            if (dict.Contains(key))
-                dict[key] = value;
+            var actualKey = key!;
+            if (dict.ContainsKey(actualKey))
+                dict[actualKey] = value;
             else
-                dict.Add(key, value);
-
-            var normalized = NormalizePrefabKey(key);
-            if (!string.IsNullOrEmpty(normalized))
-            {
-                if (dict.Contains(normalized))
-                    dict[normalized] = value;
-                else
-                    dict.Add(normalized, value);
-            }
+                dict.Add(actualKey, value);
         }
 
-        private static bool ShopItemsDictContains(IDictionary dict, string? key)
-        {
-            if (dict == null || string.IsNullOrWhiteSpace(key))
-                return false;
-            if (dict.Contains(key))
-                return true;
-            var normalized = NormalizePrefabKey(key);
-            return dict.Contains(normalized);
-        }
-
-        private static bool TryResolveShopItemKey(IDictionary shopItemsDict, UnityEngine.Object itemObj, out string? resolvedKey, out string resolveMode)
-        {
-            resolvedKey = null;
-            resolveMode = "none";
-            if (shopItemsDict == null || itemObj == null)
-                return false;
-
-            var strictKey = TryGetStrictItemAssetName(itemObj);
-            if (!string.IsNullOrWhiteSpace(strictKey) && ShopItemsDictContains(shopItemsDict, strictKey))
-            {
-                resolvedKey = strictKey;
-                resolveMode = "strict-itemAssetName";
-                return true;
-            }
-
-            var flexibleKey = ItemHelpers.GetItemAssetName(itemObj);
-            if (!string.IsNullOrWhiteSpace(flexibleKey) && ShopItemsDictContains(shopItemsDict, flexibleKey))
-            {
-                resolvedKey = flexibleKey;
-                resolveMode = "flexible-itemAssetName";
-                return true;
-            }
-
-            var nameKey = itemObj.name;
-            if (!string.IsNullOrWhiteSpace(nameKey) && ShopItemsDictContains(shopItemsDict, nameKey))
-            {
-                resolvedKey = nameKey;
-                resolveMode = "object-name";
-                return true;
-            }
-
-            return false;
-        }
-
-        private static string? TryGetStrictItemAssetName(UnityEngine.Object itemObj)
+        private static void TryRegisterItemWithRepolib(Item itemObj)
         {
             try
             {
-                var type = itemObj.GetType();
-                var prop = type.GetProperty("itemAssetName", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (prop != null && prop.PropertyType == typeof(string))
-                    return (string?)prop.GetValue(itemObj, null);
-
-                var field = type.GetField("itemAssetName", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (field != null && field.FieldType == typeof(string))
-                    return (string?)field.GetValue(itemObj);
-            }
-            catch
-            {
-                // Optional metadata probe; fallback is handled by caller.
-            }
-
-            return null;
-        }
-
-        private static void TryRegisterItemWithRepolib(UnityEngine.Object itemObj)
-        {
-            try
-            {
-                var tItems = AccessTools.TypeByName("REPOLib.Modules.Items");
-                if (tItems == null)
+                var itemAttributes = itemObj.prefab?.Prefab?.GetComponent<ItemAttributes>();
+                if (itemAttributes == null)
+                {
+                    _log?.LogWarning($"[Fix] REPOLib RegisterItem skipped for '{itemObj.name}': prefab has no ItemAttributes.");
                     return;
+                }
 
-                var m = tItems.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(x =>
-                        x.Name == "RegisterItem" &&
-                        x.GetParameters().Length == 1 &&
-                        x.GetParameters()[0].ParameterType.Name == "Item");
+                if (itemAttributes.item == null)
+                    itemAttributes.item = itemObj;
 
-                m?.Invoke(null, new object?[] { itemObj });
+                Items.RegisterItem(itemAttributes);
             }
             catch (Exception ex)
             {
@@ -670,49 +450,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             }
 
             return false;
-        }
-
-        private static void SetStaticFieldIfExists(string typeName, string fieldName, object? value)
-        {
-            var t = AccessTools.TypeByName(typeName);
-            if (t == null)
-                return;
-
-            var f = AccessTools.Field(t, fieldName);
-            if (f == null)
-                return;
-
-            f.SetValue(null, value);
-        }
-
-        private static void InvokeStaticIfExists(string typeName, string methodName, object arg0)
-        {
-            var t = AccessTools.TypeByName(typeName);
-            if (t == null)
-                return;
-
-            MethodInfo? m = t.GetMethods(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
-                .FirstOrDefault(x =>
-                {
-                    if (x.Name != methodName)
-                        return false;
-                    var ps = x.GetParameters();
-                    return ps.Length == 1 && ps[0].ParameterType.IsInstanceOfType(arg0);
-                });
-
-            if (m == null)
-            {
-                m = t.GetMethods(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
-                    .FirstOrDefault(x =>
-                    {
-                        if (x.Name != methodName)
-                            return false;
-                        var ps = x.GetParameters();
-                        return ps.Length == 1 && ps[0].ParameterType.Name == arg0.GetType().Name;
-                    });
-            }
-
-            m?.Invoke(null, new[] { arg0 });
         }
     }
 }
