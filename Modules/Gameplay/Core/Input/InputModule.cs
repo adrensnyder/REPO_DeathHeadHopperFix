@@ -3,12 +3,12 @@
 using System;
 using System.Collections;
 using System.Reflection;
+using DeathHeadHopper.Managers;
 using HarmonyLib;
 using Photon.Pun;
 using UnityEngine;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Interop;
-using DeathHeadHopperFix.Modules.Utilities;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Input
 {
@@ -28,11 +28,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Input
             if (harmony == null || asm == null)
                 return;
 
-            var tInput = asm.GetType("DeathHeadHopper.Managers.DHHInputManager", throwOnError: false);
-            if (tInput == null)
-                return;
-
-            var mAwake = AccessTools.Method(tInput, "Awake");
+            var mAwake = AccessTools.Method(typeof(DHHInputManager), nameof(DHHInputManager.Awake));
             if (mAwake == null)
                 return;
 
@@ -48,33 +44,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Input
         {
             try
             {
-                var tPun = AccessTools.TypeByName("DeathHeadHopper.Managers.DHHPunManager");
-                if (tPun == null)
+                if (!string.IsNullOrWhiteSpace(DHHPunManager.hostVersion))
                     return;
 
-                var fHost = tPun.GetField("hostVersion", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-                var fLocal = tPun.GetField("localVersion", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
-                if (fHost == null)
-                    return;
-
-                var host = fHost.GetValue(null) as string;
-                if (!string.IsNullOrWhiteSpace(host))
-                    return;
-
-                if (IsMasterClientOrSingleplayer())
+                if (SemiFunc.IsMasterClientOrSingleplayer())
                 {
-                    var local = fLocal?.GetValue(null) as string;
+                    var local = DHHPunManager.localVersion;
                     if (string.IsNullOrWhiteSpace(local))
                         local = GetDeathHeadHopperVersionString();
                     if (!string.IsNullOrWhiteSpace(local))
-                        fHost.SetValue(null, local);
+                        DHHPunManager.hostVersion = local!;
                     return;
                 }
 
-                fHost.SetValue(null, "pending");
+                DHHPunManager.hostVersion = "pending";
 
-                var inst = ReflectionHelper.GetStaticInstanceByName("DeathHeadHopper.Managers.DHHPunManager");
-                __instance.StartCoroutine(DHHInputManager_InvokeVersionCheckWhenReady(inst));
+                __instance.StartCoroutine(DHHInputManager_InvokeVersionCheckWhenReady(DHHPunManager.instance));
 
                 __instance.StartCoroutine(DHHInputManager_WaitForHostVersion());
             }
@@ -87,78 +72,47 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Input
         private static IEnumerator DHHInputManager_WaitForHostVersion()
         {
             const int maxFrames = 300;
-            var tPun = AccessTools.TypeByName("DeathHeadHopper.Managers.DHHPunManager");
-            var fHost = tPun?.GetField("hostVersion", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public);
 
             for (int i = 0; i < maxFrames; i++)
             {
-                var host = fHost?.GetValue(null) as string;
+                var host = DHHPunManager.hostVersion;
                 if (!string.IsNullOrWhiteSpace(host) && !string.Equals(host, "pending", StringComparison.OrdinalIgnoreCase))
                     yield break;
 
                 yield return null;
             }
 
-            if (fHost != null)
+            var currentHost = DHHPunManager.hostVersion;
+            if (string.Equals(currentHost, "pending", StringComparison.OrdinalIgnoreCase))
             {
-                var host = fHost.GetValue(null) as string;
-                if (string.Equals(host, "pending", StringComparison.OrdinalIgnoreCase))
-                {
-                    fHost.SetValue(null, string.Empty);
-                    _log?.LogWarning("Host does not have DeathHeadHopper installed!");
-                }
+                DHHPunManager.hostVersion = string.Empty;
+                _log?.LogWarning("Host does not have DeathHeadHopper installed!");
             }
         }
 
-        private static IEnumerator DHHInputManager_InvokeVersionCheckWhenReady(object? punManager)
+        private static IEnumerator DHHInputManager_InvokeVersionCheckWhenReady(DHHPunManager? punManager)
         {
             if (punManager == null)
                 yield break;
 
-            var mVersionCheck = punManager.GetType().GetMethod("VersionCheck", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
-            if (mVersionCheck == null)
-                yield break;
-
-            var fPhotonView = punManager.GetType().GetField("photonView", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
             const int maxFrames = 300;
             for (int i = 0; i < maxFrames; i++)
             {
-                if (fPhotonView?.GetValue(punManager) is PhotonView pv && pv.ViewID > 0)
+                if (punManager.photonView != null && punManager.photonView.ViewID > 0)
                     break;
 
                 yield return null;
             }
 
-            if (fPhotonView?.GetValue(punManager) is not PhotonView readyPv || readyPv.ViewID <= 0)
+            if (punManager.photonView == null || punManager.photonView.ViewID <= 0)
                 yield break;
 
-            mVersionCheck.Invoke(punManager, Array.Empty<object?>());
-        }
-
-        private static bool IsMasterClientOrSingleplayer()
-        {
-            try
-            {
-                var tSemiFunc = AccessTools.TypeByName("SemiFunc");
-                var m = tSemiFunc?.GetMethod("IsMasterClientOrSingleplayer", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                if (m != null && m.Invoke(null, Array.Empty<object?>()) is bool b)
-                    return b;
-            }
-            catch { }
-            return false;
+            punManager.VersionCheck();
         }
 
         private static string? GetDeathHeadHopperVersionString()
         {
-            try
-            {
-                var t = AccessTools.TypeByName("DeathHeadHopper.DeathHeadHopper");
-                var p = t?.GetProperty("Version", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                var v = p?.GetValue(null);
-                return v?.ToString();
-            }
-            catch { }
-            return null;
+            return DeathHeadHopper.DeathHeadHopper.Version.ToString();
         }
 
     }

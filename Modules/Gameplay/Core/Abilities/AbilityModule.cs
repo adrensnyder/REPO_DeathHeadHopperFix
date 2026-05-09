@@ -3,31 +3,27 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using DeathHeadHopper.Abilities;
+using DeathHeadHopper.Managers;
 using DeathHeadHopper.UI;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
+using TMPro;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 {
     internal static class AbilityModule
     {
         private const string DirectionEnergyLogKey = "Fix:Ability.DirectionEnergy";
-        private static Type? s_abilityBaseType;
-        private static MethodInfo? s_abilityCooldownGetter;
-        private static MethodInfo? s_abilityEnergyCostGetter;
-        private static MethodInfo? s_abilityNameGetter;
-        private static Type? s_abilitySpotType;
-        private static MethodInfo? s_abilitySpotSetCooldown;
-        private static MethodInfo? s_abilitySpotCurrentAbilityGetter;
-        private static FieldInfo? s_abilitySpotsField;
-        private static readonly HashSet<object> s_trackedSpots = new();
-        private static readonly Dictionary<object, Vector3> s_spotBaseLocalPos = new();
-        private static readonly Dictionary<object, bool> s_lastDirectionVisibilityBySpot = new();
-        private static readonly Dictionary<object, string> s_lastDirectionCostLabelBySpot = new();
-        private static readonly Dictionary<object, float> s_lastDirectionProgressBySpot = new();
-        private static readonly Dictionary<object, bool> s_lastDirectionEnergySufficientBySpot = new();
+        private static readonly HashSet<AbilitySpot> s_trackedSpots = new();
+        private static readonly Dictionary<AbilitySpot, Vector3> s_spotBaseLocalPos = new();
+        private static readonly Dictionary<AbilitySpot, bool> s_lastDirectionVisibilityBySpot = new();
+        private static readonly Dictionary<AbilitySpot, string> s_lastDirectionCostLabelBySpot = new();
+        private static readonly Dictionary<AbilitySpot, float> s_lastDirectionProgressBySpot = new();
+        private static readonly Dictionary<AbilitySpot, bool> s_lastDirectionEnergySufficientBySpot = new();
         private static float s_directionActivationProgress;
 
         private const int DirectionIndicatorSlotIndex = 1;
@@ -35,48 +31,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         internal static void ApplyAbilitySpotLabelOverlay(Harmony harmony, Assembly asm)
         {
-            var tAbilitySpot = asm.GetType("DeathHeadHopper.UI.AbilitySpot", throwOnError: false);
-            if (tAbilitySpot == null)
-                return;
-
-            var mStart = AccessTools.Method(tAbilitySpot, "Start");
-            var mUpdateUi = AccessTools.Method(tAbilitySpot, "UpdateUI");
-            var mOnDestroy = tAbilitySpot.GetMethod("OnDestroy", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-            var startPostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_Start_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            var updateUiPostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_UpdateUI_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            var destroyPostfix = typeof(AbilityModule).GetMethod(nameof(AbilitySpot_OnDestroy_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-
-            if (mStart != null && startPostfix != null)
-                harmony.Patch(mStart, postfix: new HarmonyMethod(startPostfix));
-            if (mUpdateUi != null && updateUiPostfix != null)
-                harmony.Patch(mUpdateUi, postfix: new HarmonyMethod(updateUiPostfix));
-            if (mOnDestroy != null && destroyPostfix != null)
-                harmony.Patch(mOnDestroy, postfix: new HarmonyMethod(destroyPostfix));
+            harmony.Patch(
+                AccessTools.Method(typeof(AbilitySpot), nameof(AbilitySpot.Start)),
+                postfix: new HarmonyMethod(typeof(AbilityModule), nameof(AbilitySpot_Start_Postfix)));
+            harmony.Patch(
+                AccessTools.Method(typeof(AbilitySpot), nameof(AbilitySpot.UpdateUI)),
+                postfix: new HarmonyMethod(typeof(AbilityModule), nameof(AbilitySpot_UpdateUI_Postfix)));
         }
 
         internal static void ApplyAbilityManagerHooks(Harmony harmony, Assembly asm)
         {
-            var tAbilityManager = asm.GetType("DeathHeadHopper.Managers.DHHAbilityManager", throwOnError: false);
-            if (tAbilityManager == null)
-                return;
-
-            EnsureAbilityReflection();
-            if (s_abilityBaseType == null)
-                return;
-
-            var mOnAbilityUsed = AccessTools.Method(tAbilityManager, "OnAbilityUsed", new[] { s_abilityBaseType });
-            if (mOnAbilityUsed == null)
-                return;
-
-            var postfix = typeof(AbilityModule).GetMethod(nameof(DHHAbilityManager_OnAbilityUsed_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (postfix == null)
-                return;
-
-            harmony.Patch(mOnAbilityUsed, postfix: new HarmonyMethod(postfix));
+            harmony.Patch(
+                AccessTools.Method(typeof(DHHAbilityManager), nameof(DHHAbilityManager.OnAbilityUsed), new[] { typeof(AbilityBase) }),
+                postfix: new HarmonyMethod(typeof(AbilityModule), nameof(DHHAbilityManager_OnAbilityUsed_Postfix)));
         }
 
-        private static void AbilitySpot_Start_Postfix(object? __instance)
+        private static void AbilitySpot_Start_Postfix(AbilitySpot __instance)
         {
             if (__instance == null)
                 return;
@@ -84,21 +54,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
 
             s_trackedSpots.Add(__instance);
-            if (__instance is Component component)
-            {
-                s_spotBaseLocalPos[__instance] = component.transform.localPosition;
-            }
+            s_spotBaseLocalPos[__instance] = __instance.transform.localPosition;
             AbilitySpotLabelOverlay.EnsureLabel(__instance);
             ApplySlot2DirectionVisual(__instance);
-            if (__instance is AbilitySpot spot)
-            {
-                var driver = spot.GetComponent<AbilitySpotUpdateDriver>() ?? spot.gameObject.AddComponent<AbilitySpotUpdateDriver>();
-                driver.Initialize(spot);
-                spot.enabled = false;
-            }
+            var driver = __instance.GetComponent<AbilitySpotUpdateDriver>() ?? __instance.gameObject.AddComponent<AbilitySpotUpdateDriver>();
+            driver.Initialize(__instance);
+            __instance.enabled = false;
         }
 
-        private static void AbilitySpot_UpdateUI_Postfix(object? __instance)
+        private static void AbilitySpot_UpdateUI_Postfix(AbilitySpot __instance)
         {
             if (__instance == null)
                 return;
@@ -109,7 +73,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             ApplySlot2DirectionVisual(__instance);
         }
 
-        private static void AfterAbilitySpotUpdate(object? __instance)
+        private static void AfterAbilitySpotUpdate(AbilitySpot __instance)
         {
             if (__instance == null)
                 return;
@@ -125,20 +89,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             SlotLayoutOverrides.EnsureBasePosition(__instance);
         }
 
-        private static void AbilitySpot_OnDestroy_Postfix(object? __instance)
+        private static void AbilitySpot_OnDestroy(AbilitySpot spot)
         {
-            if (__instance == null)
-                return;
-            if (InternalDebugFlags.DisableAbilityPatches)
+            if (spot == null)
                 return;
 
-            s_trackedSpots.Remove(__instance);
-            s_spotBaseLocalPos.Remove(__instance);
-            s_lastDirectionVisibilityBySpot.Remove(__instance);
-            s_lastDirectionCostLabelBySpot.Remove(__instance);
-            s_lastDirectionProgressBySpot.Remove(__instance);
-            s_lastDirectionEnergySufficientBySpot.Remove(__instance);
-            AbilitySpotLabelOverlay.ClearLabel(__instance);
+            s_trackedSpots.Remove(spot);
+            s_spotBaseLocalPos.Remove(spot);
+            s_lastDirectionVisibilityBySpot.Remove(spot);
+            s_lastDirectionCostLabelBySpot.Remove(spot);
+            s_lastDirectionProgressBySpot.Remove(spot);
+            s_lastDirectionEnergySufficientBySpot.Remove(spot);
+            AbilitySpotLabelOverlay.ClearLabel(spot);
         }
 
         private sealed class AbilitySpotUpdateDriver : MonoBehaviour
@@ -170,6 +132,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
                 RunSemiUiUpdate(spot);
                 AfterAbilitySpotUpdate(spot);
+            }
+
+            private void OnDestroy()
+            {
+                if (_spot != null)
+                {
+                    AbilitySpot_OnDestroy(_spot);
+                }
             }
 
             private static void RunSemiUiUpdate(SemiUI ui)
@@ -218,10 +188,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
 
             s_directionActivationProgress = 0f;
-            EnsureAbilityReflection();
-            if (s_abilitySpotSetCooldown == null)
-                return;
-
             var clamped = Mathf.Max(0f, cooldownSeconds);
             if (clamped <= 0f)
                 return;
@@ -233,7 +199,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
                 try
                 {
-                    s_abilitySpotSetCooldown.Invoke(spot, new object[] { clamped });
+                    spot.SetCooldown(clamped);
                     SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
                     SlotVisualOverrides.ApplyDirectionEnergyAvailability(
                         spot,
@@ -303,7 +269,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (s_trackedSpots.Count == 0)
                 return;
 
-            var staleSpots = new List<object>();
+            var staleSpots = new List<AbilitySpot>();
             foreach (var spot in s_trackedSpots)
             {
                 if (!IsSpotUsable(spot))
@@ -335,7 +301,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             }
         }
 
-        private static void ApplySlot2DirectionVisual(object spot)
+        private static void ApplySlot2DirectionVisual(AbilitySpot spot)
         {
             var slotIndex = GetAbilityIndex(spot);
             if (slotIndex != DirectionIndicatorSlotIndex)
@@ -425,143 +391,56 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             return $"{seconds}s";
         }
 
-        private static int GetAbilityIndex(object spot)
+        private static int GetAbilityIndex(AbilitySpot spot)
         {
             if (spot == null)
                 return -1;
 
-            var type = spot.GetType();
-            if (AbilitySpotLabelOverlay.SpotType == null || AbilitySpotLabelOverlay.SpotType != type)
-            {
-                AbilitySpotLabelOverlay.SpotType = type;
-                AbilitySpotLabelOverlay.SpotIndexField = type.GetField("abilitySpotIndex", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            }
-
-            if (AbilitySpotLabelOverlay.SpotIndexField == null)
-                return -1;
-
-            return AbilitySpotLabelOverlay.SpotIndexField.GetValue(spot) is int value ? value : -1;
+            return spot.abilitySpotIndex;
         }
 
-        private static bool IsSpotUsable(object spot)
+        private static bool IsSpotUsable(AbilitySpot spot)
         {
             if (spot == null)
                 return false;
 
-            if (spot is not Component component)
-                return false;
-
-            return component != null && component.gameObject != null;
+            return spot.gameObject != null;
         }
 
-        private static void EnsureAbilityReflection()
-        {
-            if (s_abilityBaseType == null)
-            {
-                s_abilityBaseType = AccessTools.TypeByName("DeathHeadHopper.Abilities.AbilityBase");
-            }
-
-            if (s_abilityCooldownGetter == null && s_abilityBaseType != null)
-            {
-                s_abilityCooldownGetter = AccessTools.PropertyGetter(s_abilityBaseType, "Cooldown");
-            }
-
-            if (s_abilityEnergyCostGetter == null && s_abilityBaseType != null)
-            {
-                s_abilityEnergyCostGetter = AccessTools.PropertyGetter(s_abilityBaseType, "EnergyCost");
-            }
-
-            if (s_abilityNameGetter == null && s_abilityBaseType != null)
-            {
-                s_abilityNameGetter = AccessTools.PropertyGetter(s_abilityBaseType, "AbilityName");
-            }
-
-            if (s_abilitySpotType == null)
-            {
-                s_abilitySpotType = AccessTools.TypeByName("DeathHeadHopper.UI.AbilitySpot");
-            }
-
-            if (s_abilitySpotSetCooldown == null && s_abilitySpotType != null)
-            {
-                s_abilitySpotSetCooldown = AccessTools.Method(s_abilitySpotType, "SetCooldown", new[] { typeof(float) });
-            }
-
-            if (s_abilitySpotCurrentAbilityGetter == null && s_abilitySpotType != null)
-            {
-                s_abilitySpotCurrentAbilityGetter =
-                    s_abilitySpotType.GetProperty("CurrentAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetMethod;
-            }
-        }
-
-        private static void DHHAbilityManager_OnAbilityUsed_Postfix(object __instance, object ability)
+        private static void DHHAbilityManager_OnAbilityUsed_Postfix(DHHAbilityManager __instance, AbilityBase ability)
         {
             if (ability == null)
                 return;
 
-            EnsureAbilityReflection();
-            if (s_abilityCooldownGetter == null || s_abilitySpotSetCooldown == null)
-                return;
-
-            var cooldownObj = s_abilityCooldownGetter.Invoke(ability, null);
-            var cooldown = cooldownObj is float value ? value : 0f;
+            var cooldown = ability.Cooldown;
             if (cooldown <= 0f)
                 return;
 
-            var spotsField = s_abilitySpotsField ??= __instance?.GetType().GetField("abilitySpots", BindingFlags.Instance | BindingFlags.NonPublic);
-            if (spotsField == null)
+            if (__instance?.abilitySpots == null)
                 return;
 
-            if (spotsField.GetValue(__instance) is not Array spots)
-                return;
-
-            var matchingSpots = new List<object>();
-            foreach (var spot in spots)
+            var matchingSpots = new List<AbilitySpot>();
+            foreach (var spot in __instance.abilitySpots)
             {
                 if (spot == null)
                     continue;
 
-                object? currentAbility = null;
-                try
-                {
-                    currentAbility = s_abilitySpotCurrentAbilityGetter?.Invoke(spot, null);
-                }
-                catch
-                {
-                    // UI element may be destroyed during scene/menu transitions.
-                }
-
-                if (ReferenceEquals(currentAbility, ability))
+                if (ReferenceEquals(spot.CurrentAbility, ability))
                 {
                     matchingSpots.Add(spot);
                 }
             }
 
-            if (matchingSpots.Count == 0 && s_abilityNameGetter != null)
+            if (matchingSpots.Count == 0 && !string.IsNullOrWhiteSpace(ability.AbilityName))
             {
-                var usedAbilityName = s_abilityNameGetter.Invoke(ability, null)?.ToString();
-                if (!string.IsNullOrWhiteSpace(usedAbilityName))
+                foreach (var spot in __instance.abilitySpots)
                 {
-                    foreach (var spot in spots)
+                    if (spot?.CurrentAbility == null)
+                        continue;
+
+                    if (string.Equals(spot.CurrentAbility.AbilityName, ability.AbilityName, StringComparison.Ordinal))
                     {
-                        if (spot == null)
-                            continue;
-
-                        try
-                        {
-                            var currentAbility = s_abilitySpotCurrentAbilityGetter?.Invoke(spot, null);
-                            if (currentAbility == null)
-                                continue;
-
-                            var spotAbilityName = s_abilityNameGetter.Invoke(currentAbility, null)?.ToString();
-                            if (string.Equals(spotAbilityName, usedAbilityName, StringComparison.Ordinal))
-                            {
-                                matchingSpots.Add(spot);
-                            }
-                        }
-                        catch
-                        {
-                            // Keep processing other spots if one UI reference is already invalid.
-                        }
+                        matchingSpots.Add(spot);
                     }
                 }
             }
@@ -570,7 +449,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             {
                 try
                 {
-                    s_abilitySpotSetCooldown?.Invoke(spot, new object[] { cooldown });
+                    spot.SetCooldown(cooldown);
                 }
                 catch
                 {
@@ -581,35 +460,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private static class AbilitySpotLabelOverlay
         {
-            private static readonly Dictionary<object, Component> Labels = new();
-            private static readonly Type? LabelType = AccessTools.TypeByName("TMPro.TextMeshProUGUI");
-            private static readonly Type? AlignmentType = AccessTools.TypeByName("TMPro.TextAlignmentOptions");
-            private static readonly PropertyInfo? TextProperty = LabelType?.GetProperty("text");
-            private static readonly PropertyInfo? ColorProperty = LabelType?.GetProperty("color");
-            private static readonly PropertyInfo? AlignmentProperty = LabelType?.GetProperty("alignment");
-            private static readonly PropertyInfo? FontSizeProperty = LabelType?.GetProperty("fontSize");
-            private static readonly PropertyInfo? AutoSizeProperty = LabelType?.GetProperty("enableAutoSizing");
-            private static readonly PropertyInfo? WordWrapProperty = LabelType?.GetProperty("enableWordWrapping");
-            private static readonly PropertyInfo? RichTextProperty = LabelType?.GetProperty("richText");
-            private static readonly object? CenterAlignment = AlignmentType != null
-                ? Enum.Parse(AlignmentType, "Center")
-                : null;
+            private static readonly Dictionary<AbilitySpot, TextMeshProUGUI> Labels = new();
 
-            internal static Type? SpotType;
-            internal static FieldInfo? SpotIndexField;
-
-            internal static void EnsureLabel(object spot)
+            internal static void EnsureLabel(AbilitySpot spot)
             {
-                if (spot == null || LabelType == null)
+                if (spot == null)
                     return;
                 if (Labels.ContainsKey(spot))
                     return;
 
-                if (spot is not Component component)
-                    return;
-
                 var overlay = new GameObject("DHHAbilityLabel", typeof(RectTransform));
-                overlay.transform.SetParent(component.transform, false);
+                overlay.transform.SetParent(spot.transform, false);
                 var rect = overlay.GetComponent<RectTransform>();
                 rect.anchorMin = new Vector2(0f, 0f);
                 rect.anchorMax = new Vector2(1f, 0f);
@@ -619,13 +480,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 rect.localScale = Vector3.one;
                 rect.SetAsLastSibling();
 
-                var label = overlay.AddComponent(LabelType);
+                var label = overlay.AddComponent<TextMeshProUGUI>();
                 SetLabelDefaults(label);
                 Labels[spot] = label;
                 UpdateLabel(spot);
             }
 
-            internal static void UpdateLabel(object spot)
+            internal static void UpdateLabel(AbilitySpot spot)
             {
                 if (spot == null)
                     return;
@@ -637,7 +498,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 SetLabelText(label, text);
             }
 
-            internal static void SetDirectionLabel(object spot, string text)
+            internal static void SetDirectionLabel(AbilitySpot spot, string text)
             {
                 var label = GetLabel(spot);
                 if (label == null)
@@ -645,7 +506,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 SetLabelText(label, text);
             }
 
-            internal static void ClearLabel(object spot)
+            internal static void ClearLabel(AbilitySpot spot)
             {
                 if (spot == null)
                     return;
@@ -653,313 +514,184 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     return;
 
                 Labels.Remove(spot);
-                if (label is Component component)
-                {
-                    UnityEngine.Object.Destroy(component.gameObject);
-                }
+                UnityEngine.Object.Destroy(label.gameObject);
             }
 
-            private static Component? GetLabel(object spot)
+            private static TextMeshProUGUI? GetLabel(AbilitySpot spot)
             {
                 return Labels.TryGetValue(spot, out var label) ? label : null;
             }
 
-            private static string GetSlotTag(object spot)
+            private static string GetSlotTag(AbilitySpot spot)
             {
                 return string.Empty;
             }
 
-            private static void SetLabelDefaults(Component label)
+            private static void SetLabelDefaults(TextMeshProUGUI label)
             {
                 if (label == null)
                     return;
 
-                if (ColorProperty != null)
-                    ColorProperty.SetValue(label, Color.white);
-                if (FontSizeProperty != null)
-                    FontSizeProperty.SetValue(label, 11f);
-                if (AutoSizeProperty != null)
-                    AutoSizeProperty.SetValue(label, false);
-                if (WordWrapProperty != null)
-                    WordWrapProperty.SetValue(label, false);
-                if (RichTextProperty != null)
-                    RichTextProperty.SetValue(label, false);
-                if (AlignmentProperty != null && CenterAlignment != null)
-                    AlignmentProperty.SetValue(label, CenterAlignment);
+                label.color = Color.white;
+                label.fontSize = 11f;
+                label.enableAutoSizing = false;
+                label.enableWordWrapping = false;
+                label.richText = false;
+                label.alignment = TextAlignmentOptions.Center;
 
                 SetLabelText(label, string.Empty);
             }
 
-            private static void SetLabelText(Component label, string text)
+            private static void SetLabelText(TextMeshProUGUI label, string text)
             {
                 if (label == null)
                     return;
-                if (TextProperty != null)
-                    TextProperty.SetValue(label, text);
-                if (label is Behaviour behaviour)
-                    behaviour.enabled = !string.IsNullOrEmpty(text);
+                label.text = text;
+                label.enabled = !string.IsNullOrEmpty(text);
             }
         }
 
         private static class SlotLayoutOverrides
         {
-            internal static void EnsureBasePosition(object spot)
+            internal static void EnsureBasePosition(AbilitySpot spot)
             {
-                if (spot is not Component component)
+                if (spot == null)
                     return;
 
                 if (!s_spotBaseLocalPos.TryGetValue(spot, out var basePos))
                 {
-                    basePos = component.transform.localPosition;
+                    basePos = spot.transform.localPosition;
                     s_spotBaseLocalPos[spot] = basePos;
                 }
 
-                component.transform.localPosition = basePos;
+                spot.transform.localPosition = basePos;
             }
 
-            internal static void RestoreBasePosition(object spot)
+            internal static void RestoreBasePosition(AbilitySpot spot)
             {
-                if (spot is not Component component)
+                if (spot == null)
                     return;
                 if (!s_spotBaseLocalPos.TryGetValue(spot, out var basePos))
                     return;
-                component.transform.localPosition = basePos;
+                spot.transform.localPosition = basePos;
             }
         }
 
 
         private static class SlotCostOverrides
         {
-            private static FieldInfo? s_energyCostField;
-            private static MethodInfo? s_currentAbilityGetter;
-            private static MethodInfo? s_energyCostGetter;
-            private static PropertyInfo? s_textProperty;
-
-            internal static void SetDirectionCostText(object spot, string costText)
+            internal static void SetDirectionCostText(AbilitySpot spot, string costText)
             {
-                var text = GetEnergyCostComponent(spot);
-                if (text == null)
+                if (spot?.energyCost == null)
                 {
                     return;
                 }
 
-                SetText(text, costText);
+                spot.energyCost.text = costText ?? string.Empty;
             }
 
-            internal static void RestoreDefaultCostText(object spot)
+            internal static void RestoreDefaultCostText(AbilitySpot spot)
             {
-                var text = GetEnergyCostComponent(spot);
-                if (text == null)
+                if (spot?.energyCost == null)
                 {
                     return;
                 }
 
                 var defaultCost = "0";
-                var ability = GetCurrentAbility(spot);
+                var ability = spot.CurrentAbility;
                 if (ability != null)
                 {
-                    var abilityType = ability.GetType();
-                    if (s_energyCostGetter == null || s_energyCostGetter.DeclaringType != abilityType)
-                    {
-                        s_energyCostGetter = AccessTools.PropertyGetter(abilityType, "EnergyCost");
-                    }
-
-                    if (s_energyCostGetter?.Invoke(ability, null) is float energyCost)
-                    {
-                        defaultCost = Mathf.RoundToInt(energyCost).ToString();
-                    }
+                    defaultCost = Mathf.RoundToInt(ability.EnergyCost).ToString();
                 }
 
-                SetText(text, defaultCost);
-            }
-
-            private static Component? GetEnergyCostComponent(object spot)
-            {
-                var type = spot.GetType();
-                s_energyCostField ??= type.GetField("energyCost", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                return s_energyCostField?.GetValue(spot) as Component;
-            }
-
-            private static object? GetCurrentAbility(object spot)
-            {
-                var type = spot.GetType();
-                s_currentAbilityGetter ??= type.GetProperty("CurrentAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetMethod;
-                return s_currentAbilityGetter?.Invoke(spot, null);
-            }
-
-            private static void SetText(Component target, string value)
-            {
-                if (target == null)
-                    return;
-
-                var type = target.GetType();
-                if (s_textProperty == null || s_textProperty.DeclaringType != type)
-                {
-                    s_textProperty = type.GetProperty("text", BindingFlags.Instance | BindingFlags.Public);
-                }
-
-                s_textProperty?.SetValue(target, value ?? string.Empty);
+                spot.energyCost.text = defaultCost;
             }
         }
 
         private static class SlotVisualOverrides
         {
-            private static FieldInfo? s_backgroundIconField;
-            private static FieldInfo? s_cooldownIconField;
-            private static FieldInfo? s_noAbilityField;
-            private static MethodInfo? s_currentAbilityGetter;
-            private static FieldInfo? s_abilityIconField;
-            private static MethodInfo? s_setIconMethod;
-            private static PropertyInfo? s_behaviourEnabledProp;
-            private static PropertyInfo? s_imageSpriteProp;
-            private static PropertyInfo? s_imageColorProp;
-            private static PropertyInfo? s_imageFillAmountProp;
-            private static readonly Dictionary<object, Color> s_cooldownIconBaseColors = new();
-            private static readonly Dictionary<object, Color> s_backgroundIconBaseColors = new();
-            private static readonly Dictionary<object, Color> s_chargeHoldRestoreColors = new();
-            private static readonly Dictionary<object, float> s_chargeHoldRestoreFillAmounts = new();
+            private static readonly Dictionary<Image, Color> s_cooldownIconBaseColors = new();
+            private static readonly Dictionary<Image, float> s_chargeHoldRestoreFillAmounts = new();
+            private static readonly Dictionary<Image, Color> s_chargeHoldRestoreColors = new();
 
-            internal static void ApplyDirectionIcon(object spot, Sprite sprite)
+            internal static void ApplyDirectionIcon(AbilitySpot spot, Sprite sprite)
             {
-                if (spot is not Component)
+                if (spot == null || sprite == null)
                     return;
 
-                var type = spot.GetType();
-                s_backgroundIconField ??= type.GetField("backgroundIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                s_noAbilityField ??= type.GetField("noAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                var backgroundImage = s_backgroundIconField?.GetValue(spot);
-                SetImageSpriteAndEnable(backgroundImage, sprite);
-
-                var cooldownImage = s_cooldownIconField?.GetValue(spot);
-                SetImageSpriteAndEnable(cooldownImage, sprite);
-
-                if (s_noAbilityField?.GetValue(spot) is Behaviour noAbilityText)
+                SetImageSpriteAndEnable(spot.backgroundIcon, sprite);
+                SetImageSpriteAndEnable(spot.cooldownIcon, sprite);
+                if (spot.noAbility != null)
                 {
-                    noAbilityText.enabled = false;
+                    spot.noAbility.enabled = false;
                 }
             }
 
-            internal static void RestoreDefaultIcon(object spot)
+            internal static void RestoreDefaultIcon(AbilitySpot spot)
             {
                 if (spot == null)
                     return;
-                if (spot is not Component component || component == null || component.gameObject == null)
+                if (spot.gameObject == null)
                     return;
 
-                var type = spot.GetType();
-                s_currentAbilityGetter ??= type.GetProperty("CurrentAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetMethod;
-                s_setIconMethod ??= type.GetMethod("SetIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                s_noAbilityField ??= type.GetField("noAbility", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                object? currentAbility = null;
-                if (s_currentAbilityGetter != null)
+                var currentAbility = spot.CurrentAbility;
+                try
                 {
-                    currentAbility = s_currentAbilityGetter.Invoke(spot, null);
+                    spot.SetIcon(currentAbility?.icon);
+                }
+                catch
+                {
+                    // AbilitySpot.SetIcon can throw during scene unload if UI refs are already torn down.
+                    return;
                 }
 
-                Sprite? icon = null;
-                if (currentAbility != null)
+                if (spot.noAbility != null)
                 {
-                    var abilityType = currentAbility.GetType();
-                    if (s_abilityIconField == null || s_abilityIconField.DeclaringType != abilityType)
-                    {
-                        s_abilityIconField = abilityType.GetField("icon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                    }
-
-                    icon = s_abilityIconField?.GetValue(currentAbility) as Sprite;
-                }
-
-                if (s_setIconMethod != null)
-                {
-                    try
-                    {
-                        s_setIconMethod.Invoke(spot, new object?[] { icon });
-                    }
-                    catch
-                    {
-                        // AbilitySpot.SetIcon can throw during scene unload if UI refs are already torn down.
-                        return;
-                    }
-                }
-
-                if (s_noAbilityField?.GetValue(spot) is Behaviour noAbilityText)
-                {
-                    noAbilityText.enabled = currentAbility == null;
+                    spot.noAbility.enabled = currentAbility == null;
                 }
             }
 
-            internal static void ApplyDirectionActivationProgress(object spot, float progress01)
+            internal static void ApplyDirectionActivationProgress(AbilitySpot spot, float progress01)
             {
                 if (spot == null)
                     return;
 
-                var type = spot.GetType();
-                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                var cooldownImage = spot.cooldownIcon;
                 if (cooldownImage == null)
                     return;
 
-                var imageType = cooldownImage.GetType();
-                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != imageType)
-                {
-                    s_imageColorProp = imageType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
-                }
-                if (s_imageFillAmountProp == null || s_imageFillAmountProp.DeclaringType != imageType)
-                {
-                    s_imageFillAmountProp = imageType.GetProperty("fillAmount", BindingFlags.Instance | BindingFlags.Public);
-                }
-
                 if (!s_cooldownIconBaseColors.TryGetValue(cooldownImage, out var baseColor))
                 {
-                    baseColor = s_imageColorProp?.GetValue(cooldownImage) is Color c ? c : Color.white;
+                    baseColor = cooldownImage.color;
                     s_cooldownIconBaseColors[cooldownImage] = baseColor;
                 }
 
                 var clamped = Mathf.Clamp01(progress01);
                 if (clamped <= 0f)
                 {
-                    s_imageFillAmountProp?.SetValue(cooldownImage, 0f);
-                    s_imageColorProp?.SetValue(cooldownImage, baseColor);
+                    cooldownImage.fillAmount = 0f;
+                    cooldownImage.color = baseColor;
                     return;
                 }
 
                 // Reuse cooldown mask as "arming" fill (reverse of cooldown drain), but tint green.
-                s_imageFillAmountProp?.SetValue(cooldownImage, clamped);
-                s_imageColorProp?.SetValue(cooldownImage, new Color(0.2f, 1f, 0.2f, baseColor.a));
-
-                if (s_behaviourEnabledProp != null && typeof(Behaviour).IsAssignableFrom(imageType))
-                {
-                    s_behaviourEnabledProp.SetValue(cooldownImage, true);
-                }
+                cooldownImage.fillAmount = clamped;
+                cooldownImage.color = new Color(0.2f, 1f, 0.2f, baseColor.a);
+                cooldownImage.enabled = true;
             }
 
-            internal static void ApplyDirectionEnergyAvailability(object spot, bool hasEnoughEnergy, float progress01)
+            internal static void ApplyDirectionEnergyAvailability(AbilitySpot spot, bool hasEnoughEnergy, float progress01)
             {
                 if (spot == null)
                     return;
 
-                var type = spot.GetType();
-                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-
-                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                var cooldownImage = spot.cooldownIcon;
                 if (cooldownImage == null)
                     return;
 
-                var imageType = cooldownImage.GetType();
-                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != imageType)
-                {
-                    s_imageColorProp = imageType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
-                }
-                if (s_imageFillAmountProp == null || s_imageFillAmountProp.DeclaringType != imageType)
-                {
-                    s_imageFillAmountProp = imageType.GetProperty("fillAmount", BindingFlags.Instance | BindingFlags.Public);
-                }
-
                 if (!s_cooldownIconBaseColors.TryGetValue(cooldownImage, out var baseColor))
                 {
-                    baseColor = s_imageColorProp?.GetValue(cooldownImage) is Color c ? c : Color.white;
+                    baseColor = cooldownImage.color;
                     s_cooldownIconBaseColors[cooldownImage] = baseColor;
                 }
 
@@ -971,34 +703,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 var fill = clampedProgress > 0f ? clampedProgress : (hasEnoughEnergy ? 1f : 0f);
                 var newColor = baseColor;
                 newColor.a = fill < 1f ? 0.3f : 1f;
-                s_imageFillAmountProp?.SetValue(cooldownImage, fill);
-                s_imageColorProp?.SetValue(cooldownImage, newColor);
+                cooldownImage.fillAmount = fill;
+                cooldownImage.color = newColor;
             }
 
-            internal static void ApplyChargeActivationProgress(object spot, float progress01, bool canReleaseActivate)
+            internal static void ApplyChargeActivationProgress(AbilitySpot spot, float progress01, bool canReleaseActivate)
             {
                 if (spot == null)
                     return;
 
-                var type = spot.GetType();
-                s_cooldownIconField ??= type.GetField("cooldownIcon", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                var cooldownImage = s_cooldownIconField?.GetValue(spot);
+                var cooldownImage = spot.cooldownIcon;
                 if (cooldownImage == null)
                     return;
 
-                var imageType = cooldownImage.GetType();
-                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != imageType)
-                {
-                    s_imageColorProp = imageType.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
-                }
-                if (s_imageFillAmountProp == null || s_imageFillAmountProp.DeclaringType != imageType)
-                {
-                    s_imageFillAmountProp = imageType.GetProperty("fillAmount", BindingFlags.Instance | BindingFlags.Public);
-                }
-
                 if (!s_cooldownIconBaseColors.TryGetValue(cooldownImage, out var baseColor))
                 {
-                    baseColor = s_imageColorProp?.GetValue(cooldownImage) is Color c ? c : Color.white;
+                    baseColor = cooldownImage.color;
                     s_cooldownIconBaseColors[cooldownImage] = baseColor;
                 }
 
@@ -1011,14 +731,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     var restoredColor = false;
                     if (s_chargeHoldRestoreFillAmounts.TryGetValue(cooldownImage, out var restoreFill))
                     {
-                        s_imageFillAmountProp?.SetValue(cooldownImage, restoreFill);
+                        cooldownImage.fillAmount = restoreFill;
                         s_chargeHoldRestoreFillAmounts.Remove(cooldownImage);
                         restoredFill = true;
                     }
 
                     if (s_chargeHoldRestoreColors.TryGetValue(cooldownImage, out var restoreColor))
                     {
-                        s_imageColorProp?.SetValue(cooldownImage, restoreColor);
+                        cooldownImage.color = restoreColor;
                         s_chargeHoldRestoreColors.Remove(cooldownImage);
                         restoredColor = true;
                     }
@@ -1027,87 +747,42 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     // force icon back to its default non-hold visual state.
                     if (!restoredFill)
                     {
-                        s_imageFillAmountProp?.SetValue(cooldownImage, 1f);
+                        cooldownImage.fillAmount = 1f;
                     }
 
                     if (!restoredColor)
                     {
-                        s_imageColorProp?.SetValue(cooldownImage, baseColor);
+                        cooldownImage.color = baseColor;
                     }
                     return;
                 }
 
                 if (!s_chargeHoldRestoreFillAmounts.ContainsKey(cooldownImage))
                 {
-                    var currentFill = s_imageFillAmountProp?.GetValue(cooldownImage) as float? ?? 0f;
-                    s_chargeHoldRestoreFillAmounts[cooldownImage] = currentFill;
+                    s_chargeHoldRestoreFillAmounts[cooldownImage] = cooldownImage.fillAmount;
                 }
 
                 if (!s_chargeHoldRestoreColors.ContainsKey(cooldownImage))
                 {
-                    var currentColor = s_imageColorProp?.GetValue(cooldownImage) as Color? ?? baseColor;
-                    s_chargeHoldRestoreColors[cooldownImage] = currentColor;
+                    s_chargeHoldRestoreColors[cooldownImage] = cooldownImage.color;
                 }
 
                 // Slot1 charge hold: red while below minimum hold threshold, green when release will activate.
                 var tint = canReleaseActivate
                     ? new Color(0.2f, 1f, 0.2f, baseColor.a)
                     : new Color(1f, 0.2f, 0.2f, baseColor.a);
-                s_imageFillAmountProp?.SetValue(cooldownImage, clamped);
-                s_imageColorProp?.SetValue(cooldownImage, tint);
-
-                if (s_behaviourEnabledProp != null && typeof(Behaviour).IsAssignableFrom(imageType))
-                {
-                    s_behaviourEnabledProp.SetValue(cooldownImage, true);
-                }
+                cooldownImage.fillAmount = clamped;
+                cooldownImage.color = tint;
+                cooldownImage.enabled = true;
             }
 
-            private static void SetImageSpriteAndEnable(object? imageLikeObject, Sprite sprite)
+            private static void SetImageSpriteAndEnable(Image? image, Sprite sprite)
             {
-                if (imageLikeObject == null || sprite == null)
+                if (image == null || sprite == null)
                     return;
 
-                var type = imageLikeObject.GetType();
-                s_behaviourEnabledProp ??= typeof(Behaviour).GetProperty("enabled", BindingFlags.Instance | BindingFlags.Public);
-                if (s_imageSpriteProp == null || s_imageSpriteProp.DeclaringType != type)
-                {
-                    s_imageSpriteProp = type.GetProperty("sprite", BindingFlags.Instance | BindingFlags.Public);
-                }
-
-                if (s_imageSpriteProp != null && s_imageSpriteProp.PropertyType == typeof(Sprite))
-                {
-                    s_imageSpriteProp.SetValue(imageLikeObject, sprite);
-                }
-
-                if (s_behaviourEnabledProp != null && typeof(Behaviour).IsAssignableFrom(type))
-                {
-                    s_behaviourEnabledProp.SetValue(imageLikeObject, true);
-                }
-            }
-
-            private static void ApplyIconAlpha(object? imageLikeObject, float alpha, Dictionary<object, Color> baseColors)
-            {
-                if (imageLikeObject == null)
-                    return;
-
-                var type = imageLikeObject.GetType();
-                if (s_imageColorProp == null || s_imageColorProp.DeclaringType != type)
-                {
-                    s_imageColorProp = type.GetProperty("color", BindingFlags.Instance | BindingFlags.Public);
-                }
-
-                if (s_imageColorProp == null)
-                    return;
-
-                if (!baseColors.TryGetValue(imageLikeObject, out var baseColor))
-                {
-                    baseColor = s_imageColorProp.GetValue(imageLikeObject) is Color c ? c : Color.white;
-                    baseColors[imageLikeObject] = baseColor;
-                }
-
-                var newColor = baseColor;
-                newColor.a = Mathf.Clamp01(alpha);
-                s_imageColorProp.SetValue(imageLikeObject, newColor);
+                image.sprite = sprite;
+                image.enabled = true;
             }
         }
     }

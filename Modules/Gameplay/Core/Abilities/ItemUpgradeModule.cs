@@ -2,24 +2,16 @@
 
 using System;
 using System.Reflection;
+using DeathHeadHopper.Items;
 using HarmonyLib;
 using Photon.Pun;
 using UnityEngine;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
-using DeathHeadHopperFix.Modules.Utilities;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 {
     internal static class ItemUpgradeModule
     {
-        private const string DhhUpgradePowerTypeName = "DeathHeadHopper.Items.DHHItemUpgradePower";
-        private const string DhhUpgradeChargeTypeName = "DeathHeadHopper.Items.DHHItemUpgradeCharge";
-
-        private static Type? _dhhUpgradePowerType;
-        private static Type? _dhhUpgradeChargeType;
-        private static MethodInfo? _dhhUpgradePowerMethod;
-        private static MethodInfo? _dhhUpgradeChargeMethod;
-
         internal static void Apply(Harmony harmony)
         {
             PatchItemToggleUpgradeHook(harmony);
@@ -30,11 +22,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (harmony == null)
                 return;
 
-            var tItemToggle = AccessTools.TypeByName("ItemToggle");
-            if (tItemToggle == null)
-                return;
-
-            var method = AccessTools.Method(tItemToggle, "ToggleItemLogic", new[] { typeof(bool), typeof(int) });
+            var method = AccessTools.Method(typeof(ItemToggle), nameof(ItemToggle.ToggleItemLogic), new[] { typeof(bool), typeof(int) });
             if (method == null)
                 return;
 
@@ -50,8 +38,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (!toggle || __instance == null)
                 return;
 
-            var usedPower = TryInvokeUpgrade(__instance, ref _dhhUpgradePowerType, ref _dhhUpgradePowerMethod, DhhUpgradePowerTypeName);
-            var usedCharge = TryInvokeUpgrade(__instance, ref _dhhUpgradeChargeType, ref _dhhUpgradeChargeMethod, DhhUpgradeChargeTypeName);
+            var usedPower = TryRunPowerUpgrade(__instance);
+            var usedCharge = TryRunChargeUpgrade(__instance);
             if (usedPower || usedCharge)
             {
                 PlayUpgradeFx(__instance, player);
@@ -60,21 +48,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             }
         }
 
-        private static bool TryInvokeUpgrade(ItemToggle toggle, ref Type? upgradeType, ref MethodInfo? upgradeMethod, string typeName)
+        private static bool TryRunPowerUpgrade(ItemToggle toggle)
         {
-            var type = upgradeType ??= AccessTools.TypeByName(typeName);
-            if (type == null)
+            var upgrade = toggle.GetComponent<DHHItemUpgradePower>();
+            if (upgrade == null)
                 return false;
 
-            var component = toggle.GetComponent(type);
-            if (component == null)
+            upgrade.Upgrade();
+            return true;
+        }
+
+        private static bool TryRunChargeUpgrade(ItemToggle toggle)
+        {
+            var upgrade = toggle.GetComponent<DHHItemUpgradeCharge>();
+            if (upgrade == null)
                 return false;
 
-            var method = upgradeMethod ??= AccessTools.Method(type, "Upgrade");
-            if (method == null)
-                return false;
-
-            method.Invoke(component, Array.Empty<object?>());
+            upgrade.Upgrade();
             return true;
         }
 
@@ -160,7 +150,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 // Reflection fallback: use helper-based asset name resolution.
             }
 
-            var fallback = ItemHelpers.GetItemAssetName(toggle) ?? toggle.name;
+            var fallback = toggle.name;
             return string.IsNullOrWhiteSpace(fallback) ? null : fallback;
         }
     }

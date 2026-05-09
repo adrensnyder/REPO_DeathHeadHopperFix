@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-using System.Reflection.Emit;
 using HarmonyLib;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
@@ -16,42 +15,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
     internal static class SpectateDeadPlayersModule
     {
         private const string ModuleId = "DeathHeadHopperFix.Spectate.DeadPlayers";
-
-        private static readonly FieldInfo? s_playerIsDisabledField =
-            AccessTools.Field(typeof(PlayerAvatar), "isDisabled");
-        private static readonly MethodInfo? s_shouldSkipMethod =
-            AccessTools.Method(typeof(SpectateDeadPlayersModule), nameof(ShouldSkipSpectateTarget),
-                new[] { typeof(PlayerAvatar) });
-        private static readonly FieldInfo? s_playerNameField =
-            AccessTools.Field(typeof(PlayerAvatar), "playerName");
-        private static readonly FieldInfo? s_playerDeathHeadPhysGrabObjectField =
-            AccessTools.Field(typeof(PlayerDeathHead), "physGrabObject");
-        private static readonly FieldInfo? s_physGrabObjectCenterPointField =
-            AccessTools.Field(typeof(PhysGrabObject), "centerPoint");
-        private static readonly FieldInfo? s_playerAvatarSpectatePointField =
-            AccessTools.Field(typeof(PlayerAvatar), "spectatePoint");
-        private static readonly FieldInfo? s_playerAvatarDeadSetField =
-            AccessTools.Field(typeof(PlayerAvatar), "deadSet");
-        private static readonly FieldInfo? s_spectateCurrentPlayerListIndexField =
-            AccessTools.Field(typeof(SpectateCamera), "currentPlayerListIndex");
-        private static readonly FieldInfo? s_spectatePlayerField =
-            AccessTools.Field(typeof(SpectateCamera), "player");
-        private static readonly FieldInfo? s_spectatePlayerOverrideField =
-            AccessTools.Field(typeof(SpectateCamera), "playerOverride");
-        private static readonly FieldInfo? s_spectateNormalTransformPivotField =
-            AccessTools.Field(typeof(SpectateCamera), "normalTransformPivot");
-        private static readonly FieldInfo? s_spectateNormalTransformDistanceField =
-            AccessTools.Field(typeof(SpectateCamera), "normalTransformDistance");
-        private static readonly FieldInfo? s_spectateNormalPreviousPositionField =
-            AccessTools.Field(typeof(SpectateCamera), "normalPreviousPosition");
-        private static readonly FieldInfo? s_spectateNormalAimHorizontalField =
-            AccessTools.Field(typeof(SpectateCamera), "normalAimHorizontal");
-        private static readonly FieldInfo? s_spectateNormalAimVerticalField =
-            AccessTools.Field(typeof(SpectateCamera), "normalAimVertical");
-        private static readonly FieldInfo? s_spectateNormalMaxDistanceField =
-            AccessTools.Field(typeof(SpectateCamera), "normalMaxDistance");
-        private static readonly MethodInfo? s_cameraTeleportImpulseMethod =
-            AccessTools.Method(typeof(SpectateCamera), "CameraTeleportImpulse");
         private static PlayerAvatar? s_stateNormalPatchedPlayer;
         private static Transform? s_stateNormalOriginalSpectatePoint;
         private static Transform? s_stateNormalOrbitProxy;
@@ -59,6 +22,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         [HarmonyPrefix]
         private static bool PlayerSwitchPrefix(SpectateCamera __instance, bool _next)
         {
+            if (ShouldBlockJumpDrivenPlayerSwitch(_next))
+            {
+                return false;
+            }
+
             if (ShouldBlockPlayerSwitchForLastChance())
             {
                 return false;
@@ -69,17 +37,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return true;
             }
 
-            if (!IsDeadPlayersSpectateEnabledNow())
-            {
-                return true;
-            }
-
             var playerList = GameDirector.instance?.PlayerList;
-            if (playerList == null || playerList.Count == 0 || s_playerIsDisabledField == null)
+            if (playerList == null || playerList.Count == 0)
             {
                 return true;
             }
 
+            if (IsDeadPlayersSpectateEnabledNow())
+            {
+                return HandleDeadPlayersSpectateSwitch(__instance, playerList, _next);
+            }
+
+            return HandleVanillaEquivalentPlayerSwitch(__instance, playerList, _next);
+        }
+
+        private static bool HandleDeadPlayersSpectateSwitch(SpectateCamera spectate, IList<PlayerAvatar> playerList, bool next)
+        {
             var allDisabled = true;
             foreach (var p in playerList)
             {
@@ -88,7 +61,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                     continue;
                 }
 
-                if (s_playerIsDisabledField.GetValue(p) is bool disabled && !disabled)
+                if (!p.isDisabled)
                 {
                     allDisabled = false;
                     break;
@@ -100,54 +73,48 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return true;
             }
 
-            var handled = TryPlayerSwitchIncludingDisabled(__instance, playerList, _next);
+            var handled = TryPlayerSwitch(spectate, playerList, next, includeDisabled: true);
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Spectate.DeadPlayers.AllDisabledSwitch", 120))
             {
-                Debug.Log($"[SpectateDeadPlayers] Prefix all-disabled path handled={handled} count={playerList.Count} next={_next}");
+                Debug.Log($"[SpectateDeadPlayers] Prefix all-disabled path handled={handled} count={playerList.Count} next={next}");
             }
 
             // If everyone is disabled and feature is enabled, never execute vanilla early-return path.
             return false;
         }
 
-        [HarmonyTranspiler]
-        private static IEnumerable<CodeInstruction> PlayerSwitchTranspiler(IEnumerable<CodeInstruction> instructions)
+        private static bool HandleVanillaEquivalentPlayerSwitch(SpectateCamera spectate, IList<PlayerAvatar> playerList, bool next)
         {
-            if (s_playerIsDisabledField == null || s_shouldSkipMethod == null)
+            if (playerList.All(p => p == null || p.isDisabled))
             {
-                return instructions;
+                return false;
             }
 
-            var codes = instructions.ToList();
-            var replaced = 0;
-            for (var i = 0; i < codes.Count; i++)
+            if (TryPlayerSwitch(spectate, playerList, next, includeDisabled: false))
             {
-                var code = codes[i];
-                if (code.opcode == OpCodes.Ldfld && code.operand is FieldInfo field && field == s_playerIsDisabledField)
-                {
-                    codes[i] = new CodeInstruction(OpCodes.Call, s_shouldSkipMethod);
-                    replaced++;
-                }
+                return false;
             }
 
-            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Spectate.DeadPlayers.Transpiler", 600))
-            {
-                Debug.Log($"[SpectateDeadPlayers] PlayerSwitch transpiler replacements={replaced}");
-            }
+            return true;
+        }
 
-            return codes;
+        private static bool ShouldBlockJumpDrivenPlayerSwitch(bool next)
+        {
+            return next
+                && SemiFunc.InputDown(InputKey.Jump)
+                && !SemiFunc.InputDown(InputKey.SpectateNext);
         }
 
         [HarmonyPatch(typeof(SpectateCamera), "StateNormal")]
         [HarmonyPrefix]
         private static void StateNormalPrefix(SpectateCamera __instance)
         {
-            if (__instance == null || !IsDeadPlayersSpectateEnabledNow() || s_playerIsDisabledField == null)
+            if (__instance == null || !IsDeadPlayersSpectateEnabledNow())
             {
                 return;
             }
 
-            var currentPlayer = s_spectatePlayerField?.GetValue(__instance) as PlayerAvatar;
+            var currentPlayer = __instance.player;
             if (currentPlayer == null)
             {
                 return;
@@ -158,7 +125,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
-            if (s_playerIsDisabledField.GetValue(currentPlayer) is not bool disabled || !disabled)
+            if (!currentPlayer.isDisabled)
             {
                 return;
             }
@@ -170,32 +137,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
             // Replace the source spectate point for this frame with a proxy on the target DeathHead.
             // This keeps vanilla/DHH camera math intact (distance, smoothing, collisions, etc.).
-            if (s_playerAvatarSpectatePointField != null)
+            var original = currentPlayer.spectatePoint;
+            if (original != null)
             {
-                var original = s_playerAvatarSpectatePointField.GetValue(currentPlayer) as Transform;
-                if (original != null)
+                var proxy = EnsureStateNormalOrbitProxy();
+                if (proxy == null)
                 {
-                    var proxy = EnsureStateNormalOrbitProxy();
-                    if (proxy == null)
-                    {
-                        return;
-                    }
-
-                    // Keep vanilla spectate framing by preserving the original spectatePoint
-                    // offset relative to the player transform, but move the anchor to the head.
-                    var offset = Vector3.zero;
-                    if (currentPlayer.transform != null)
-                    {
-                        offset = original.position - currentPlayer.transform.position;
-                    }
-
-                    proxy.position = anchor + offset;
-                    proxy.rotation = original.rotation;
-
-                    s_stateNormalPatchedPlayer = currentPlayer;
-                    s_stateNormalOriginalSpectatePoint = original;
-                    s_playerAvatarSpectatePointField.SetValue(currentPlayer, proxy);
+                    return;
                 }
+
+                // Keep vanilla spectate framing by preserving the original spectatePoint
+                // offset relative to the player transform, but move the anchor to the head.
+                var offset = Vector3.zero;
+                if (currentPlayer.transform != null)
+                {
+                    offset = original.position - currentPlayer.transform.position;
+                }
+
+                proxy.position = anchor + offset;
+                proxy.rotation = original.rotation;
+
+                s_stateNormalPatchedPlayer = currentPlayer;
+                s_stateNormalOriginalSpectatePoint = original;
+                currentPlayer.spectatePoint = proxy;
             }
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Spectate.DeadPlayers.Anchor", 120))
@@ -208,7 +172,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         [HarmonyPostfix]
         private static void StateNormalPostfix(SpectateCamera __instance)
         {
-            if (s_playerAvatarSpectatePointField == null || s_stateNormalPatchedPlayer == null)
+            if (s_stateNormalPatchedPlayer == null)
             {
                 HandleLastChanceStateNormalPostfix(__instance);
                 return;
@@ -216,7 +180,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
             if (s_stateNormalOriginalSpectatePoint != null)
             {
-                s_playerAvatarSpectatePointField.SetValue(s_stateNormalPatchedPlayer, s_stateNormalOriginalSpectatePoint);
+                s_stateNormalPatchedPlayer.spectatePoint = s_stateNormalOriginalSpectatePoint;
             }
 
             s_stateNormalPatchedPlayer = null;
@@ -248,32 +212,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             return !LastChanceInteropBridge.AllPlayersDisabled();
         }
 
-        private static bool ShouldSkipSpectateTarget(PlayerAvatar player)
-        {
-            if (player == null)
-            {
-                return true;
-            }
-
-            if (IsDeadPlayersSpectateEnabledNow())
-            {
-                return false;
-            }
-
-            if (s_playerIsDisabledField == null)
-            {
-                return true;
-            }
-
-            var skip = s_playerIsDisabledField.GetValue(player) is bool disabled && disabled;
-            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Spectate.DeadPlayers.ShouldSkip", 300))
-            {
-                var targetName = GetPlayerName(player);
-                Debug.Log($"[SpectateDeadPlayers] ShouldSkip target={targetName} skip={skip}");
-            }
-            return skip;
-        }
-
         private static bool IsDeadPlayersSpectateEnabledNow()
         {
             if (!LastChanceInteropBridge.IsSpectateDeadPlayersEnabled())
@@ -297,32 +235,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             return true;
         }
 
-        private static bool TryPlayerSwitchIncludingDisabled(SpectateCamera spectate, IList<PlayerAvatar> players, bool next)
+        private static bool TryPlayerSwitch(SpectateCamera spectate, IList<PlayerAvatar> players, bool next, bool includeDisabled)
         {
-            if (players.Count == 0 ||
-                s_spectateCurrentPlayerListIndexField == null ||
-                s_spectatePlayerField == null ||
-                s_spectatePlayerOverrideField == null ||
-                s_spectateNormalTransformPivotField == null ||
-                s_spectateNormalTransformDistanceField == null ||
-                s_spectateNormalAimHorizontalField == null ||
-                s_spectateNormalAimVerticalField == null ||
-                s_spectateNormalMaxDistanceField == null)
+            if (players.Count == 0)
             {
                 return false;
             }
 
-            var currentPlayer = s_spectatePlayerField.GetValue(spectate) as PlayerAvatar;
-            var playerOverride = s_spectatePlayerOverrideField.GetValue(spectate) as PlayerAvatar;
-            var normalPivot = s_spectateNormalTransformPivotField.GetValue(spectate) as Transform;
-            var normalDistance = s_spectateNormalTransformDistanceField.GetValue(spectate) as Transform;
+            var currentPlayer = spectate.player;
+            var playerOverride = spectate.playerOverride;
+            var normalPivot = spectate.normalTransformPivot;
+            var normalDistance = spectate.normalTransformDistance;
             if (normalPivot == null || normalDistance == null)
             {
                 return false;
             }
 
-            var idxObj = s_spectateCurrentPlayerListIndexField.GetValue(spectate);
-            var idx = idxObj is int n ? n : 0;
+            var idx = spectate.currentPlayerListIndex;
             var count = players.Count;
 
             for (var i = 0; i < count; i++)
@@ -340,19 +269,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 }
 
                 playerOverride = null;
-                if (currentPlayer == candidate || candidate.spectatePoint == null)
+                if (currentPlayer == candidate || candidate.spectatePoint == null || (!includeDisabled && candidate.isDisabled))
                 {
                     continue;
                 }
 
-                s_spectatePlayerOverrideField.SetValue(spectate, null);
-                s_spectateCurrentPlayerListIndexField.SetValue(spectate, idx);
-                s_spectatePlayerField.SetValue(spectate, candidate);
+                spectate.playerOverride = null;
+                spectate.currentPlayerListIndex = idx;
+                spectate.player = candidate;
 
                 normalPivot.position = candidate.spectatePoint.position;
                 var aimHorizontal = candidate.transform.eulerAngles.y;
-                s_spectateNormalAimHorizontalField.SetValue(spectate, aimHorizontal);
-                s_spectateNormalAimVerticalField.SetValue(spectate, 0f);
+                spectate.normalAimHorizontal = aimHorizontal;
+                spectate.normalAimVertical = 0f;
                 normalPivot.rotation = Quaternion.Euler(0f, aimHorizontal, 0f);
                 normalPivot.localRotation = Quaternion.Euler(normalPivot.localRotation.eulerAngles.x, normalPivot.localRotation.eulerAngles.y, 0f);
                 normalDistance.localPosition = new Vector3(0f, 0f, -2f);
@@ -365,24 +294,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 }
 
                 SemiFunc.LightManagerSetCullTargetTransform(candidate.transform);
-                s_cameraTeleportImpulseMethod?.Invoke(spectate, null);
-                s_spectateNormalMaxDistanceField.SetValue(spectate, 3f);
+                spectate.CameraTeleportImpulse();
+                spectate.normalMaxDistance = 3f;
                 PlayerController.instance?.playerAvatarScript?.localCamera?.Teleported();
                 return true;
             }
 
-            s_spectatePlayerOverrideField.SetValue(spectate, null);
+            spectate.playerOverride = null;
             return false;
         }
 
         private static string GetPlayerName(PlayerAvatar? player)
         {
-            if (player == null || s_playerNameField == null)
+            if (player == null)
             {
                 return "unknown";
             }
 
-            return s_playerNameField.GetValue(player) as string ?? "unknown";
+            return player.playerName ?? "unknown";
         }
 
         private static bool TryGetDeathHeadAnchor(PlayerAvatar player, out Vector3 anchor)
@@ -395,14 +324,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             anchor = deathHead.transform.position;
-            var physGrabObject = s_playerDeathHeadPhysGrabObjectField?.GetValue(deathHead) as PhysGrabObject;
+            var physGrabObject = deathHead.physGrabObject;
             if (physGrabObject != null)
             {
-                var centerObj = s_physGrabObjectCenterPointField?.GetValue(physGrabObject);
-                if (centerObj is Vector3 center)
-                {
-                    anchor = center;
-                }
+                anchor = physGrabObject.centerPoint;
             }
 
             return true;
@@ -416,16 +341,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return false;
             }
 
-            if (s_playerIsDisabledField != null &&
-                s_playerIsDisabledField.GetValue(local) is bool disabled &&
-                disabled)
+            if (local.isDisabled)
             {
                 return true;
             }
 
-            if (s_playerAvatarDeadSetField != null &&
-                s_playerAvatarDeadSetField.GetValue(local) is bool dead &&
-                dead)
+            if (local.deadSet)
             {
                 return true;
             }

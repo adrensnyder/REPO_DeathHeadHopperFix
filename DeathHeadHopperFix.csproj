@@ -17,9 +17,6 @@
 		<ThunderstoreZipFileName>AdrenSnyder-DeathHeadHopperFix-$(Version).zip</ThunderstoreZipFileName>
 	</PropertyGroup>
 	<ItemGroup>
-	  <None Include="Modules\Utilities\PlayerTruckDistanceHelper.cs" />
-	</ItemGroup>
-	<ItemGroup>
 		<Compile Remove="obj\**\*.cs" />
 		<Compile Remove="bin\**\*.cs" />
 	</ItemGroup>

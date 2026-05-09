@@ -84,6 +84,7 @@ namespace DeathHeadHopperFix
                 if (harmony == null)
                     throw new InvalidOperationException("Harmony instance is null.");
 
+                DHHStatsBootstrapModule.Apply(harmony, asm, _log);
                 PrefabModule.Apply(harmony, asm, _log);
                 AudioModule.Apply(harmony, asm, _log);
                 DHHShopVanillaPoolModule.Apply(harmony, asm, _log);

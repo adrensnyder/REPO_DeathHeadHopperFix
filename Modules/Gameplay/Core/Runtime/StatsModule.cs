@@ -1,12 +1,10 @@
 #nullable enable
 
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
-using DeathHeadHopperFix.Modules.Utilities;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
 {
@@ -31,23 +29,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
             if (string.IsNullOrWhiteSpace(itemName))
                 return;
 
-            var tStats = AccessTools.TypeByName("StatsManager");
-            if (tStats == null)
+            var stats = StatsManager.instance;
+            if (stats == null)
                 return;
 
-            var inst = ReflectionHelper.GetStaticInstanceValue(tStats, "instance");
-            if (inst == null)
-                return;
-
-            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            foreach (var field in new[] { "itemsPurchased", "itemsPurchasedTotal", "itemsUpgradesPurchased", "itemsUpgradesPurchasedTotal" })
-            {
-                var fDict = tStats.GetField(field, flags);
-                if (fDict?.GetValue(inst) is IDictionary dict && !dict.Contains(itemName))
-                {
-                    dict[itemName] = 0;
-                }
-            }
+            EnsureKey(stats.itemsPurchased, itemName);
+            EnsureKey(stats.itemsPurchasedTotal, itemName);
+            EnsureKey(stats.itemsUpgradesPurchased, itemName);
         }
 
         internal static void EnsureStatsEntriesForItem(UnityEngine.Object itemObj)
@@ -57,32 +45,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
                 if (itemObj == null)
                     return;
 
-                var tStats = AccessTools.TypeByName("StatsManager");
-                if (tStats == null)
+                var stats = StatsManager.instance;
+                if (stats == null)
                     return;
 
-                var inst = ReflectionHelper.GetStaticInstanceValue(tStats, "instance");
-                if (inst == null)
-                    return;
-
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-
-                var fPurchased = tStats.GetField("itemsPurchased", flags);
-                var fPurchasedTotal = tStats.GetField("itemsPurchasedTotal", flags);
-                var fUpgrades = tStats.GetField("itemsUpgradesPurchased", flags);
-                var fUpgradesTotal = tStats.GetField("itemsUpgradesPurchasedTotal", flags);
-
-                if (fPurchased?.GetValue(inst) is IDictionary<string, int> dict1 && !dict1.ContainsKey(itemObj.name))
-                    dict1[itemObj.name] = 0;
-
-                if (fPurchasedTotal?.GetValue(inst) is IDictionary<string, int> dict2 && !dict2.ContainsKey(itemObj.name))
-                    dict2[itemObj.name] = 0;
-
-                if (fUpgrades?.GetValue(inst) is IDictionary<string, int> dict3 && !dict3.ContainsKey(itemObj.name))
-                    dict3[itemObj.name] = 0;
-
-                if (fUpgradesTotal?.GetValue(inst) is IDictionary<string, int> dict4 && !dict4.ContainsKey(itemObj.name))
-                    dict4[itemObj.name] = 0;
+                EnsureKey(stats.itemsPurchased, itemObj.name);
+                EnsureKey(stats.itemsPurchasedTotal, itemObj.name);
+                EnsureKey(stats.itemsUpgradesPurchased, itemObj.name);
             }
             catch
             {
@@ -92,11 +61,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
 
         private static void PatchSemiFuncStatGetItemsPurchasedIfPossible(Harmony harmony)
         {
-            var tSemi = AccessTools.TypeByName("SemiFunc");
-            if (tSemi == null)
-                return;
-
-            var m = AccessTools.Method(tSemi, "StatGetItemsPurchased", new[] { typeof(string) });
+            var m = AccessTools.Method(typeof(SemiFunc), nameof(SemiFunc.StatGetItemsPurchased), new[] { typeof(string) });
             if (m == null)
                 return;
 
@@ -111,23 +76,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
         {
             try
             {
-                var tStats = AccessTools.TypeByName("StatsManager");
-                if (tStats == null)
+                var stats = StatsManager.instance;
+                if (stats == null)
                     return true;
 
-                var inst = ReflectionHelper.GetStaticInstanceValue(tStats, "instance");
-                if (inst == null)
-                    return true;
-
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                var f = tStats.GetField("itemsPurchased", flags);
-                if (f?.GetValue(inst) is IDictionary<string, int> dict)
-                {
-                    if (!dict.ContainsKey(itemName))
-                        dict[itemName] = 0;
-                    __result = dict[itemName];
-                    return false;
-                }
+                EnsureKey(stats.itemsPurchased, itemName);
+                __result = stats.itemsPurchased[itemName];
+                return false;
             }
             catch
             {
@@ -139,11 +94,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
 
         private static void PatchStatsManagerGetItemsUpgradesPurchasedIfPossible(Harmony harmony)
         {
-            var tStats = AccessTools.TypeByName("StatsManager");
-            if (tStats == null)
-                return;
-
-            var mGet = AccessTools.Method(tStats, "GetItemsUpgradesPurchased", new[] { typeof(string) });
+            var mGet = AccessTools.Method(typeof(StatsManager), nameof(StatsManager.GetItemsUpgradesPurchased), new[] { typeof(string) });
             if (mGet == null)
                 return;
 
@@ -158,29 +109,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
         {
             try
             {
-                var tStats = AccessTools.TypeByName("StatsManager");
-                if (tStats == null)
+                var stats = StatsManager.instance;
+                if (stats == null)
                     return true;
 
-                var inst = ReflectionHelper.GetStaticInstanceValue(tStats, "instance");
-                if (inst == null)
-                    return true;
-
-                const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-                var f = tStats.GetField("itemsUpgradesPurchased", flags);
-                if (f?.GetValue(inst) is IDictionary<string, int> dict)
-                {
-                    if (!dict.TryGetValue(itemName, out var value))
-                    {
-                        dict[itemName] = 0;
-                        __result = 0;
-                    }
-                    else
-                    {
-                        __result = value;
-                    }
-                    return false;
-                }
+                EnsureKey(stats.itemsUpgradesPurchased, itemName);
+                __result = stats.itemsUpgradesPurchased[itemName];
+                return false;
             }
             catch
             {
@@ -195,11 +130,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
             if (harmony == null)
                 return;
 
-            var tStats = AccessTools.TypeByName("StatsManager");
-            if (tStats == null)
-                return;
-
-            var mPurchase = AccessTools.Method(tStats, "ItemPurchase", new[] { typeof(string) });
+            var mPurchase = AccessTools.Method(typeof(StatsManager), nameof(StatsManager.ItemPurchase), new[] { typeof(string) });
             if (mPurchase == null)
                 return;
 
@@ -214,6 +145,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
         {
             EnsureStatsManagerKey(itemName);
             return true;
+        }
+
+        private static void EnsureKey(IDictionary<string, int> dictionary, string key)
+        {
+            if (dictionary == null || string.IsNullOrWhiteSpace(key))
+                return;
+
+            if (!dictionary.ContainsKey(key))
+                dictionary[key] = 0;
         }
     }
 }

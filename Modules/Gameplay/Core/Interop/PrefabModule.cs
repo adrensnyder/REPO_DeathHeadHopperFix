@@ -10,6 +10,7 @@ using HarmonyLib;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
+using DeathHeadHopperFix.Modules.Utilities;
 using Photon.Pun;
 using REPOLib.Modules;
 using UnityEngine;
@@ -176,7 +177,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
                 CacheShopItemKey(shopItemsDict, key, itemObj);
 
-                TryRegisterItemWithRepolib(itemObj);
+                TryRegisterItemWithRepolib(itemObj, prefab);
+                EnsureStatsItemDictionaryEntry(itemObj);
                 StatsModule.EnsureStatsEntriesForItem(itemObj);
 
                 _log?.LogInfo($"[Fix] Loaded item '{key}' from '{itemAssetPath}' and bound prefab '{prefabPath}'.");
@@ -410,11 +412,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 dict.Add(actualKey, value);
         }
 
-        private static void TryRegisterItemWithRepolib(Item itemObj)
+        private static void EnsureStatsItemDictionaryEntry(Item itemObj)
+        {
+            if (itemObj == null)
+                return;
+
+            var stats = StatsManager.instance;
+            if (stats == null || stats.itemDictionary == null)
+                return;
+
+            var key = itemObj.name;
+            if (string.IsNullOrWhiteSpace(key))
+                return;
+
+            if (stats.itemDictionary.TryGetValue(key, out var existing) && existing == itemObj)
+                return;
+
+            stats.itemDictionary[key] = itemObj;
+        }
+
+        private static void TryRegisterItemWithRepolib(Item itemObj, GameObject prefab)
         {
             try
             {
-                var itemAttributes = itemObj.prefab?.Prefab?.GetComponent<ItemAttributes>();
+                var itemAttributes = prefab != null ? prefab.GetComponent<ItemAttributes>() : null;
                 if (itemAttributes == null)
                 {
                     _log?.LogWarning($"[Fix] REPOLib RegisterItem skipped for '{itemObj.name}': prefab has no ItemAttributes.");
@@ -428,7 +449,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             }
             catch (Exception ex)
             {
-                _log?.LogWarning($"[Fix] REPOLib RegisterItem failed: {ex.Message}");
+                if (LogLimiter.ShouldLog($"Fix:REPOLib.RegisterItem:{itemObj?.name}", 600))
+                    _log?.LogWarning($"[Fix] REPOLib RegisterItem failed for '{itemObj?.name}': {ex.Message}");
             }
         }
 

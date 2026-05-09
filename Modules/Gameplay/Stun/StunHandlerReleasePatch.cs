@@ -1,33 +1,37 @@
-#nullable disable
+#nullable enable
 
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Reflection.Emit;
+using DeathHeadHopper.DeathHead.Handlers;
 using HarmonyLib;
 using Photon.Pun;
-using UnityEngine;
-using DeathHeadHopper.DeathHead.Handlers;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 {
-    [HarmonyPatch(typeof(StunHandler), "HandleStun")]
+    [HarmonyPatch(typeof(StunHandler), nameof(StunHandler.HandleStun))]
     internal static class StunHandlerReleasePatch
     {
         private const int ReleaseObjectViewId = -1;
+        private static readonly MethodInfo? s_targetCall = AccessTools.Method(
+            typeof(StunHandler),
+            nameof(StunHandler.PhysObjectHurt),
+            new[] { typeof(PhysGrabObject), typeof(HurtCollider.BreakImpact), typeof(float) });
 
-        private static readonly MethodInfo Replacement = AccessTools.Method(typeof(StunHandlerReleasePatch), nameof(CustomPhysObjectHurt));
+        private static readonly MethodInfo? s_replacement = AccessTools.Method(
+            typeof(StunHandlerReleasePatch),
+            nameof(CustomPhysObjectHurt),
+            new[] { typeof(StunHandler), typeof(PhysGrabObject), typeof(HurtCollider.BreakImpact), typeof(float) });
 
         [HarmonyTranspiler]
         private static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions)
         {
             foreach (var instruction in instructions)
             {
-                if ((instruction.opcode == OpCodes.Call || instruction.opcode == OpCodes.Callvirt)
-                    && instruction.operand is MethodInfo target
-                    && IsPhysObjectHurtCall(target))
+                if (s_targetCall != null && s_replacement != null && instruction.Calls(s_targetCall))
                 {
-                    yield return new CodeInstruction(OpCodes.Call, Replacement);
+                    yield return new CodeInstruction(OpCodes.Call, s_replacement);
                     continue;
                 }
 
@@ -35,30 +39,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             }
         }
 
-        private static bool IsPhysObjectHurtCall(MethodInfo target)
-        {
-            if (target == null || target.Name != "PhysObjectHurt")
-            {
-                return false;
-            }
-
-            var parameters = target.GetParameters();
-            if (parameters.Length != 3)
-            {
-                return false;
-            }
-
-            return parameters[0].ParameterType == typeof(PhysGrabObject)
-                && parameters[1].ParameterType == typeof(HurtCollider.BreakImpact)
-                && parameters[2].ParameterType == typeof(float);
-        }
-
-        public static void CustomPhysObjectHurt(StunHandler self, PhysGrabObject physGrabObject, HurtCollider.BreakImpact impact, float hitForce)
+        private static void CustomPhysObjectHurt(StunHandler self, PhysGrabObject physGrabObject, HurtCollider.BreakImpact impact, float hitForce)
         {
             if (physGrabObject == null)
-            {
                 return;
-            }
 
             switch (impact)
             {
@@ -75,12 +59,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
             if (hitForce >= 5f && physGrabObject.playerGrabbing.Count > 0)
             {
-                foreach (PhysGrabber playerGrabber in physGrabObject.playerGrabbing.ToList())
+                foreach (var playerGrabber in physGrabObject.playerGrabbing.ToList())
                 {
                     if (playerGrabber == null)
-                    {
                         continue;
-                    }
 
                     if (!SemiFunc.IsMultiplayer())
                     {
@@ -88,12 +70,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                     }
                     else
                     {
-                        playerGrabber.photonView.RPC("ReleaseObjectRPC", RpcTarget.All, new object[]
-                        {
-                            false,
-                            1f,
-                            ReleaseObjectViewId
-                        });
+                        playerGrabber.photonView.RPC("ReleaseObjectRPC", RpcTarget.All, false, 1f, ReleaseObjectViewId);
                     }
                 }
             }

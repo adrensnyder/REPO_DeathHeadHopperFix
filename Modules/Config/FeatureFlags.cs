@@ -40,8 +40,8 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHHopJumpDiminishingFactor = "Curve factor that controls how quickly extra hop levels taper off.";
             public const string DHHJumpForceThresholdLevel = "Threshold level where jump force increases start to diminish.";
             public const string DHHJumpForceDiminishingFactor = "Diminishing factor that cuts additional force beyond the threshold.";
-            public const string HeadChargerShopWeightPercent = "Relative shop list weight for Item DHH Head Charger compared to vanilla normal items. 100 = vanilla weight, 0 = never eligible, values above 100 add extra list weight.";
-            public const string DHHUpgradesShopWeightPercent = "Relative shop list weight for Item Upgrade DHH Charge and Item Upgrade DHH Power compared to vanilla upgrades. 100 = vanilla weight, 0 = never eligible, values above 100 add extra list weight.";
+            public const string HeadChargerShopWeightPercent = "Relative shop list weight for Item DHH Head Charger compared to vanilla normal items. 0 = never eligible, 100 = vanilla weight, 200 = double vanilla weight.";
+            public const string DHHUpgradesShopWeightPercent = "Relative shop list weight for Item Upgrade DHH Charge and Item Upgrade DHH Power compared to vanilla upgrades. 0 = never eligible, 100 = vanilla weight, 200 = double vanilla weight.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
         }
 
@@ -117,10 +117,10 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 10f)]
         public static int DHHHopJumpThresholdLevel = 5;
 
-        [FeatureConfigEntry(Sections.Shop, Descriptions.HeadChargerShopWeightPercent, Min = 0f, Max = 500f)]
-        public static int HeadChargerShopWeightPercent = 120;
+        [FeatureConfigEntry(Sections.Shop, Descriptions.HeadChargerShopWeightPercent, Min = 0f, Max = 200f)]
+        public static int HeadChargerShopWeightPercent = 100;
 
-        [FeatureConfigEntry(Sections.Shop, Descriptions.DHHUpgradesShopWeightPercent, Min = 0f, Max = 500f)]
+        [FeatureConfigEntry(Sections.Shop, Descriptions.DHHUpgradesShopWeightPercent, Min = 0f, Max = 200f)]
         public static int DHHUpgradesShopWeightPercent = 50;
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
