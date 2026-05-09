@@ -31,6 +31,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 Patch(harmony, AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.LoadShopAtticShelves)));
                 Patch(harmony, AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.LoadItems)));
                 Patch(harmony, AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.ShopPopulateItemVolumes), new[] { typeof(PunManager) }));
+                PatchItemManagerGetPurchasedItems(harmony);
+                PatchLevelGeneratorItemSetup(harmony);
                 PatchShopInitialize(harmony);
                 PatchShopItemsCollection(harmony);
 
@@ -72,6 +74,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             harmony.Patch(original, postfix: postfix);
         }
 
+        private static void PatchLevelGeneratorItemSetup(Harmony harmony)
+        {
+            var original = AccessTools.Method(typeof(LevelGenerator), nameof(LevelGenerator.ItemSetup));
+            if (original == null)
+                return;
+
+            var postfix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(LevelGenerator_ItemSetup_Postfix));
+            harmony.Patch(original, postfix: postfix);
+        }
+
+        private static void PatchItemManagerGetPurchasedItems(Harmony harmony)
+        {
+            var original = AccessTools.Method(typeof(ItemManager), nameof(ItemManager.GetPurchasedItems));
+            if (original == null)
+                return;
+
+            var prefix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(ItemManager_GetPurchasedItems_Prefix));
+            harmony.Patch(original, prefix: prefix);
+        }
+
         private static bool BlockOriginalShopMethod_Prefix()
         {
             return false;
@@ -88,18 +110,33 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         private static void ShopManager_GetAllItemsFromStatsManager_Postfix(ShopManager __instance)
         {
-            if (__instance == null || SemiFunc.IsNotMasterClient())
+            if (__instance == null)
                 return;
+
+            var beforeHeadCharger = __instance.potentialItems?.Count(IsHeadChargerItem) ?? 0;
+            var beforeUpgrades = __instance.potentialItemUpgrades?.Count(IsDhhUpgradeItem) ?? 0;
 
             ApplyRelativeWeight(__instance.potentialItems, IsHeadChargerItem, FeatureFlags.HeadChargerShopWeightPercent);
             ApplyRelativeWeight(__instance.potentialItemUpgrades, IsDhhUpgradeItem, FeatureFlags.DHHUpgradesShopWeightPercent);
 
-            if (FeatureFlags.DebugLogging)
+            if (ShouldLogShopDebug())
             {
-                var headEntries = __instance.potentialItems.Count(IsHeadChargerItem);
-                var upgradeEntries = __instance.potentialItemUpgrades.Count(IsDhhUpgradeItem);
-                _log?.LogInfo($"[Fix:Shop] DHH weighted entries headCharger={headEntries} upgrades={upgradeEntries} headWeight={FeatureFlags.HeadChargerShopWeightPercent}% upgradeWeight={FeatureFlags.DHHUpgradesShopWeightPercent}%");
+                var afterHeadCharger = __instance.potentialItems?.Count(IsHeadChargerItem) ?? 0;
+                var afterUpgrades = __instance.potentialItemUpgrades?.Count(IsDhhUpgradeItem) ?? 0;
+                _log?.LogInfo($"[Fix:Shop] Weighting context mode={(SemiFunc.IsMultiplayer() ? "MP" : "SP")} headCharger before={beforeHeadCharger} after={afterHeadCharger} weight={FeatureFlags.HeadChargerShopWeightPercent}% upgrades before={beforeUpgrades} after={afterUpgrades} weight={FeatureFlags.DHHUpgradesShopWeightPercent}%");
             }
+        }
+
+        private static void LevelGenerator_ItemSetup_Postfix()
+        {
+            EnsureDhhItemsInVanillaDictionary();
+            ValidateDhhPrefabRefsForVanillaSpawn();
+        }
+
+        private static void ItemManager_GetPurchasedItems_Prefix()
+        {
+            EnsureDhhItemsInVanillaDictionary();
+            ValidateDhhPrefabRefsForVanillaSpawn();
         }
 
         internal static void EnsureDhhItemsInVanillaDictionary()
@@ -136,7 +173,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 added++;
             }
 
-            if (FeatureFlags.DebugLogging && added > 0)
+            if (ShouldLogShopDebug() && added > 0)
                 _log?.LogInfo($"[Fix:Shop] Added {added} DeathHeadHopper item(s) to the vanilla shop dictionary.");
         }
 
@@ -199,6 +236,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (originalMatches.Count == 0)
                 return;
 
+            var originalCount = originalMatches.Count;
             foreach (var item in originalMatches)
             {
                 list.Remove(item);
@@ -206,13 +244,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
             var wholeCopies = Math.Max(0, percent / 100);
             var fractionalChance = Math.Max(0, percent % 100);
+            var addedCopies = 0;
             foreach (var item in originalMatches)
             {
                 for (var i = 0; i < wholeCopies; i++)
+                {
                     list.Add(item);
+                    addedCopies++;
+                }
 
                 if (fractionalChance > 0 && UnityEngine.Random.Range(0, 100) < fractionalChance)
+                {
                     list.Add(item);
+                    addedCopies++;
+                }
+            }
+
+            if (ShouldLogShopDebug())
+            {
+                var mode = SemiFunc.IsMultiplayer() ? "MP" : "SP";
+                _log?.LogInfo($"[Fix:Shop] ApplyRelativeWeight mode={mode} matcher={matcher.Method.Name} original={originalCount} removed={originalCount} percent={percent}% wholeCopies={wholeCopies} fractionalChance={fractionalChance}% addedCopies={addedCopies} final={list.Count(item => item != null && matcher(item))}");
             }
 
             list.Shuffle<Item>();
@@ -238,6 +289,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         {
             if (LoggedWarnings.Add(key))
                 _log?.LogWarning(message);
+        }
+
+        private static bool ShouldLogShopDebug()
+        {
+            return FeatureFlags.DebugLogging;
         }
     }
 }
