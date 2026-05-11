@@ -391,6 +391,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
+            ScalerCoreInteropBridge.TryRestoreLocalPlayerCameraState();
+
             if (LastChanceInteropBridge.ShouldForceLocalDeathHeadSpectate())
             {
                 if (__instance != null)
