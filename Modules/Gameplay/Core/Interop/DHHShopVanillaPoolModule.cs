@@ -116,8 +116,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             var beforeHeadCharger = __instance.potentialItems?.Count(IsHeadChargerItem) ?? 0;
             var beforeUpgrades = __instance.potentialItemUpgrades?.Count(IsDhhUpgradeItem) ?? 0;
 
-            ApplyRelativeWeight(__instance.potentialItems, IsHeadChargerItem, FeatureFlags.HeadChargerShopWeightPercent);
-            ApplyRelativeWeight(__instance.potentialItemUpgrades, IsDhhUpgradeItem, FeatureFlags.DHHUpgradesShopWeightPercent);
+            var potentialItems = __instance.potentialItems;
+            if (potentialItems != null)
+                ApplyRelativeWeight(potentialItems, IsHeadChargerItem, FeatureFlags.HeadChargerShopWeightPercent);
+
+            var potentialUpgrades = __instance.potentialItemUpgrades;
+            if (potentialUpgrades != null)
+                ApplyRelativeWeight(potentialUpgrades, IsDhhUpgradeItem, FeatureFlags.DHHUpgradesShopWeightPercent);
 
             if (ShouldLogShopDebug())
             {

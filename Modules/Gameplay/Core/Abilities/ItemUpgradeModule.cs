@@ -38,6 +38,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (!toggle || __instance == null)
                 return;
 
+            if (!SemiFunc.IsMasterClientOrSingleplayer())
+                return;
+
             var usedPower = TryRunPowerUpgrade(__instance);
             var usedCharge = TryRunChargeUpgrade(__instance);
             if (usedPower || usedCharge)
@@ -50,22 +53,39 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private static bool TryRunPowerUpgrade(ItemToggle toggle)
         {
-            var upgrade = toggle.GetComponent<DHHItemUpgradePower>();
-            if (upgrade == null)
+            if (toggle.GetComponent<DHHItemUpgradePower>() == null)
                 return false;
 
-            upgrade.Upgrade();
-            return true;
+            if (!TryGetToggleSteamId(toggle, out var playerId))
+                return false;
+
+            return StatsModule.TryIncreaseDhhUpgrade(playerId, isChargeUpgrade: false, out _);
         }
 
         private static bool TryRunChargeUpgrade(ItemToggle toggle)
         {
-            var upgrade = toggle.GetComponent<DHHItemUpgradeCharge>();
-            if (upgrade == null)
+            if (toggle.GetComponent<DHHItemUpgradeCharge>() == null)
                 return false;
 
-            upgrade.Upgrade();
-            return true;
+            if (!TryGetToggleSteamId(toggle, out var playerId))
+                return false;
+
+            return StatsModule.TryIncreaseDhhUpgrade(playerId, isChargeUpgrade: true, out _);
+        }
+
+        private static bool TryGetToggleSteamId(ItemToggle toggle, out string playerId)
+        {
+            playerId = string.Empty;
+            try
+            {
+                var playerAvatar = SemiFunc.PlayerAvatarGetFromPhotonID(toggle.playerTogglePhotonID);
+                playerId = playerAvatar != null ? SemiFunc.PlayerGetSteamID(playerAvatar) : string.Empty;
+                return !string.IsNullOrWhiteSpace(playerId);
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void DestroyUpgradeItem(ItemToggle toggle)

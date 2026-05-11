@@ -178,6 +178,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 CacheShopItemKey(shopItemsDict, key, itemObj);
 
                 TryRegisterItemWithRepolib(itemObj, prefab);
+                StatsModule.RegisterDhhRepolibUpgrade(itemObj);
                 EnsureStatsItemDictionaryEntry(itemObj);
                 StatsModule.EnsureStatsEntriesForItem(itemObj);
 
@@ -435,7 +436,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         {
             try
             {
-                var itemAttributes = prefab != null ? prefab.GetComponent<ItemAttributes>() : null;
+                var itemAttributes = prefab != null ? prefab.GetComponent<ItemAttributes>() ?? prefab.GetComponentInChildren<ItemAttributes>() : null;
                 if (itemAttributes == null)
                 {
                     _log?.LogWarning($"[Fix] REPOLib RegisterItem skipped for '{itemObj.name}': prefab has no ItemAttributes.");
