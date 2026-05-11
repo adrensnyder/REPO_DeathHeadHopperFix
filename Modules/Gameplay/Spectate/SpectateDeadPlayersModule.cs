@@ -15,9 +15,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
     internal static class SpectateDeadPlayersModule
     {
         private const string ModuleId = "DeathHeadHopperFix.Spectate.DeadPlayers";
+        private static readonly FieldInfo? s_spectateCurrentStateField = AccessTools.Field(typeof(SpectateCamera), "currentState");
         private static PlayerAvatar? s_stateNormalPatchedPlayer;
         private static Transform? s_stateNormalOriginalSpectatePoint;
         private static Transform? s_stateNormalOrbitProxy;
+        private static string? s_lastDebugSnapshotKey;
 
         [HarmonyPrefix]
         private static bool PlayerSwitchPrefix(SpectateCamera __instance, bool _next)
@@ -135,6 +137,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
+            TraceSpectateActivation(__instance, "StateNormalPrefix");
+
             // Replace the source spectate point for this frame with a proxy on the target DeathHead.
             // This keeps vanilla/DHH camera math intact (distance, smoothing, collisions, etc.).
             var original = currentPlayer.spectatePoint;
@@ -205,6 +209,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             // During LastChance keep vanilla Head state disabled, even if disabled flags flicker.
             if (LastChanceInteropBridge.IsLastChanceActive())
             {
+                TraceSpectateActivation(__instance, "UpdateStatePrefix.HeadBlocked");
                 return false;
             }
 
@@ -385,6 +390,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
+            TraceSpectateActivation(__instance, "LastChanceStateNormalPostfix");
+
             if (!LastChanceInteropBridge.AllPlayersDisabled())
             {
                 LastChanceInteropBridge.ResetSpectateForceState();
@@ -401,6 +408,54 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             LastChanceInteropBridge.DebugLogState(__instance);
+        }
+
+        private static void TraceSpectateActivation(SpectateCamera? spectate, string reason)
+        {
+            if (!FeatureFlags.DebugLogging || spectate == null)
+            {
+                return;
+            }
+
+            var currentState = s_spectateCurrentStateField?.GetValue(spectate)?.ToString() ?? "unknown";
+            var currentPlayer = spectate.player;
+            var playerOverride = spectate.playerOverride;
+            var localDeathHeadSpectated = SpectateContextHelper.IsLocalDeathHeadSpectated();
+            var spectatingLocalDeathHead = SpectateContextHelper.IsSpectatingLocalDeathHead();
+            var spectatingLocalPlayerTarget = SpectateContextHelper.IsSpectatingLocalPlayerTarget();
+            var mainCamera = Camera.main;
+            var localCamera = PlayerController.instance?.playerAvatarScript?.localCamera;
+            var lastChanceEnabled = LastChanceInteropBridge.IsLastChanceModeEnabled();
+            var lastChanceActive = LastChanceInteropBridge.IsLastChanceActive();
+
+            var snapshotKey =
+                $"{reason}|{currentState}|{GetPlayerName(currentPlayer)}|{GetPlayerName(playerOverride)}|{lastChanceEnabled}|{lastChanceActive}|{spectatingLocalDeathHead}|{localDeathHeadSpectated}|{spectatingLocalPlayerTarget}|{mainCamera != null}|{localCamera != null}";
+
+            if (snapshotKey == s_lastDebugSnapshotKey)
+            {
+                return;
+            }
+
+            s_lastDebugSnapshotKey = snapshotKey;
+
+            if (!LogLimiter.ShouldLog($"Spectate.DeadPlayers.Debug.{reason}", 30))
+            {
+                return;
+            }
+
+            Debug.Log(
+                "[SpectateDeadPlayers] " +
+                $"reason={reason} " +
+                $"lastChanceEnabled={lastChanceEnabled} " +
+                $"lastChanceActive={lastChanceActive} " +
+                $"state={currentState} " +
+                $"player={GetPlayerName(currentPlayer)} " +
+                $"override={GetPlayerName(playerOverride)} " +
+                $"spectatingLocalDeathHead={spectatingLocalDeathHead} " +
+                $"localDeathHeadSpectated={localDeathHeadSpectated} " +
+                $"spectatingLocalPlayerTarget={spectatingLocalPlayerTarget} " +
+                $"mainCamera={(mainCamera != null ? mainCamera.name : "null")} " +
+                $"localCamera={(localCamera != null ? localCamera.name : "null")}");
         }
 
         private static bool ShouldBlockPlayerSwitchForLastChance()
