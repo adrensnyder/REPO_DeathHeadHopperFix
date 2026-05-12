@@ -6,9 +6,11 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using DeathHeadHopper.Managers;
+using DeathHeadHopper.Items;
 using HarmonyLib;
 using BepInEx.Logging;
 using DeathHeadHopperFix.Modules.Config;
+using DeathHeadHopperFix.Modules.Gameplay.Core.Abilities;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
 using DeathHeadHopperFix.Modules.Utilities;
 using Photon.Pun;
@@ -177,8 +179,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
                 CacheShopItemKey(shopItemsDict, key, itemObj);
 
+                DhhUpgradeOrchestrator.DisableLegacyToggleListeners(prefab);
                 TryRegisterItemWithRepolib(itemObj, prefab);
-                StatsModule.RegisterDhhRepolibUpgrade(itemObj);
+                TryRegisterUpgradeWithRepolib(itemObj, prefab);
                 EnsureStatsItemDictionaryEntry(itemObj);
                 StatsModule.EnsureStatsEntriesForItem(itemObj);
 
@@ -453,6 +456,51 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 if (LogLimiter.ShouldLog($"Fix:REPOLib.RegisterItem:{itemObj?.name}", 600))
                     _log?.LogWarning($"[Fix] REPOLib RegisterItem failed for '{itemObj?.name}': {ex.Message}");
             }
+        }
+
+        private static void TryRegisterUpgradeWithRepolib(Item itemObj, GameObject prefab)
+        {
+            if (itemObj == null || prefab == null)
+                return;
+
+            try
+            {
+                var hasChargeUpgrade = DhhUpgradeOrchestrator.HasChargeUpgrade(prefab);
+                var hasPowerUpgrade = DhhUpgradeOrchestrator.HasPowerUpgrade(prefab);
+
+                if (!hasChargeUpgrade && !hasPowerUpgrade)
+                    return;
+
+                if (hasChargeUpgrade)
+                    RegisterOrBindUpgrade("HeadCharge", itemObj, isChargeUpgrade: true);
+
+                if (hasPowerUpgrade)
+                    RegisterOrBindUpgrade("HeadPower", itemObj, isChargeUpgrade: false);
+            }
+            catch (Exception ex)
+            {
+                if (LogLimiter.ShouldLog($"Fix:REPOLib.RegisterUpgrade:{itemObj?.name}", 600))
+                    _log?.LogWarning($"[Fix] REPOLib RegisterUpgrade failed for '{itemObj?.name}': {ex.Message}");
+            }
+        }
+
+        private static void RegisterOrBindUpgrade(string upgradeId, Item itemObj, bool isChargeUpgrade)
+        {
+            var upgrade = Upgrades.GetUpgrade(upgradeId);
+            if (upgrade == null)
+            {
+                upgrade = Upgrades.RegisterUpgrade(upgradeId, itemObj, null, null);
+                if (upgrade == null)
+                    return;
+            }
+
+            var dhhStats = DHHStatsManager.instance;
+            if (dhhStats == null)
+                return;
+
+            upgrade.PlayerDictionary = isChargeUpgrade
+                ? dhhStats.playerUpgradeHeadCharge
+                : dhhStats.playerUpgradeHeadPower;
         }
 
         private static bool LooksLikeDhhBundle(AssetBundle bundle)

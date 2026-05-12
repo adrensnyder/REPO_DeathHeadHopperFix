@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using BepInEx.Logging;
+using DeathHeadHopper.Items;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
 using DeathHeadHopper.Managers;
@@ -35,6 +36,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 PatchLevelGeneratorItemSetup(harmony);
                 PatchShopInitialize(harmony);
                 PatchShopItemsCollection(harmony);
+                PatchUpgradeStandSelection(harmony);
 
                 _hooksApplied = true;
                 _log?.LogInfo("[Fix:Shop] Original DeathHeadHopper custom shop flow disabled; vanilla shop pool orchestrator enabled.");
@@ -74,6 +76,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             harmony.Patch(original, postfix: postfix);
         }
 
+        private static void PatchUpgradeStandSelection(Harmony harmony)
+        {
+            var original = AccessTools.Method(typeof(UpgradeStand), nameof(UpgradeStand.GetWeightedUpgradeExcluding));
+
+            if (original == null)
+                return;
+
+            var prefix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(UpgradeStand_GetWeightedUpgradeExcluding_Prefix));
+            harmony.Patch(original, prefix: prefix);
+        }
+
         private static void PatchLevelGeneratorItemSetup(Harmony harmony)
         {
             var original = AccessTools.Method(typeof(LevelGenerator), nameof(LevelGenerator.ItemSetup));
@@ -99,6 +112,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             return false;
         }
 
+        private static bool UpgradeStand_GetWeightedUpgradeExcluding_Prefix(
+            Item excludeItem,
+            Dictionary<string, int> displayedCounts,
+            Dictionary<string, int> selectedDuringReroll,
+            ref Item __result)
+        {
+            var mode = NormalizePoolMode(FeatureFlags.DHHUpgradesShopPoolMode);
+            __result = GetWeightedUpgradeExcludingWithDhhMode(excludeItem, displayedCounts, selectedDuringReroll, mode)!;
+            return false;
+        }
+
         private static void ShopManager_ShopInitialize_Prefix()
         {
             if (!SemiFunc.RunIsShop())
@@ -118,17 +142,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
             var potentialItems = __instance.potentialItems;
             if (potentialItems != null)
-                ApplyRelativeWeight(potentialItems, IsHeadChargerItem, FeatureFlags.HeadChargerShopWeightPercent);
+                ApplyPoolMode(potentialItems, IsHeadChargerItem, FeatureFlags.HeadChargerShopPoolMode);
 
             var potentialUpgrades = __instance.potentialItemUpgrades;
             if (potentialUpgrades != null)
-                ApplyRelativeWeight(potentialUpgrades, IsDhhUpgradeItem, FeatureFlags.DHHUpgradesShopWeightPercent);
+                ApplyPoolMode(potentialUpgrades, IsDhhUpgradeItem, FeatureFlags.DHHUpgradesShopPoolMode);
 
             if (ShouldLogShopDebug())
             {
                 var afterHeadCharger = __instance.potentialItems?.Count(IsHeadChargerItem) ?? 0;
                 var afterUpgrades = __instance.potentialItemUpgrades?.Count(IsDhhUpgradeItem) ?? 0;
-                _log?.LogInfo($"[Fix:Shop] Weighting context mode={(SemiFunc.IsMultiplayer() ? "MP" : "SP")} headCharger before={beforeHeadCharger} after={afterHeadCharger} weight={FeatureFlags.HeadChargerShopWeightPercent}% upgrades before={beforeUpgrades} after={afterUpgrades} weight={FeatureFlags.DHHUpgradesShopWeightPercent}%");
+                _log?.LogInfo($"[Fix:Shop] Pool mode context mode={(SemiFunc.IsMultiplayer() ? "MP" : "SP")} headCharger before={beforeHeadCharger} after={afterHeadCharger} mode={FeatureFlags.HeadChargerShopPoolMode} upgrades before={beforeUpgrades} after={afterUpgrades} mode={FeatureFlags.DHHUpgradesShopPoolMode}");
             }
         }
 
@@ -232,10 +256,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             }
         }
 
-        private static void ApplyRelativeWeight(List<Item> list, Predicate<Item> matcher, int percent)
+        private static void ApplyPoolMode(List<Item> list, Predicate<Item> matcher, string mode)
         {
-            if (list == null || matcher == null || percent == 100)
+            if (list == null || matcher == null)
                 return;
+
+            mode = NormalizePoolMode(mode);
+            if (string.Equals(mode, FeatureFlags.ShopPoolModes.Default, StringComparison.OrdinalIgnoreCase))
+            {
+                ApplyDefaultPoolMode(list, matcher);
+                return;
+            }
 
             var originalMatches = list.Where(item => item != null && matcher(item)).ToList();
             if (originalMatches.Count == 0)
@@ -247,18 +278,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 list.Remove(item);
             }
 
-            var wholeCopies = Math.Max(0, percent / 100);
-            var fractionalChance = Math.Max(0, percent % 100);
             var addedCopies = 0;
-            foreach (var item in originalMatches)
+            if (string.Equals(mode, FeatureFlags.ShopPoolModes.Reduced, StringComparison.OrdinalIgnoreCase))
             {
-                for (var i = 0; i < wholeCopies; i++)
-                {
-                    list.Add(item);
-                    addedCopies++;
-                }
-
-                if (fractionalChance > 0 && UnityEngine.Random.Range(0, 100) < fractionalChance)
+                foreach (var item in originalMatches.GroupBy(item => item.GetInstanceID()).Select(group => group.First()))
                 {
                     list.Add(item);
                     addedCopies++;
@@ -267,16 +290,189 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
             if (ShouldLogShopDebug())
             {
-                var mode = SemiFunc.IsMultiplayer() ? "MP" : "SP";
-                _log?.LogInfo($"[Fix:Shop] ApplyRelativeWeight mode={mode} matcher={matcher.Method.Name} original={originalCount} removed={originalCount} percent={percent}% wholeCopies={wholeCopies} fractionalChance={fractionalChance}% addedCopies={addedCopies} final={list.Count(item => item != null && matcher(item))}");
+                var runtimeMode = SemiFunc.IsMultiplayer() ? "MP" : "SP";
+                _log?.LogInfo($"[Fix:Shop] ApplyPoolMode mode={runtimeMode} matcher={matcher.Method.Name} original={originalCount} removed={originalCount} poolMode={mode} addedCopies={addedCopies} final={list.Count(item => item != null && matcher(item))}");
             }
 
             list.Shuffle<Item>();
         }
 
+        private static void ApplyDefaultPoolMode(List<Item> list, Predicate<Item> matcher)
+        {
+            var originalMatches = list.Where(item => item != null && matcher(item)).ToList();
+            if (originalMatches.Count == 0)
+                return;
+
+            var balancedCopies = GetBalancedPoolCopyCount(list, matcher);
+            var groups = originalMatches
+                .GroupBy(item => item.GetInstanceID())
+                .Select(group => group.ToList())
+                .ToList();
+
+            var originalCount = originalMatches.Count;
+            var targetCount = groups.Sum(group => Math.Min(group.Count, balancedCopies));
+            if (targetCount >= originalCount)
+                return;
+
+            foreach (var item in originalMatches)
+            {
+                list.Remove(item);
+            }
+
+            var addedCopies = 0;
+            foreach (var group in groups)
+            {
+                var copies = Math.Min(group.Count, balancedCopies);
+                for (var i = 0; i < copies; i++)
+                {
+                    list.Add(group[0]);
+                    addedCopies++;
+                }
+            }
+
+            if (ShouldLogShopDebug())
+            {
+                var runtimeMode = SemiFunc.IsMultiplayer() ? "MP" : "SP";
+                _log?.LogInfo($"[Fix:Shop] ApplyDefaultPoolMode mode={runtimeMode} matcher={matcher.Method.Name} original={originalCount} balancedCopies={balancedCopies} addedCopies={addedCopies} final={list.Count(item => item != null && matcher(item))}");
+            }
+
+            list.Shuffle<Item>();
+        }
+
+        private static int GetBalancedPoolCopyCount(List<Item> list, Predicate<Item> matcher)
+        {
+            var counts = list
+                .Where(item => item != null && !matcher(item))
+                .GroupBy(item => item.GetInstanceID())
+                .Select(group => group.Count())
+                .Where(count => count > 0)
+                .OrderBy(count => count)
+                .ToList();
+
+            if (counts.Count == 0)
+                return 1;
+
+            return Math.Max(1, counts[counts.Count / 2]);
+        }
+
+        private static string NormalizePoolMode(string mode)
+        {
+            if (string.Equals(mode, FeatureFlags.ShopPoolModes.Disabled, StringComparison.OrdinalIgnoreCase))
+                return FeatureFlags.ShopPoolModes.Disabled;
+
+            if (string.Equals(mode, FeatureFlags.ShopPoolModes.Reduced, StringComparison.OrdinalIgnoreCase))
+                return FeatureFlags.ShopPoolModes.Reduced;
+
+            return FeatureFlags.ShopPoolModes.Default;
+        }
+
+        private static Item? GetWeightedUpgradeExcludingWithDhhMode(
+            Item excludeItem,
+            Dictionary<string, int>? displayedCounts,
+            Dictionary<string, int>? selectedDuringReroll,
+            string mode)
+        {
+            var stats = StatsManager.instance;
+            if (stats?.itemDictionary == null)
+                return null;
+
+            var shop = ShopManager.instance;
+            if (shop == null)
+                return null;
+
+            var candidates = new List<Item>();
+            var currency = SemiFunc.StatGetRunCurrency();
+            var allItems = stats.itemDictionary.Values
+                .Where(item => item != null)
+                .GroupBy(item => item.GetInstanceID())
+                .Select(group => group.First())
+                .ToList();
+            var balancedDhhUpgradeMaxAmount = GetBalancedUpgradeStandMaxAmount(allItems);
+
+            foreach (var item in allItems)
+            {
+                if (item.itemType != SemiFunc.itemType.item_upgrade || item == excludeItem)
+                    continue;
+
+                var isDhhUpgrade = IsDhhUpgradeItem(item);
+                if (isDhhUpgrade && string.Equals(mode, FeatureFlags.ShopPoolModes.Disabled, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                if (!IsUpgradeStandCandidateAllowed(item, isDhhUpgrade, displayedCounts, selectedDuringReroll, currency, shop, mode, balancedDhhUpgradeMaxAmount))
+                    continue;
+
+                candidates.Add(item);
+            }
+
+            return candidates.Count == 0 ? null : candidates[UnityEngine.Random.Range(0, candidates.Count)];
+        }
+
+        private static bool IsUpgradeStandCandidateAllowed(
+            Item item,
+            bool isDhhUpgrade,
+            Dictionary<string, int>? displayedCounts,
+            Dictionary<string, int>? selectedDuringReroll,
+            int currency,
+            ShopManager shop,
+            string mode,
+            int balancedDhhUpgradeMaxAmount)
+        {
+            var name = item.name;
+            var purchased = StatsManager.instance.GetItemsUpgradesPurchased(name);
+            var displayed = displayedCounts != null && displayedCounts.TryGetValue(name, out var displayedValue) ? displayedValue : 0;
+            var selected = selectedDuringReroll != null && selectedDuringReroll.TryGetValue(name, out var selectedValue) ? selectedValue : 0;
+            var totalVisibleOrBought = purchased + displayed + selected;
+            var maxAllowedInShop = GetEffectiveUpgradeStandMaxAmount(item, isDhhUpgrade, mode, balancedDhhUpgradeMaxAmount);
+
+            if (maxAllowedInShop > 0 && totalVisibleOrBought >= maxAllowedInShop)
+                return false;
+
+            if (item.maxPurchase && StatsManager.instance.GetItemsUpgradesPurchasedTotal(name) >= item.maxPurchaseAmount)
+                return false;
+
+            if (item.minPlayerCount > 1 && GameDirector.instance.PlayerList.Count < item.minPlayerCount)
+                return false;
+
+            var value = shop.UpgradeValueGet(item.value.valueMax / 1000f * 4f, item);
+            return value <= currency || UnityEngine.Random.Range(0, 4) == 0;
+        }
+
+        private static int GetEffectiveUpgradeStandMaxAmount(Item item, bool isDhhUpgrade, string mode, int balancedDhhUpgradeMaxAmount)
+        {
+            if (!isDhhUpgrade)
+                return item.maxAmountInShop;
+
+            if (string.Equals(mode, FeatureFlags.ShopPoolModes.Reduced, StringComparison.OrdinalIgnoreCase))
+                return 1;
+
+            if (string.Equals(mode, FeatureFlags.ShopPoolModes.Default, StringComparison.OrdinalIgnoreCase))
+                return Math.Min(item.maxAmountInShop <= 0 ? balancedDhhUpgradeMaxAmount : item.maxAmountInShop, balancedDhhUpgradeMaxAmount);
+
+            return item.maxAmountInShop;
+        }
+
+        private static int GetBalancedUpgradeStandMaxAmount(List<Item> allItems)
+        {
+            var maxAmounts = allItems
+                .Where(item => item != null && item.itemType == SemiFunc.itemType.item_upgrade && !IsDhhUpgradeItem(item) && item.maxAmountInShop > 0)
+                .Select(item => item.maxAmountInShop)
+                .OrderBy(amount => amount)
+                .ToList();
+
+            if (maxAmounts.Count == 0)
+                return 1;
+
+            return Math.Max(1, maxAmounts[maxAmounts.Count / 2]);
+        }
+
         private static bool IsHeadChargerItem(Item item)
         {
-            return GetDhhItemKey(item).Contains("head charger");
+            var prefab = TryGetPrefab(item);
+            if (prefab != null && (prefab.GetComponent<DHHItemHeadCharger>() != null || prefab.GetComponentInChildren<DHHItemHeadCharger>(true) != null))
+                return true;
+
+            var key = GetDhhItemKey(item);
+            return key.Contains("head charger") || key.Contains("head charge");
         }
 
         private static bool IsDhhUpgradeItem(Item item)
@@ -287,7 +483,26 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         private static string GetDhhItemKey(Item item)
         {
-            return item == null ? string.Empty : $"{item.name} {item.itemName}".ToLowerInvariant();
+            if (item == null)
+                return string.Empty;
+
+            var prefabName = item.prefab != null ? item.prefab.PrefabName : string.Empty;
+            return $"{item.name} {item.itemName} {prefabName}".ToLowerInvariant();
+        }
+
+        private static UnityEngine.GameObject? TryGetPrefab(Item item)
+        {
+            if (item?.prefab == null || RunManager.instance == null)
+                return null;
+
+            try
+            {
+                return item.prefab.Prefab;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         private static void LogWarningOnce(string key, string message)

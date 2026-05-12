@@ -3,20 +3,14 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using DeathHeadHopper.DeathHead;
-using DeathHeadHopper.DeathHead.Handlers;
 using DeathHeadHopper.Managers;
 using HarmonyLib;
-using REPOLib.Modules;
 using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
 {
     internal static class StatsModule
     {
-        private const string HeadChargeUpgradeId = "HeadCharge";
-        private const string HeadPowerUpgradeId = "HeadPower";
-
         private static bool _statsHooksApplied;
 
         internal static void ApplyHooks(Harmony harmony)
@@ -63,136 +57,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Runtime
             catch
             {
                 // Legacy stats dictionaries can differ across versions; skip init for missing fields.
-            }
-        }
-
-        internal static void RegisterDhhRepolibUpgrade(Item itemObj)
-        {
-            try
-            {
-                if (itemObj == null)
-                    return;
-
-                if (!TryResolveDhhUpgrade(itemObj, out var upgradeId, out var isChargeUpgrade))
-                    return;
-
-                if (Upgrades.TryGetUpgrade(upgradeId, out _))
-                {
-                    EnsureDhhUpgradeKey(upgradeId);
-                    return;
-                }
-
-                Upgrades.RegisterUpgrade(
-                    upgradeId,
-                    itemObj,
-                    null,
-                    (avatar, level) => ApplyLocalDhhUpgradeEffect(avatar, level, isChargeUpgrade));
-
-                EnsureDhhUpgradeKey(upgradeId);
-            }
-            catch
-            {
-                // Registration is best-effort. The item itself remains usable even if REPOLib metadata cannot be wired.
-            }
-        }
-
-        internal static bool TryIncreaseDhhUpgrade(string playerId, bool isChargeUpgrade, out int level)
-        {
-            level = 0;
-            if (string.IsNullOrWhiteSpace(playerId))
-                return false;
-
-            var upgradeId = isChargeUpgrade ? HeadChargeUpgradeId : HeadPowerUpgradeId;
-            if (!Upgrades.TryGetUpgrade(upgradeId, out var upgrade))
-                return false;
-
-            EnsureDhhUpgradeKey(upgradeId);
-            level = upgrade.AddLevel(playerId);
-            return true;
-        }
-
-        internal static int GetDhhUpgradeLevel(string playerId, bool isChargeUpgrade)
-        {
-            if (string.IsNullOrWhiteSpace(playerId))
-                return 0;
-
-            var upgradeId = isChargeUpgrade ? HeadChargeUpgradeId : HeadPowerUpgradeId;
-            if (!Upgrades.TryGetUpgrade(upgradeId, out var upgrade))
-                return 0;
-
-            EnsureDhhUpgradeKey(upgradeId);
-            return upgrade.GetLevel(playerId);
-        }
-
-        internal static void SeedDhhUpgradeKeys()
-        {
-            EnsureDhhUpgradeKey(HeadChargeUpgradeId);
-            EnsureDhhUpgradeKey(HeadPowerUpgradeId);
-        }
-
-        private static void EnsureDhhUpgradeKey(string upgradeId)
-        {
-            var stats = StatsManager.instance;
-            if (stats == null || stats.dictionaryOfDictionaries == null)
-                return;
-
-            if (!Upgrades.TryGetUpgrade(upgradeId, out var upgrade))
-                return;
-
-            var key = "playerUpgrade" + upgradeId;
-            stats.dictionaryOfDictionaries[key] = upgrade.PlayerDictionary;
-        }
-
-        private static bool TryResolveDhhUpgrade(Item itemObj, out string upgradeId, out bool isChargeUpgrade)
-        {
-            upgradeId = string.Empty;
-            isChargeUpgrade = false;
-
-            var name = itemObj?.itemName ?? itemObj?.name ?? string.Empty;
-            if (name.IndexOf("upgrade dhh charge", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("head charge", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                upgradeId = HeadChargeUpgradeId;
-                isChargeUpgrade = true;
-                return true;
-            }
-
-            if (name.IndexOf("upgrade dhh power", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("head power", StringComparison.OrdinalIgnoreCase) >= 0)
-            {
-                upgradeId = HeadPowerUpgradeId;
-                return true;
-            }
-
-            return false;
-        }
-
-        private static void ApplyLocalDhhUpgradeEffect(PlayerAvatar avatar, int level, bool isChargeUpgrade)
-        {
-            var localAvatar = PlayerAvatar.instance;
-            if (avatar == null || localAvatar == null)
-                return;
-
-            if (!string.Equals(avatar.steamID, localAvatar.steamID, StringComparison.Ordinal))
-                return;
-
-            if (isChargeUpgrade)
-            {
-                DHHAbilityManager.instance?.EquipAbilities();
-                return;
-            }
-
-            var playerDeathHead = localAvatar.playerDeathHead;
-            AbilityEnergyHandler? abilityEnergyHandler = null;
-            if (playerDeathHead != null)
-            {
-                var component = playerDeathHead.GetComponent<DeathHeadController>();
-                abilityEnergyHandler = component != null ? component.abilityEnergyHandler : null;
-            }
-
-            if (abilityEnergyHandler != null)
-            {
-                abilityEnergyHandler.IncreaseEnergy(abilityEnergyHandler.energyIncrease);
             }
         }
 

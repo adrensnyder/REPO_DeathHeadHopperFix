@@ -5,8 +5,9 @@ using System.Reflection;
 using BepInEx.Logging;
 using DeathHeadHopper.Managers;
 using DeathHeadHopperFix.Modules.Config;
-using DeathHeadHopperFix.Modules.Gameplay.Core.Runtime;
+using DeathHeadHopperFix.Modules.Gameplay.Core.Abilities;
 using HarmonyLib;
+using REPOLib.Modules;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
 {
@@ -22,7 +23,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             _log = log;
 
             PatchDhhStatsManagerAwakeIfPossible(harmony);
-            PatchDhhStatsManagerUpgradeHooksIfPossible(harmony);
+            PatchDhhStatsManagerUpgradeMethodsIfPossible(harmony);
+            PatchDhhStatsManagerUpdateMethodsIfPossible(harmony);
             PatchStatsManagerAwakeIfPossible(harmony);
             PatchStatsManagerLoadGameIfPossible(harmony);
         }
@@ -58,76 +60,100 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
 
         private static void DHHStatsManager_Awake_Postfix(DHHStatsManager __instance)
         {
-            StatsModule.SeedDhhUpgradeKeys();
+            EnsureDhhUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries();
             EnsureDhhStatsManagerDisabled();
 
             if (__instance != null)
                 __instance.enabled = false;
         }
 
-        private static void PatchDhhStatsManagerUpgradeHooksIfPossible(Harmony harmony)
+        private static void PatchDhhStatsManagerUpgradeMethodsIfPossible(Harmony harmony)
         {
             if (harmony == null)
                 return;
 
-            var getCharge = AccessTools.Method(typeof(DHHStatsManager), nameof(DHHStatsManager.GetHeadChargeUpgrade));
-            var getPower = AccessTools.Method(typeof(DHHStatsManager), nameof(DHHStatsManager.GetHeadPowerUpgrade));
             var upgradeCharge = AccessTools.Method(typeof(DHHStatsManager), nameof(DHHStatsManager.UpgradeHeadCharge));
             var upgradePower = AccessTools.Method(typeof(DHHStatsManager), nameof(DHHStatsManager.UpgradeHeadPower));
+            if (upgradeCharge == null && upgradePower == null)
+                return;
 
-            var getChargePrefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_GetHeadChargeUpgrade_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            var getPowerPrefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_GetHeadPowerUpgrade_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            var upgradeChargePrefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_UpgradeHeadCharge_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            var upgradePowerPrefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_UpgradeHeadPower_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            var prefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_Upgrade_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (prefix == null)
+                return;
 
-            if (getCharge != null && getChargePrefix != null)
-                harmony.Patch(getCharge, prefix: new HarmonyMethod(getChargePrefix));
-            if (getPower != null && getPowerPrefix != null)
-                harmony.Patch(getPower, prefix: new HarmonyMethod(getPowerPrefix));
-            if (upgradeCharge != null && upgradeChargePrefix != null)
-                harmony.Patch(upgradeCharge, prefix: new HarmonyMethod(upgradeChargePrefix));
-            if (upgradePower != null && upgradePowerPrefix != null)
-                harmony.Patch(upgradePower, prefix: new HarmonyMethod(upgradePowerPrefix));
-        }
-
-        private static bool DHHStatsManager_GetHeadChargeUpgrade_Prefix(string playerId, ref int __result)
-        {
-            __result = StatsModule.GetDhhUpgradeLevel(playerId, isChargeUpgrade: true);
-            return false;
-        }
-
-        private static bool DHHStatsManager_GetHeadPowerUpgrade_Prefix(string playerId, ref int __result)
-        {
-            __result = StatsModule.GetDhhUpgradeLevel(playerId, isChargeUpgrade: false);
-            return false;
-        }
-
-        private static bool DHHStatsManager_UpgradeHeadCharge_Prefix(string playerId, ref int __result)
-        {
-            if (!SemiFunc.IsMasterClientOrSingleplayer())
+            if (upgradeCharge != null)
             {
-                __result = StatsModule.GetDhhUpgradeLevel(playerId, isChargeUpgrade: true);
-                return false;
+                var patch = new HarmonyMethod(prefix) { priority = Priority.First };
+                harmony.Patch(upgradeCharge, prefix: patch);
             }
-
-            if (StatsModule.TryIncreaseDhhUpgrade(playerId, isChargeUpgrade: true, out var level))
-                __result = level;
-
-            return false;
+            if (upgradePower != null)
+            {
+                var patch = new HarmonyMethod(prefix) { priority = Priority.First };
+                harmony.Patch(upgradePower, prefix: patch);
+            }
         }
 
-        private static bool DHHStatsManager_UpgradeHeadPower_Prefix(string playerId, ref int __result)
+        private static void PatchDhhStatsManagerUpdateMethodsIfPossible(Harmony harmony)
         {
-            if (!SemiFunc.IsMasterClientOrSingleplayer())
+            if (harmony == null)
+                return;
+
+            var updateCharge = AccessTools.Method(typeof(DHHStatsManager), nameof(DHHStatsManager.UpdateHeadChargeStat));
+            var updatePower = AccessTools.Method(typeof(DHHStatsManager), nameof(DHHStatsManager.UpdateHeadPowerStat));
+            if (updateCharge == null && updatePower == null)
+                return;
+
+            var chargePrefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_UpdateHeadChargeStat_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            var chargePostfix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_UpdateHeadChargeStat_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            var powerPrefix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_UpdateHeadPowerStat_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
+            var powerPostfix = typeof(DHHStatsBootstrapModule).GetMethod(nameof(DHHStatsManager_UpdateHeadPowerStat_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (chargePrefix == null || chargePostfix == null || powerPrefix == null || powerPostfix == null)
+                return;
+
+            if (updateCharge != null)
             {
-                __result = StatsModule.GetDhhUpgradeLevel(playerId, isChargeUpgrade: false);
-                return false;
+                var prefixPatch = new HarmonyMethod(chargePrefix) { priority = Priority.First };
+                var postfixPatch = new HarmonyMethod(chargePostfix);
+                harmony.Patch(updateCharge, prefix: prefixPatch, postfix: postfixPatch);
             }
+            if (updatePower != null)
+            {
+                var prefixPatch = new HarmonyMethod(powerPrefix) { priority = Priority.First };
+                var postfixPatch = new HarmonyMethod(powerPostfix);
+                harmony.Patch(updatePower, prefix: prefixPatch, postfix: postfixPatch);
+            }
+        }
 
-            if (StatsModule.TryIncreaseDhhUpgrade(playerId, isChargeUpgrade: false, out var level))
-                __result = level;
+        private static bool DHHStatsManager_Upgrade_Prefix(DHHStatsManager __instance, string playerId)
+        {
+            EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: false);
+            EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: true);
+            return true;
+        }
 
-            return false;
+        private static bool DHHStatsManager_UpdateHeadChargeStat_Prefix(DHHStatsManager __instance, string playerId, ref int __state)
+        {
+            EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: true);
+            __instance.playerUpgradeHeadCharge.TryGetValue(playerId, out __state);
+            return true;
+        }
+
+        private static void DHHStatsManager_UpdateHeadChargeStat_Postfix(string playerId, int value, int __state)
+        {
+            DhhUpgradeOrchestrator.PlayAuthorizedLocalFeedback(playerId, value, __state);
+        }
+
+        private static bool DHHStatsManager_UpdateHeadPowerStat_Prefix(DHHStatsManager __instance, string playerId, ref int __state)
+        {
+            EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: false);
+            __instance.playerUpgradeHeadPower.TryGetValue(playerId, out __state);
+            return true;
+        }
+
+        private static void DHHStatsManager_UpdateHeadPowerStat_Postfix(string playerId, int value, int __state)
+        {
+            DhhUpgradeOrchestrator.PlayAuthorizedLocalFeedback(playerId, value, __state);
         }
 
         private static void PatchStatsManagerAwakeIfPossible(Harmony harmony)
@@ -149,7 +175,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         private static void StatsManager_Awake_Postfix()
         {
             EnsureDhhStatsLabels();
-            StatsModule.SeedDhhUpgradeKeys();
+            EnsureDhhUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries();
             EnsureDhhStatsManagerDisabled();
         }
 
@@ -173,14 +200,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         private static void StatsManager_LoadGame_Prefix()
         {
             EnsureDhhStatsLabels();
-            StatsModule.SeedDhhUpgradeKeys();
+            EnsureDhhUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries();
             EnsureDhhStatsManagerDisabled();
         }
 
         private static void StatsManager_LoadGame_Postfix()
         {
             EnsureDhhStatsLabels();
-            StatsModule.SeedDhhUpgradeKeys();
+            EnsureDhhUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries();
             EnsureDhhStatsManagerDisabled();
 
             try
@@ -205,6 +234,55 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             stats.enabled = false;
             if (FeatureFlags.DebugLogging)
                 _log?.LogInfo("[Fix:Stats] DHHStatsManager disabled so the Fix can own the compatibility path.");
+        }
+
+        private static void EnsureDhhUpgradeDictionaries()
+        {
+            var stats = StatsManager.instance;
+            var dhhStats = DHHStatsManager.instance;
+            if (stats == null || dhhStats == null || stats.dictionaryOfDictionaries == null)
+                return;
+
+            stats.dictionaryOfDictionaries[HeadChargeKey] = dhhStats.playerUpgradeHeadCharge;
+            stats.dictionaryOfDictionaries[HeadPowerKey] = dhhStats.playerUpgradeHeadPower;
+
+            if (FeatureFlags.DebugLogging)
+                _log?.LogInfo("[Fix:Stats] Bound DHH upgrade dictionaries into StatsManager.");
+        }
+
+        private static void EnsureRepolibUpgradeDictionaries()
+        {
+            var dhhStats = DHHStatsManager.instance;
+            if (dhhStats == null)
+                return;
+
+            BindRepolibUpgrade("HeadCharge", dhhStats.playerUpgradeHeadCharge, "charge");
+            BindRepolibUpgrade("HeadPower", dhhStats.playerUpgradeHeadPower, "power");
+        }
+
+        private static void BindRepolibUpgrade(string upgradeId, System.Collections.Generic.Dictionary<string, int> dictionary, string label)
+        {
+            var upgrade = Upgrades.GetUpgrade(upgradeId);
+            if (upgrade == null)
+                return;
+
+            upgrade.PlayerDictionary = dictionary;
+
+            if (FeatureFlags.DebugLogging)
+                _log?.LogInfo($"[Fix:Stats] Bound REPOLib upgrade '{upgradeId}' to DHH {label} dictionary.");
+        }
+
+        private static void EnsureDhhPlayerUpgradeKey(DHHStatsManager? stats, string playerId, bool isChargeUpgrade)
+        {
+            if (stats == null || string.IsNullOrWhiteSpace(playerId))
+                return;
+
+            var dictionary = isChargeUpgrade
+                ? stats.playerUpgradeHeadCharge
+                : stats.playerUpgradeHeadPower;
+
+            if (!dictionary.ContainsKey(playerId))
+                dictionary[playerId] = 0;
         }
 
         private static void EnsureDhhUpgradeInfo(StatsManager stats, string key, string displayName)

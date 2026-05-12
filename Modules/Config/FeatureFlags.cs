@@ -11,6 +11,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string ChargeVanilla = "5. Charge (DHH)";
             public const string Shop = "6. Shop";
             public const string Debug = "7. Debug";
+            public const string Camera = "8. Camera";
             
         }
 
@@ -40,9 +41,17 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHHopJumpDiminishingFactor = "Curve factor that controls how quickly extra hop levels taper off.";
             public const string DHHJumpForceThresholdLevel = "Threshold level where jump force increases start to diminish.";
             public const string DHHJumpForceDiminishingFactor = "Diminishing factor that cuts additional force beyond the threshold.";
-            public const string HeadChargerShopWeightPercent = "Relative shop list weight for Item DHH Head Charger compared to vanilla normal items. 0 = never eligible, 100 = vanilla weight, 200 = double vanilla weight.";
-            public const string DHHUpgradesShopWeightPercent = "Relative shop list weight for Item Upgrade DHH Charge and Item Upgrade DHH Power compared to vanilla upgrades. 0 = never eligible, 100 = vanilla weight, 200 = double vanilla weight.";
+            public const string HeadChargerShopPoolMode = "Controls how Item DHH Head Charge enters the vanilla shop item pool. Disabled = never eligible, Default = use vanilla shop stands with balanced copy count, Reduced = minimum shop presence.";
+            public const string DHHUpgradesShopPoolMode = "Controls how Item Upgrade DHH Charge and Item Upgrade DHH Power enter the vanilla shop upgrade pool. Disabled = never eligible, Default = use vanilla upgrade stands with balanced copy count, Reduced = minimum shop presence.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
+            public const string DHHSpectateDefaultFov = "Default field of view restored while DHH spectate is active when the active camera FOV is invalid or stuck.";
+        }
+
+        internal static class ShopPoolModes
+        {
+            public const string Disabled = "Disabled";
+            public const string Default = "Default";
+            public const string Reduced = "Reduced";
         }
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpEnabled)]
@@ -117,14 +126,17 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 10f)]
         public static int DHHHopJumpThresholdLevel = 5;
 
-        [FeatureConfigEntry(Sections.Shop, Descriptions.HeadChargerShopWeightPercent, Min = 0f, Max = 200f)]
-        public static int HeadChargerShopWeightPercent = 100;
+        [FeatureConfigEntry(Sections.Shop, Descriptions.HeadChargerShopPoolMode, Options = new[] { ShopPoolModes.Disabled, ShopPoolModes.Default, ShopPoolModes.Reduced })]
+        public static string HeadChargerShopPoolMode = ShopPoolModes.Default;
 
-        [FeatureConfigEntry(Sections.Shop, Descriptions.DHHUpgradesShopWeightPercent, Min = 0f, Max = 200f)]
-        public static int DHHUpgradesShopWeightPercent = 50;
+        [FeatureConfigEntry(Sections.Shop, Descriptions.DHHUpgradesShopPoolMode, Options = new[] { ShopPoolModes.Disabled, ShopPoolModes.Default, ShopPoolModes.Reduced })]
+        public static string DHHUpgradesShopPoolMode = ShopPoolModes.Default;
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = false;
+
+        [FeatureConfigEntry(Sections.Camera, Descriptions.DHHSpectateDefaultFov, Min = 0f, Max = 120f, HostControlled = false)]
+        public static int DHHSpectateDefaultFov = 70;
 
 
     }
