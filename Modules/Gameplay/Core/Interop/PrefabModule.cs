@@ -223,7 +223,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (runMgr == null)
                 return;
 
-            var pool = runMgr.singleplayerPool;
+            // The current game snapshot exposes RunManager.singleplayerPool as Dictionary<string, UnityEngine.Object>.
+            Dictionary<string, UnityEngine.Object> pool = runMgr.singleplayerPool;
 
             int added = 0;
             foreach (var kv in PendingPool.ToList())

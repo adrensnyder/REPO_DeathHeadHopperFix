@@ -25,11 +25,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         [HarmonyPrefix]
         private static bool PlayerSwitchPrefix(SpectateCamera __instance, bool _next)
         {
-            if (ShouldBlockJumpDrivenPlayerSwitch(_next))
-            {
-                return false;
-            }
-
             if (ShouldBlockPlayerSwitchForLastChance())
             {
                 return false;
@@ -74,7 +69,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 }
             }
 
-            if (!allDisabled)
+            if (!allDisabled && !IsLocalPlayerDeadOrDisabled())
             {
                 return true;
             }
@@ -97,13 +92,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             return true;
-        }
-
-        private static bool ShouldBlockJumpDrivenPlayerSwitch(bool next)
-        {
-            return next
-                && SemiFunc.InputDown(InputKey.Jump)
-                && !SemiFunc.InputDown(InputKey.SpectateNext);
         }
 
         [HarmonyPatch(typeof(SpectateCamera), "StateNormal")]
@@ -264,7 +252,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                     continue;
                 }
 
-                if (playerOverride != null && candidate != playerOverride)
+                if (!includeDisabled && playerOverride != null && candidate != playerOverride)
                 {
                     continue;
                 }
