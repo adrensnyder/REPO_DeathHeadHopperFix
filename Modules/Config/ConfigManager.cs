@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Config
@@ -63,7 +64,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
         internal static event Action? HostControlledChanged;
 
-        internal static void Initialize(ConfigFile config)
+        internal static void Initialize(ConfigFile config, ManualLogSource? log)
         {
             if (s_initialized || config == null)
             {
@@ -72,7 +73,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             s_initialized = true;
             BindConfigEntries(config, typeof(FeatureFlags), "General");
-            ConfigMigrationManager.Apply(config, typeof(FeatureFlags), "General");
+            ConfigMigrationManager.Apply(config, typeof(FeatureFlags), "General", log);
             CaptureLocalHostControlledBaseline();
         }
 

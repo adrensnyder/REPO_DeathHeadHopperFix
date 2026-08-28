@@ -18,7 +18,7 @@ namespace DeathHeadHopperFix.Modules.Config
         internal static class Descriptions
         {
             public const string BatteryJumpEnabled = "Enables the battery authority system that blocks jumps when the energy meter is too low.";
-            public const string BatteryJumpUsage = "Amount of battery drained per death-head jump; larger values drain faster.";
+            public const string BatteryJumpUsage = "Amount of battery drained after a successful DHH jump; this never changes jump physics.";
             public const string BatteryJumpMinimumEnergy = "Minimum battery level that must be filled before the death head can hop. 0.25f matches the vanilla talk threshold so the head can still speak.";
             public const string JumpBlockDuration = "Duration (in seconds) that jump blocking remains active after the energy warning fires.";
             public const string HeadStationaryVelocitySqrThreshold = "Velocity squared threshold the death head must stay below to be considered stationary for recharge.";
@@ -41,6 +41,20 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHHopJumpDiminishingFactor = "Curve factor that controls how quickly extra hop levels taper off.";
             public const string DHHJumpForceThresholdLevel = "Threshold level where jump force increases start to diminish.";
             public const string DHHJumpForceDiminishingFactor = "Diminishing factor that cuts additional force beyond the threshold.";
+            public const string DHHJumpVertical = "Vertical component written to JumpHandler.jumpDirection when the original DHH jump fires.";
+            public const string DHHJumpRotationForce = "Torque multiplier used by the original DHH jump.";
+            public const string DHHJumpCooldown = "Original DHH jump cooldown in seconds.";
+            public const string DHHJumpBufferDuration = "Original DHH jump input buffer in seconds.";
+            public const string DHHHopMoveBaseValue = "Base horizontal impulse used by HopHandler.MoveForce for positive power levels.";
+            public const string DHHHopMoveIncreasePerLevel = "Horizontal impulse increase per hop upgrade level.";
+            public const string DHHHopMoveThresholdLevel = "Diminishing-return threshold for horizontal hop movement.";
+            public const string DHHHopMoveDiminishingFactor = "Diminishing factor for horizontal hop movement.";
+            public const string DHHHopRotationForce = "Original hop rotation acceleration multiplier.";
+            public const string DHHHopDamping = "Original hop angular damping multiplier.";
+            public const string DHHHopAngleThreshold = "Angle threshold in degrees used to finish hop realignment.";
+            public const string DHHHopVelocityThreshold = "Angular velocity threshold used to finish hop realignment.";
+            public const string DHHHopCooldown = "Original hop cooldown in seconds.";
+            public const string DHHHopMoveDelay = "Delay before the original horizontal hop impulse in seconds.";
             public const string HeadChargerShopPoolMode = "Controls how Item DHH Head Charge enters the vanilla shop item pool. Disabled = never eligible, Default = use vanilla shop stands with balanced copy count, Reduced = minimum shop presence.";
             public const string DHHUpgradesShopPoolMode = "Controls how Item Upgrade DHH Charge and Item Upgrade DHH Power enter the vanilla shop upgrade pool. Disabled = never eligible, Default = use vanilla upgrade stands with balanced copy count, Reduced = minimum shop presence.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
@@ -57,16 +71,16 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpEnabled)]
         public static bool BatteryJumpEnabled = false;
 
-        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpUsage, Min = 0.01f, Max = 1f)]
+        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpUsage, Min = 0.001f, Max = 1f)]
         public static float BatteryJumpUsage = 0.02f;
 
-        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpMinimumEnergy, Min = 0.01f, Max = 1f)]
+        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.BatteryJumpMinimumEnergy, Min = 0f, Max = 1f)]
         public static float BatteryJumpMinimumEnergy = 0.25f;
 
-        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.JumpBlockDuration, Min = 0.1f, Max = 1f)]
+        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.JumpBlockDuration, Min = 0.1f, Max = 2f)]
         public static float JumpBlockDuration = 0.5f;
 
-        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.HeadStationaryVelocitySqrThreshold, Min = 0.01f, Max = 1f)]
+        [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.HeadStationaryVelocitySqrThreshold, Min = 0.001f, Max = 1f)]
         public static float HeadStationaryVelocitySqrThreshold = 0.04f;
 
         [FeatureConfigEntry(Sections.RechargeBattery, Descriptions.RechargeTickInterval, Min = 0.1f, Max = 1f)]
@@ -102,29 +116,71 @@ namespace DeathHeadHopperFix.Modules.Config
         [FeatureConfigEntry(Sections.ChargeVanilla, Descriptions.DHHChargeStrengthDiminishingFactor, Min = 0.1f, Max = 0.99f)]
         public static float DHHChargeStrengthDiminishingFactor = 0.75f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceBaseValue, Min = 0.1f, Max = 5f)]
-        public static float DHHJumpForceBaseValue = 0.5f;
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceBaseValue, Min = 0.1f, Max = 10f)]
+        public static float DHHJumpForceBaseValue = 2.8f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceIncreasePerLevel, Min = 0.1f, Max = 2f)]
-        public static float DHHJumpForceIncreasePerLevel = 0.25f;
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceIncreasePerLevel, Min = 0f, Max = 2f)]
+        public static float DHHJumpForceIncreasePerLevel = 0.4f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceThresholdLevel, Min = 1f, Max = 10f)]
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceThresholdLevel, Min = 1f, Max = 20f)]
         public static int DHHJumpForceThresholdLevel = 5;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceDiminishingFactor, Min = 0.1f, Max = 0.99f)]
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpForceDiminishingFactor, Min = 0f, Max = 1f)]
         public static float DHHJumpForceDiminishingFactor = 0.9f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpIncreasePerLevel, Min = 0.1f, Max = 1f)]
-        public static float DHHHopJumpIncreasePerLevel = 0.25f;
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpIncreasePerLevel, Min = 0f, Max = 2f)]
+        public static float DHHHopJumpIncreasePerLevel = 0.11f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpDiminishingFactor, Min = 0.1f, Max = 0.99f)]
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpDiminishingFactor, Min = 0f, Max = 1f)]
         public static float DHHHopJumpDiminishingFactor = 0.9f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpBaseValue, Min = 1f, Max = 10f)]
-        public static int DHHHopJumpBaseValue = 2;
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpBaseValue, Min = 0.1f, Max = 10f)]
+        public static float DHHHopJumpBaseValue = 3f;
 
-        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 10f)]
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopJumpThresholdLevel, Min = 1f, Max = 20f)]
         public static int DHHHopJumpThresholdLevel = 5;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpVertical, Min = 0f, Max = 2f)]
+        public static float DHHJumpVertical = 1f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpRotationForce, Min = 0f, Max = 1f)]
+        public static float DHHJumpRotationForce = 0.05f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpCooldown, Min = 0.1f, Max = 5f)]
+        public static float DHHJumpCooldown = 1f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHJumpBufferDuration, Min = 0.05f, Max = 1f)]
+        public static float DHHJumpBufferDuration = 0.25f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopMoveBaseValue, Min = 0f, Max = 5f)]
+        public static float DHHHopMoveBaseValue = 1f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopMoveIncreasePerLevel, Min = 0f, Max = 1f)]
+        public static float DHHHopMoveIncreasePerLevel = 0.05f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopMoveThresholdLevel, Min = 1f, Max = 20f)]
+        public static int DHHHopMoveThresholdLevel = 5;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopMoveDiminishingFactor, Min = 0f, Max = 1f)]
+        public static float DHHHopMoveDiminishingFactor = 0.9f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopRotationForce, Min = 0f, Max = 50f)]
+        public static float DHHHopRotationForce = 20f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopDamping, Min = 0f, Max = 30f)]
+        public static float DHHHopDamping = 12f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopAngleThreshold, Min = 0.1f, Max = 30f)]
+        public static float DHHHopAngleThreshold = 2f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopVelocityThreshold, Min = 0.001f, Max = 1f)]
+        public static float DHHHopVelocityThreshold = 0.03f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopCooldown, Min = 0.1f, Max = 3f)]
+        public static float DHHHopCooldown = 0.6f;
+
+        [FeatureConfigEntry(Sections.Jump, Descriptions.DHHHopMoveDelay, Min = 0f, Max = 0.5f)]
+        public static float DHHHopMoveDelay = 0.04f;
 
         [FeatureConfigEntry(Sections.Shop, Descriptions.HeadChargerShopPoolMode, Options = new[] { ShopPoolModes.Disabled, ShopPoolModes.Default, ShopPoolModes.Reduced })]
         public static string HeadChargerShopPoolMode = ShopPoolModes.Default;

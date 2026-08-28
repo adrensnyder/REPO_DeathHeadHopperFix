@@ -1,203 +1,149 @@
 #nullable enable
 
-using System;
-using System.Reflection;
+using System.Collections.Generic;
 using BepInEx.Logging;
+using DeathHeadHopper.DeathHead.Handlers;
+using DeathHeadHopper.Helpers;
 using DeathHeadHopperFix.Modules.Config;
-using DeathHeadHopperFix.Modules.Utilities;
 using HarmonyLib;
-using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 {
     internal static class JumpForceModule
     {
-        private const string HopForceLogKey = "Fix:Hop.JumpForce";
-        private const string JumpForceLogKey = "Fix:Jump.HeadJumpForce";
+        private static readonly HashSet<JumpHandler> JumpHandlers = new();
+        private static readonly HashSet<HopHandler> HopHandlers = new();
+        private static bool s_applied;
 
-        private static MethodInfo? s_hopHandlerPowerLevelGetter;
-        private static MethodInfo? s_jumpHandlerPowerLevelGetter;
-        private static ManualLogSource? s_log;
-
-        internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
+        internal static void Apply(Harmony harmony, ManualLogSource? log)
         {
-            s_log = log;
-            PatchJumpHandlerJumpForceIfPossible(harmony, asm);
-            PatchHopHandlerJumpForceIfPossible(harmony, asm);
+            if (s_applied || harmony == null)
+                return;
+
+            var jumpForceGetter = AccessTools.PropertyGetter(typeof(JumpHandler), nameof(JumpHandler.JumpForce));
+            var hopJumpForceGetter = AccessTools.PropertyGetter(typeof(HopHandler), nameof(HopHandler.JumpForce));
+            var hopMoveForceGetter = AccessTools.PropertyGetter(typeof(HopHandler), nameof(HopHandler.MoveForce));
+            var jumpAwake = AccessTools.Method(typeof(JumpHandler), nameof(JumpHandler.Awake));
+            var hopAwake = AccessTools.Method(typeof(HopHandler), nameof(HopHandler.Awake));
+            var jumpHead = AccessTools.Method(typeof(JumpHandler), nameof(JumpHandler.JumpHead), new[] { typeof(UnityEngine.Vector3) });
+
+            if (jumpForceGetter == null || hopJumpForceGetter == null || hopMoveForceGetter == null ||
+                jumpAwake == null || hopAwake == null || jumpHead == null)
+            {
+                log?.LogWarning("DHH jump tuning disabled: one or more required publicized members are unavailable.");
+                return;
+            }
+
+            harmony.Patch(jumpForceGetter,
+                prefix: new HarmonyMethod(typeof(JumpForceModule), nameof(JumpForceGetterPrefix)));
+            harmony.Patch(hopJumpForceGetter,
+                prefix: new HarmonyMethod(typeof(JumpForceModule), nameof(HopJumpForceGetterPrefix)));
+            harmony.Patch(hopMoveForceGetter,
+                prefix: new HarmonyMethod(typeof(JumpForceModule), nameof(HopMoveForceGetterPrefix)));
+            harmony.Patch(jumpAwake,
+                postfix: new HarmonyMethod(typeof(JumpForceModule), nameof(JumpHandlerAwakePostfix)));
+            harmony.Patch(hopAwake,
+                postfix: new HarmonyMethod(typeof(JumpForceModule), nameof(HopHandlerAwakePostfix)));
+            harmony.Patch(jumpHead,
+                postfix: new HarmonyMethod(typeof(JumpForceModule), nameof(JumpHeadPostfix)));
+
+            ConfigManager.HostControlledChanged += ApplyAll;
+            s_applied = true;
         }
 
-        private static void PatchJumpHandlerJumpForceIfPossible(Harmony harmony, Assembly asm)
+        private static void JumpHandlerAwakePostfix(JumpHandler __instance)
         {
-            var jumpHandlerType = asm.GetType("DeathHeadHopper.DeathHead.Handlers.JumpHandler", throwOnError: false);
-            if (jumpHandlerType == null)
+            if (__instance == null)
                 return;
 
-            var jumpForceGetter = AccessTools.PropertyGetter(jumpHandlerType, "JumpForce");
-            if (jumpForceGetter == null)
-                return;
-
-            s_jumpHandlerPowerLevelGetter ??= AccessTools.PropertyGetter(jumpHandlerType, "PowerLevel");
-
-            var prefix = typeof(JumpForceModule).GetMethod(nameof(JumpHandler_JumpForce_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (prefix == null)
-                return;
-
-            harmony.Patch(jumpForceGetter, prefix: new HarmonyMethod(prefix));
+            JumpHandlers.Add(__instance);
+            ApplyJumpFields(__instance);
         }
 
-        private static bool JumpHandler_JumpForce_Prefix(object __instance, ref float __result)
+        private static void HopHandlerAwakePostfix(HopHandler __instance)
         {
-            if (__instance == null || s_jumpHandlerPowerLevelGetter == null)
-                return true;
+            if (__instance == null)
+                return;
 
-            var levelObj = s_jumpHandlerPowerLevelGetter.Invoke(__instance, null);
-            var level = levelObj is int value ? value : 0;
-            var appliedLevel = level + 1;
-            var stat = EvaluateStatWithDiminishingReturns(
+            HopHandlers.Add(__instance);
+            ApplyHopFields(__instance);
+        }
+
+        private static void ApplyAll()
+        {
+            JumpHandlers.RemoveWhere(handler => handler == null);
+            HopHandlers.RemoveWhere(handler => handler == null);
+
+            foreach (var handler in JumpHandlers)
+                ApplyJumpFields(handler);
+            foreach (var handler in HopHandlers)
+                ApplyHopFields(handler);
+        }
+
+        private static void ApplyJumpFields(JumpHandler handler)
+        {
+            handler.forceIncrease = FeatureFlags.DHHJumpForceIncreasePerLevel;
+            handler.jumpVertical = FeatureFlags.DHHJumpVertical;
+            handler.rotationForce = FeatureFlags.DHHJumpRotationForce;
+            handler.jumpCooldown = FeatureFlags.DHHJumpCooldown;
+        }
+
+        private static void ApplyHopFields(HopHandler handler)
+        {
+            handler.jumpIncrease = FeatureFlags.DHHHopJumpIncreasePerLevel;
+            handler.moveIncrease = FeatureFlags.DHHHopMoveIncreasePerLevel;
+            handler.rotationForce = FeatureFlags.DHHHopRotationForce;
+            handler.damping = FeatureFlags.DHHHopDamping;
+            handler.angleThreshold = FeatureFlags.DHHHopAngleThreshold;
+            handler.velocityThreshold = FeatureFlags.DHHHopVelocityThreshold;
+            handler.cooldown = FeatureFlags.DHHHopCooldown;
+            handler.moveDelay = FeatureFlags.DHHHopMoveDelay;
+        }
+
+        private static bool JumpForceGetterPrefix(JumpHandler __instance, ref float __result)
+        {
+            __result = DHHFunc.StatWithDiminishingReturns(
                 FeatureFlags.DHHJumpForceBaseValue,
                 FeatureFlags.DHHJumpForceIncreasePerLevel,
-                appliedLevel,
+                __instance.PowerLevel + 1,
                 FeatureFlags.DHHJumpForceThresholdLevel,
                 FeatureFlags.DHHJumpForceDiminishingFactor);
-
-            __result = stat.FinalValue;
-            LogJumpForce(__instance, level, appliedLevel, stat);
             return false;
         }
 
-        private static void PatchHopHandlerJumpForceIfPossible(Harmony harmony, Assembly asm)
+        private static bool HopJumpForceGetterPrefix(HopHandler __instance, ref float __result)
         {
-            var hopHandlerType = asm.GetType("DeathHeadHopper.DeathHead.Handlers.HopHandler", throwOnError: false);
-            if (hopHandlerType == null)
-                return;
-
-            var jumpForceGetter = AccessTools.PropertyGetter(hopHandlerType, "JumpForce");
-            s_hopHandlerPowerLevelGetter ??= AccessTools.PropertyGetter(hopHandlerType, "PowerLevel");
-
-            var prefix = typeof(JumpForceModule).GetMethod(nameof(HopHandler_JumpForce_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (jumpForceGetter != null && prefix != null)
-            {
-                harmony.Patch(jumpForceGetter, prefix: new HarmonyMethod(prefix));
-            }
-        }
-
-        private static bool HopHandler_JumpForce_Prefix(object __instance, ref float __result)
-        {
-            if (__instance == null || s_hopHandlerPowerLevelGetter == null)
-                return true;
-
-            var levelObj = s_hopHandlerPowerLevelGetter.Invoke(__instance, null);
-            var level = levelObj is int value ? value : 0;
-            var appliedLevel = level + 1;
-            var stat = EvaluateStatWithDiminishingReturns(
+            __result = DHHFunc.StatWithDiminishingReturns(
                 FeatureFlags.DHHHopJumpBaseValue,
                 FeatureFlags.DHHHopJumpIncreasePerLevel,
-                appliedLevel,
+                __instance.PowerLevel + 1,
                 FeatureFlags.DHHHopJumpThresholdLevel,
                 FeatureFlags.DHHHopJumpDiminishingFactor);
-
-            __result = stat.FinalValue;
-            LogHopJumpForce(__instance, level, appliedLevel, stat);
-
             return false;
         }
 
-        private static DiminishingReturnsResult EvaluateStatWithDiminishingReturns(float baseValue, float increasePerLevel, int currentLevel, int thresholdLevel, float diminishingFactor)
+        private static bool HopMoveForceGetterPrefix(HopHandler __instance, ref float __result)
         {
-            var appliedLevel = currentLevel;
-            var normalizedLevel = Math.Max(0, appliedLevel - 1);
-            var normalizedThreshold = Math.Max(0, thresholdLevel - 1);
-            var linearLevels = Mathf.Min(normalizedLevel, normalizedThreshold);
-            var extraLevels = Mathf.Max(0, normalizedLevel - normalizedThreshold);
-            var diminishingComponent = extraLevels * Mathf.Pow(diminishingFactor, extraLevels);
-            var linearContribution = increasePerLevel * linearLevels;
-            var diminishingContribution = increasePerLevel * diminishingComponent;
-            var finalValue = baseValue + linearContribution + diminishingContribution;
-
-            return new DiminishingReturnsResult(
-                baseValue,
-                increasePerLevel,
-                appliedLevel,
-                thresholdLevel,
-                diminishingFactor,
-                linearLevels,
-                extraLevels,
-                linearContribution,
-                diminishingContribution,
-                diminishingComponent,
-                finalValue);
-        }
-
-        private readonly struct DiminishingReturnsResult
-        {
-            public DiminishingReturnsResult(float baseValue, float increasePerLevel, int appliedLevel, int thresholdLevel, float diminishingFactor,
-                int linearLevels, int extraLevels, float linearContribution, float diminishingContribution, float diminishingComponent, float finalValue)
+            var level = __instance.PowerLevel;
+            if (level <= 0)
             {
-                BaseValue = baseValue;
-                IncreasePerLevel = increasePerLevel;
-                AppliedLevel = appliedLevel;
-                ThresholdLevel = thresholdLevel;
-                DiminishingFactor = diminishingFactor;
-                LinearLevels = linearLevels;
-                ExtraLevels = extraLevels;
-                LinearContribution = linearContribution;
-                DiminishingContribution = diminishingContribution;
-                DiminishingComponent = diminishingComponent;
-                FinalValue = finalValue;
+                __result = 0f;
+                return false;
             }
 
-            public float BaseValue { get; }
-            public float IncreasePerLevel { get; }
-            public int AppliedLevel { get; }
-            public int ThresholdLevel { get; }
-            public float DiminishingFactor { get; }
-            public int LinearLevels { get; }
-            public int ExtraLevels { get; }
-            public float LinearContribution { get; }
-            public float DiminishingContribution { get; }
-            public float DiminishingComponent { get; }
-            public float FinalValue { get; }
+            __result = DHHFunc.StatWithDiminishingReturns(
+                FeatureFlags.DHHHopMoveBaseValue,
+                FeatureFlags.DHHHopMoveIncreasePerLevel,
+                level,
+                FeatureFlags.DHHHopMoveThresholdLevel,
+                FeatureFlags.DHHHopMoveDiminishingFactor);
+            return false;
         }
 
-        private static void LogHopJumpForce(object hopHandler, int powerLevel, int appliedLevel, DiminishingReturnsResult stat)
+        private static void JumpHeadPostfix(JumpHandler __instance)
         {
-            if (!FeatureFlags.DebugLogging)
-                return;
-
-            if (!LogLimiter.ShouldLog(HopForceLogKey, 30))
-                return;
-
-            var label = GetHandlerLabel(hopHandler, "HopHandler");
-            var message = $"[Fix:Hop] {label} JumpForce={stat.FinalValue:F3} powerLevel={powerLevel} appliedLevel={appliedLevel} base={stat.BaseValue:F3} inc={stat.IncreasePerLevel:F3} fullUpgrades={stat.LinearLevels} dimUpgrades={stat.ExtraLevels} linearDelta={stat.LinearContribution:F3} dimDelta={stat.DiminishingContribution:F3} thresh={stat.ThresholdLevel} dimFactor={stat.DiminishingFactor:F3}";
-            s_log?.LogInfo(message);
-            Debug.Log(message);
-        }
-
-        private static void LogJumpForce(object jumpHandler, int powerLevel, int appliedLevel, DiminishingReturnsResult stat)
-        {
-            if (!FeatureFlags.DebugLogging)
-                return;
-            if (!InternalDebugFlags.DebugJumpForceLog)
-                return;
-
-            if (!LogLimiter.ShouldLog(JumpForceLogKey, 30))
-                return;
-
-            var label = GetHandlerLabel(jumpHandler, "JumpHandler");
-            var message = $"[Fix:Jump] {label} JumpForce={stat.FinalValue:F3} powerLevel={powerLevel} appliedLevel={appliedLevel} base={stat.BaseValue:F3} inc={stat.IncreasePerLevel:F3} fullUpgrades={stat.LinearLevels} dimUpgrades={stat.ExtraLevels} linearDelta={stat.LinearContribution:F3} dimDelta={stat.DiminishingContribution:F3} thresh={stat.ThresholdLevel} dimFactor={stat.DiminishingFactor:F3}";
-            s_log?.LogInfo(message);
-            Debug.Log(message);
-        }
-
-        private static string GetHandlerLabel(object? handler, string fallback)
-        {
-            if (handler is Component component)
-            {
-                return component.name ?? component.GetType().Name;
-            }
-
-            return handler?.GetType().Name ?? fallback;
+            if (__instance != null)
+                __instance.jumpBufferTimer = FeatureFlags.DHHJumpBufferDuration;
         }
     }
 }
-

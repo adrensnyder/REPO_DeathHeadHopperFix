@@ -1,8 +1,12 @@
+#nullable enable
+
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Reflection;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 
 namespace DeathHeadHopperFix.Modules.Config
 {
@@ -24,7 +28,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public string Value { get; }
         }
 
-        internal static void Apply(ConfigFile config, Type flagsType, string defaultSection)
+        internal static void Apply(ConfigFile config, Type flagsType, string defaultSection, ManualLogSource? log)
         {
             if (config == null ||
                 flagsType == null ||
@@ -34,6 +38,11 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
+            var migrationMarker = config.Bind(
+                "Internal",
+                "NativeJumpDefaultsMigrationVersion",
+                0,
+                "Internal migration marker; not a gameplay setting.");
             var lines = File.ReadAllLines(config.ConfigFilePath);
             if (lines.Length == 0)
             {
@@ -87,6 +96,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             if (orphanedLineIndexes.Count == 0)
             {
+                ApplyNativeJumpDefaultMigration(config, migrationMarker, log);
                 return;
             }
 
@@ -101,6 +111,62 @@ namespace DeathHeadHopperFix.Modules.Config
 
             File.WriteAllLines(config.ConfigFilePath, cleanedLines.ToArray());
             config.Reload();
+            ApplyNativeJumpDefaultMigration(config, migrationMarker, log);
+        }
+
+        private static void ApplyNativeJumpDefaultMigration(ConfigFile config, ConfigEntry<int> migrationMarker, ManualLogSource? log)
+        {
+            if (migrationMarker.Value >= 1)
+            {
+                return;
+            }
+
+            var section = "4. Jump (DHH)";
+            var migrated = new List<string>();
+            MigrateExact(config, section, "DHHJumpForceBaseValue", "0.5", "2.8", migrated);
+            MigrateExact(config, section, "DHHJumpForceIncreasePerLevel", "0.25", "0.4", migrated);
+            MigrateExact(config, section, "DHHHopJumpBaseValue", "2", "3", migrated);
+            MigrateExact(config, section, "DHHHopJumpIncreasePerLevel", "0.25", "0.11", migrated);
+
+            migrationMarker.Value = 1;
+            config.Save();
+
+            if (migrated.Count > 0)
+            {
+                log?.LogInfo($"Migrated native DHH jump defaults: {string.Join(", ", migrated)}.");
+            }
+        }
+
+        private static void MigrateExact(
+            ConfigFile config,
+            string section,
+            string key,
+            string oldValue,
+            string newValue,
+            List<string> migrated)
+        {
+            var definition = new ConfigDefinition(section, key);
+            if (!config.ContainsKey(definition))
+            {
+                return;
+            }
+
+            var entry = config[definition];
+            if (entry == null || !float.TryParse(oldValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var expectedOld) ||
+                entry.BoxedValue is not float currentValue || Math.Abs(currentValue - expectedOld) > 0.000001f)
+            {
+                return;
+            }
+
+            try
+            {
+                entry.SetSerializedValue(newValue);
+                migrated.Add(key);
+            }
+            catch
+            {
+                // Preserve the loaded value if a legacy serializer rejects the conversion.
+            }
         }
 
         private static bool TryMigrateValue(

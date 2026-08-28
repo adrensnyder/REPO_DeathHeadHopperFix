@@ -1,100 +1,86 @@
 #nullable enable
 
-using System.Reflection;
-using HarmonyLib;
-using UnityEngine;
+using BepInEx.Logging;
+using DeathHeadHopper.DeathHead;
+using DeathHeadHopper.DeathHead.Handlers;
+using DeathHeadHopper.Managers;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Stamina;
+using HarmonyLib;
+using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Battery
 {
     internal static class BatteryJumpPatchModule
     {
-        private static FieldInfo? s_jumpHandlerJumpBufferField;
+        private static bool s_applied;
 
-        internal static void Apply(Harmony harmony, Assembly asm)
+        internal static void Apply(Harmony harmony, ManualLogSource? log)
         {
-            PatchDeathHeadControllerModulesIfPossible(harmony, asm);
-            PatchJumpHandlerUpdateIfPossible(harmony, asm);
+            if (s_applied || harmony == null)
+                return;
+
+            var controllerStart = AccessTools.Method(typeof(DeathHeadController), nameof(DeathHeadController.Start));
+            var inputJump = AccessTools.Method(typeof(DHHInputManager), nameof(DHHInputManager.Jump));
+            var headJumped = AccessTools.Method(typeof(JumpHandler), nameof(JumpHandler.HeadJumped), new[] { typeof(float) });
+            if (controllerStart == null || inputJump == null || headJumped == null)
+            {
+                log?.LogWarning("DHH battery jump disabled: one or more required publicized members are unavailable.");
+                return;
+            }
+
+            harmony.Patch(controllerStart,
+                postfix: new HarmonyMethod(typeof(BatteryJumpPatchModule), nameof(DeathHeadControllerStartPostfix)));
+            harmony.Patch(inputJump,
+                prefix: new HarmonyMethod(typeof(BatteryJumpPatchModule), nameof(DhhInputManagerJumpPrefix)));
+            harmony.Patch(headJumped,
+                postfix: new HarmonyMethod(typeof(BatteryJumpPatchModule), nameof(JumpHandlerHeadJumpedPostfix)));
+            s_applied = true;
         }
 
-        private static void PatchDeathHeadControllerModulesIfPossible(Harmony harmony, Assembly asm)
+        private static void DeathHeadControllerStartPostfix(DeathHeadController __instance)
         {
-            var controllerType = asm.GetType("DeathHeadHopper.DeathHead.DeathHeadController", throwOnError: false);
-            if (controllerType == null)
+            if (__instance == null)
                 return;
 
-            var startMethod = AccessTools.Method(controllerType, "Start");
-            if (startMethod == null)
-                return;
-
-            var postfix = typeof(BatteryJumpPatchModule).GetMethod(nameof(DeathHeadController_Start_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (postfix == null)
-                return;
-
-            harmony.Patch(startMethod, postfix: new HarmonyMethod(postfix));
-        }
-
-        private static void DeathHeadController_Start_Postfix(object __instance)
-        {
-            if (__instance is not MonoBehaviour mono)
-                return;
-
-            var go = mono.gameObject;
+            var go = __instance.gameObject;
             if (go.GetComponent<BatteryJumpModule>() == null)
-            {
                 go.AddComponent<BatteryJumpModule>();
-            }
-
             if (go.GetComponent<StaminaRechargeModule>() == null)
-            {
                 go.AddComponent<StaminaRechargeModule>();
-            }
         }
 
-        private static void PatchJumpHandlerUpdateIfPossible(Harmony harmony, Assembly asm)
+        private static bool DhhInputManagerJumpPrefix(DHHInputManager __instance)
         {
-            var jumpHandlerType = asm.GetType("DeathHeadHopper.DeathHead.Handlers.JumpHandler", throwOnError: false);
-            if (jumpHandlerType == null)
-                return;
-
-            s_jumpHandlerJumpBufferField = AccessTools.Field(jumpHandlerType, "jumpBufferTimer");
-            if (s_jumpHandlerJumpBufferField == null)
-                return;
-
-            var updateMethod = AccessTools.Method(jumpHandlerType, "Update");
-            if (updateMethod == null)
-                return;
-
-            var prefix = typeof(BatteryJumpPatchModule).GetMethod(nameof(JumpHandler_Update_Prefix), BindingFlags.Static | BindingFlags.NonPublic);
-            if (prefix == null)
-                return;
-
-            harmony.Patch(updateMethod, prefix: new HarmonyMethod(prefix));
-        }
-
-        private static bool JumpHandler_Update_Prefix(MonoBehaviour __instance)
-        {
-            if (__instance == null || s_jumpHandlerJumpBufferField == null)
-                return true;
-
-            if (s_jumpHandlerJumpBufferField.GetValue(__instance) is not float buffer || buffer <= 0f)
-                return true;
-
-            if (!FeatureFlags.BatteryJumpEnabled)
-                return true;
-
-            var module = __instance.gameObject.GetComponent<BatteryJumpModule>();
-            if (module == null)
+            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
                 return true;
 
             var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
             if (allowance.allowed)
                 return true;
 
-            s_jumpHandlerJumpBufferField.SetValue(__instance, 0f);
-            module.NotifyJumpBlocked(allowance.currentEnergy, allowance.reference, allowance.readyFlag);
+            __instance?.headController?.GetComponent<BatteryJumpModule>()
+                ?.NotifyJumpBlocked(allowance.currentEnergy, allowance.reference, allowance.readyFlag);
             return false;
+        }
+
+        private static void JumpHandlerHeadJumpedPostfix(JumpHandler __instance)
+        {
+            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule || __instance == null)
+                return;
+
+            var avatar = __instance.controller?.deathHead?.playerAvatar;
+            if (avatar == null || !avatar.isLocal)
+                return;
+
+            var spectate = SpectateCamera.instance;
+            if (spectate == null)
+                return;
+
+            DHHBatteryHelper.ApplyConsumption(
+                spectate,
+                DHHBatteryHelper.GetEffectiveBatteryJumpUsage(),
+                DHHBatteryHelper.GetJumpThreshold());
         }
     }
 }

@@ -19,6 +19,7 @@ using System.Reflection;
 namespace DeathHeadHopperFix
 {
     [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.6")]
+    [BepInDependency("Cronchy.DeathHeadHopper", BepInDependency.DependencyFlags.HardDependency)]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
@@ -32,7 +33,7 @@ namespace DeathHeadHopperFix
         private void Awake()
         {
             _log = Logger;
-            ConfigManager.Initialize(Config);
+            ConfigManager.Initialize(Config, Logger);
             WarnUnsafeDebugFlagsInRelease();
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
 
@@ -90,8 +91,8 @@ namespace DeathHeadHopperFix
                 DHHShopVanillaPoolModule.Apply(harmony, asm, _log);
                 _targetAssembly = asm;
                 DHHApiGuardModule.Apply(harmony, asm);
-                BatteryJumpPatchModule.Apply(harmony, asm);
-                JumpForceModule.Apply(harmony, asm, _log);
+                BatteryJumpPatchModule.Apply(harmony, _log);
+                JumpForceModule.Apply(harmony, _log);
                 ChargeAbilityTuningModule.Apply(harmony, asm);
                 ChargeHoldReleaseModule.Apply(harmony, asm, _log);
 

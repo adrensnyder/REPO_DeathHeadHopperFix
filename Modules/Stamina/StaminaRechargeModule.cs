@@ -1,49 +1,37 @@
 #nullable enable
 
-using System;
-using System.Reflection;
-using HarmonyLib;
-using Photon.Pun;
-using UnityEngine;
+using DeathHeadHopper.DeathHead;
 using DeathHeadHopperFix.Modules.Battery;
 using DeathHeadHopperFix.Modules.Config;
+using Photon.Pun;
+using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Stamina
 {
     internal sealed class StaminaRechargeModule : MonoBehaviour
     {
-        private static readonly Type? s_deathHeadControllerType = AccessTools.TypeByName("DeathHeadHopper.DeathHead.DeathHeadController");
-
-        private object? _controllerInstance;
-        private PhotonView? _photonView;
+        private DeathHeadController? _controller;
         private bool _isOwner;
         private float _rechargeAccumulator;
         private Rigidbody? _rb;
 
         private void Awake()
         {
-            if (s_deathHeadControllerType == null)
+            _controller = GetComponent<DeathHeadController>();
+            if (_controller == null)
             {
                 enabled = false;
                 return;
             }
 
-            _controllerInstance = GetComponent(s_deathHeadControllerType);
-            if (_controllerInstance == null)
-            {
-                enabled = false;
-                return;
-            }
-
-            _photonView = GetComponent<PhotonView>();
-            _isOwner = !SemiFunc.IsMultiplayer() || (_photonView != null && _photonView.IsMine);
-
+            var photonView = GetComponent<PhotonView>();
+            _isOwner = !SemiFunc.IsMultiplayer() || (photonView != null && photonView.IsMine);
             _rb = GetComponent<Rigidbody>();
         }
 
         private void Update()
         {
-            if (!_isOwner)
+            if (!_isOwner || _controller == null)
                 return;
 
             if (!FeatureFlags.RechargeWithStamina)
@@ -52,29 +40,21 @@ namespace DeathHeadHopperFix.Modules.Stamina
                 return;
             }
 
-            if (_controllerInstance == null)
-                return;
-
+            // Recharge depends on elapsed gameplay time and has no upstream event, so polling is
+            // limited to the local owner and batched by the configured interval.
             _rechargeAccumulator += Time.deltaTime;
             if (_rechargeAccumulator < FeatureFlags.RechargeTickInterval)
                 return;
 
-            var canRechargeByMovement = !FeatureFlags.RechargeStaminaOnlyStationary || IsHeadStationary();
-            var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
-            if (canRechargeByMovement || !allowance.allowed)
-            {
-                DHHBatteryHelper.RechargeDhhAbilityEnergy(_controllerInstance, _rechargeAccumulator);
-            }
+            if (!FeatureFlags.RechargeStaminaOnlyStationary || IsHeadStationary())
+                DHHBatteryHelper.RechargeDhhAbilityEnergy(_controller, _rechargeAccumulator);
 
             _rechargeAccumulator = 0f;
         }
 
         private bool IsHeadStationary()
         {
-            if (_rb == null)
-                return true;
-
-            return _rb.velocity.sqrMagnitude < FeatureFlags.HeadStationaryVelocitySqrThreshold;
+            return _rb == null || _rb.velocity.sqrMagnitude < FeatureFlags.HeadStationaryVelocitySqrThreshold;
         }
     }
 }
