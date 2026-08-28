@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using DeathHeadHopper.DeathHead.Handlers;
+using DeathHeadHopperFix.API.Battery;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using Photon.Pun;
@@ -38,7 +39,8 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private void RefreshFeatureState()
         {
-            var active = FeatureFlags.BatteryJumpEnabled && !InternalDebugFlags.DisableBatteryModule;
+            BatteryJumpOverrideLease.TryGetEffectiveState(out var batteryJumpEnabled);
+            var active = batteryJumpEnabled && !InternalDebugFlags.DisableBatteryModule;
             if (active)
             {
                 SetupEyeWarningCondition();
@@ -143,7 +145,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         internal void NotifyJumpBlocked(float currentEnergy, float reference, bool? readyFlag)
         {
-            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
+            if (!BatteryJumpOverrideLease.TryGetEffectiveState(out var batteryJumpEnabled) || !batteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
                 return;
 
             if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("DHHBattery.JumpBlocked", 120))

@@ -97,8 +97,8 @@ namespace DeathHeadHopperFix
 
                 InputModule.Apply(harmony, asm, _log);
 
-                AbilityModule.ApplyAbilitySpotLabelOverlay(harmony, asm);
-                AbilityModule.ApplyAbilityManagerHooks(harmony, asm);
+                AbilityModule.ApplyAbilitySpotLabelOverlay(harmony);
+                AbilityModule.ApplyAbilityManagerHooks(harmony);
 
                 _patched = true;
                 _log?.LogInfo("Patches applied successfully.");

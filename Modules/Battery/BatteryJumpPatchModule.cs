@@ -4,6 +4,7 @@ using BepInEx.Logging;
 using DeathHeadHopper.DeathHead;
 using DeathHeadHopper.DeathHead.Handlers;
 using DeathHeadHopper.Managers;
+using DeathHeadHopperFix.API.Battery;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Stamina;
 using HarmonyLib;
@@ -20,22 +21,47 @@ namespace DeathHeadHopperFix.Modules.Battery
             if (s_applied || harmony == null)
                 return;
 
-            var controllerStart = AccessTools.Method(typeof(DeathHeadController), nameof(DeathHeadController.Start));
-            var inputJump = AccessTools.Method(typeof(DHHInputManager), nameof(DHHInputManager.Jump));
-            var headJumped = AccessTools.Method(typeof(JumpHandler), nameof(JumpHandler.HeadJumped), new[] { typeof(float) });
-            if (controllerStart == null || inputJump == null || headJumped == null)
+            try
             {
-                log?.LogWarning("DHH battery jump disabled: one or more required publicized members are unavailable.");
-                return;
+                harmony.CreateClassProcessor(typeof(DeathHeadControllerStartPatch)).Patch();
+                harmony.CreateClassProcessor(typeof(DhhInputManagerJumpPatch)).Patch();
+                harmony.CreateClassProcessor(typeof(JumpHandlerHeadJumpedPatch)).Patch();
+                s_applied = true;
             }
+            catch (System.Exception ex)
+            {
+                log?.LogWarning($"DHH battery jump patch setup failed: {ex.Message}");
+            }
+        }
 
-            harmony.Patch(controllerStart,
-                postfix: new HarmonyMethod(typeof(BatteryJumpPatchModule), nameof(DeathHeadControllerStartPostfix)));
-            harmony.Patch(inputJump,
-                prefix: new HarmonyMethod(typeof(BatteryJumpPatchModule), nameof(DhhInputManagerJumpPrefix)));
-            harmony.Patch(headJumped,
-                postfix: new HarmonyMethod(typeof(BatteryJumpPatchModule), nameof(JumpHandlerHeadJumpedPostfix)));
-            s_applied = true;
+        [HarmonyPatch(typeof(DeathHeadController), nameof(DeathHeadController.Start))]
+        private static class DeathHeadControllerStartPatch
+        {
+            [HarmonyPostfix]
+            private static void Postfix(DeathHeadController __instance)
+            {
+                DeathHeadControllerStartPostfix(__instance);
+            }
+        }
+
+        [HarmonyPatch(typeof(DHHInputManager), nameof(DHHInputManager.Jump))]
+        private static class DhhInputManagerJumpPatch
+        {
+            [HarmonyPrefix]
+            private static bool Prefix(DHHInputManager __instance)
+            {
+                return DhhInputManagerJumpPrefix(__instance);
+            }
+        }
+
+        [HarmonyPatch(typeof(JumpHandler), nameof(JumpHandler.HeadJumped), typeof(float))]
+        private static class JumpHandlerHeadJumpedPatch
+        {
+            [HarmonyPostfix]
+            private static void Postfix(JumpHandler __instance)
+            {
+                JumpHandlerHeadJumpedPostfix(__instance);
+            }
         }
 
         private static void DeathHeadControllerStartPostfix(DeathHeadController __instance)
@@ -52,7 +78,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private static bool DhhInputManagerJumpPrefix(DHHInputManager __instance)
         {
-            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
+            if (!BatteryJumpOverrideLease.TryGetEffectiveState(out var batteryJumpEnabled) || !batteryJumpEnabled || InternalDebugFlags.DisableBatteryModule)
                 return true;
 
             var allowance = DHHBatteryHelper.EvaluateJumpAllowance();
@@ -66,7 +92,7 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private static void JumpHandlerHeadJumpedPostfix(JumpHandler __instance)
         {
-            if (!FeatureFlags.BatteryJumpEnabled || InternalDebugFlags.DisableBatteryModule || __instance == null)
+            if (!BatteryJumpOverrideLease.TryGetEffectiveState(out var batteryJumpEnabled) || !batteryJumpEnabled || InternalDebugFlags.DisableBatteryModule || __instance == null)
                 return;
 
             var avatar = __instance.controller?.deathHead?.playerAvatar;

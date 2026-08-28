@@ -2,6 +2,7 @@
 
 using System;
 using DeathHeadHopper.DeathHead;
+using DeathHeadHopperFix.API.Battery;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Utilities;
 using UnityEngine;
@@ -111,7 +112,8 @@ namespace DeathHeadHopperFix.Modules.Battery
 
         private static void LogAllowance(float currentEnergy, float reference, bool allowed, bool? readyFlag)
         {
-            if (!FeatureFlags.DebugLogging || !FeatureFlags.BatteryJumpEnabled ||
+            BatteryJumpOverrideLease.TryGetEffectiveState(out var batteryJumpEnabled);
+            if (!FeatureFlags.DebugLogging || !batteryJumpEnabled ||
                 !InternalDebugFlags.DebugDhhBatteryJumpAllowanceLog || !IsDeathHeadContext() ||
                 !LogLimiter.ShouldLog("DHHBattery.JumpAllowance", 120))
                 return;

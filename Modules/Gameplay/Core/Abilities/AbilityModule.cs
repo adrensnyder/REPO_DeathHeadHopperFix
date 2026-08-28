@@ -2,12 +2,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.Reflection;
 using DeathHeadHopper.Abilities;
+using DeathHeadHopperFix.API.Abilities;
 using DeathHeadHopper.Managers;
 using DeathHeadHopper.UI;
 using DeathHeadHopperFix.Modules.Config;
-using DeathHeadHopperFix.Modules.Utilities;
+using DeathHeadHopperFix.Modules.Gameplay.Spectate;
 using HarmonyLib;
 using TMPro;
 using UnityEngine;
@@ -17,33 +17,56 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 {
     internal static class AbilityModule
     {
-        private const string DirectionEnergyLogKey = "Fix:Ability.DirectionEnergy";
         private static readonly HashSet<AbilitySpot> s_trackedSpots = new();
         private static readonly Dictionary<AbilitySpot, Vector3> s_spotBaseLocalPos = new();
-        private static readonly Dictionary<AbilitySpot, bool> s_lastDirectionVisibilityBySpot = new();
-        private static readonly Dictionary<AbilitySpot, string> s_lastDirectionCostLabelBySpot = new();
-        private static readonly Dictionary<AbilitySpot, float> s_lastDirectionProgressBySpot = new();
-        private static readonly Dictionary<AbilitySpot, bool> s_lastDirectionEnergySufficientBySpot = new();
-        private static float s_directionActivationProgress;
 
-        private const int DirectionIndicatorSlotIndex = 1;
         private const int ChargeAbilitySlotIndex = 0;
+        private const string ProviderDemandPrefix = "DeathHeadHopperFix.AbilityProvider.";
+        private static readonly Dictionary<string, ProviderRegistrationState> s_providerByOwner = new(StringComparer.Ordinal);
+        private static readonly Dictionary<int, string> s_providerOwnerBySlot = new();
+        private static readonly HashSet<string> s_providerCollisionWarnings = new(StringComparer.Ordinal);
+        private static readonly HashSet<string> s_providerCallbackWarnings = new(StringComparer.Ordinal);
+        private static bool s_providerReconcileInProgress;
 
-        internal static void ApplyAbilitySpotLabelOverlay(Harmony harmony, Assembly asm)
+        internal static void ApplyAbilitySpotLabelOverlay(Harmony harmony)
         {
-            harmony.Patch(
-                AccessTools.Method(typeof(AbilitySpot), nameof(AbilitySpot.Start)),
-                postfix: new HarmonyMethod(typeof(AbilityModule), nameof(AbilitySpot_Start_Postfix)));
-            harmony.Patch(
-                AccessTools.Method(typeof(AbilitySpot), nameof(AbilitySpot.UpdateUI)),
-                postfix: new HarmonyMethod(typeof(AbilityModule), nameof(AbilitySpot_UpdateUI_Postfix)));
+            harmony.CreateClassProcessor(typeof(AbilitySpotStartPatch)).Patch();
+            harmony.CreateClassProcessor(typeof(AbilitySpotUpdateUiPatch)).Patch();
         }
 
-        internal static void ApplyAbilityManagerHooks(Harmony harmony, Assembly asm)
+        internal static void ApplyAbilityManagerHooks(Harmony harmony)
         {
-            harmony.Patch(
-                AccessTools.Method(typeof(DHHAbilityManager), nameof(DHHAbilityManager.OnAbilityUsed), new[] { typeof(AbilityBase) }),
-                postfix: new HarmonyMethod(typeof(AbilityModule), nameof(DHHAbilityManager_OnAbilityUsed_Postfix)));
+            harmony.CreateClassProcessor(typeof(DhhAbilityManagerOnAbilityUsedPatch)).Patch();
+        }
+
+        [HarmonyPatch(typeof(AbilitySpot), nameof(AbilitySpot.Start))]
+        private static class AbilitySpotStartPatch
+        {
+            [HarmonyPostfix]
+            private static void Postfix(AbilitySpot __instance)
+            {
+                AbilitySpot_Start_Postfix(__instance);
+            }
+        }
+
+        [HarmonyPatch(typeof(AbilitySpot), nameof(AbilitySpot.UpdateUI))]
+        private static class AbilitySpotUpdateUiPatch
+        {
+            [HarmonyPostfix]
+            private static void Postfix(AbilitySpot __instance)
+            {
+                AbilitySpot_UpdateUI_Postfix(__instance);
+            }
+        }
+
+        [HarmonyPatch(typeof(DHHAbilityManager), nameof(DHHAbilityManager.OnAbilityUsed), typeof(AbilityBase))]
+        private static class DhhAbilityManagerOnAbilityUsedPatch
+        {
+            [HarmonyPostfix]
+            private static void Postfix(DHHAbilityManager __instance, AbilityBase ability)
+            {
+                DHHAbilityManager_OnAbilityUsed_Postfix(__instance, ability);
+            }
         }
 
         private static void AbilitySpot_Start_Postfix(AbilitySpot __instance)
@@ -56,7 +79,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             s_trackedSpots.Add(__instance);
             s_spotBaseLocalPos[__instance] = __instance.transform.localPosition;
             AbilitySpotLabelOverlay.EnsureLabel(__instance);
-            ApplySlot2DirectionVisual(__instance);
+            ReconcileProviderForSpot(__instance);
             var driver = __instance.GetComponent<AbilitySpotUpdateDriver>() ?? __instance.gameObject.AddComponent<AbilitySpotUpdateDriver>();
             driver.Initialize(__instance);
             __instance.enabled = false;
@@ -70,23 +93,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
 
             AbilitySpotLabelOverlay.UpdateLabel(__instance);
-            ApplySlot2DirectionVisual(__instance);
+            ReconcileProviderForSpot(__instance);
         }
 
         private static void AfterAbilitySpotUpdate(AbilitySpot __instance)
         {
-            if (__instance == null)
-                return;
-            if (InternalDebugFlags.DisableAbilityPatches)
-                return;
-            if (GetAbilityIndex(__instance) != DirectionIndicatorSlotIndex)
-                return;
-            if (!LastChanceInteropBridge.IsDirectionIndicatorUiVisible())
+            if (__instance == null || InternalDebugFlags.DisableAbilityPatches)
                 return;
 
-            // AbilitySpot.Update() pushes empty slots down every frame.
-            // Force slot2 to stay in active position while direction indicator is visible.
-            SlotLayoutOverrides.EnsureBasePosition(__instance);
+            var slotIndex = GetAbilityIndex(__instance);
+            if (TryGetProviderForSlot(slotIndex, out var provider) && provider.State.Visible && IsProviderBoundToSpot(provider, __instance))
+            {
+                SlotLayoutOverrides.EnsureBasePosition(__instance);
+            }
         }
 
         private static void AbilitySpot_OnDestroy(AbilitySpot spot)
@@ -96,10 +115,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
             s_trackedSpots.Remove(spot);
             s_spotBaseLocalPos.Remove(spot);
-            s_lastDirectionVisibilityBySpot.Remove(spot);
-            s_lastDirectionCostLabelBySpot.Remove(spot);
-            s_lastDirectionProgressBySpot.Remove(spot);
-            s_lastDirectionEnergySufficientBySpot.Remove(spot);
+            foreach (var provider in s_providerByOwner.Values)
+            {
+                if (ReferenceEquals(provider.BoundSpot, spot))
+                {
+                    provider.BoundSpot = null;
+                }
+            }
             AbilitySpotLabelOverlay.ClearLabel(spot);
         }
 
@@ -182,60 +204,444 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             }
         }
 
-        internal static void TriggerDirectionSlotCooldown(float cooldownSeconds)
+        internal static bool TryRegisterProvider(AbilitySlotRegistration registration)
         {
-            if (InternalDebugFlags.DisableAbilityPatches)
-                return;
-
-            s_directionActivationProgress = 0f;
-            var clamped = Mathf.Max(0f, cooldownSeconds);
-            if (clamped <= 0f)
-                return;
-
-            foreach (var spot in s_trackedSpots)
+            if (!IsValidRegistration(registration, out var slotIndex))
             {
-                if (spot == null || GetAbilityIndex(spot) != DirectionIndicatorSlotIndex)
-                    continue;
+                return false;
+            }
 
+            if (s_providerByOwner.ContainsKey(registration.OwnerId))
+            {
+                return false;
+            }
+
+            if (s_providerOwnerBySlot.TryGetValue(slotIndex, out var existingOwner))
+            {
+                WarnProviderCollisionOnce(slotIndex, registration.OwnerId, existingOwner);
+                return false;
+            }
+
+            var adapter = ScriptableObject.CreateInstance<ProviderAbilityAdapter>();
+            var registrationSnapshot = new AbilitySlotRegistration
+            {
+                OwnerId = registration.OwnerId,
+                Slot = registration.Slot,
+                AbilityName = registration.AbilityName,
+                Icon = registration.Icon,
+                OnDown = registration.OnDown,
+                OnHold = registration.OnHold,
+                OnUp = registration.OnUp,
+                OnCancel = registration.OnCancel
+            };
+            var provider = new ProviderRegistrationState(registrationSnapshot, adapter);
+            adapter.Initialize(provider);
+            adapter.icon = registration.Icon;
+            s_providerByOwner.Add(registration.OwnerId, provider);
+            s_providerOwnerBySlot.Add(slotIndex, registration.OwnerId);
+            ReconcileProvider(provider);
+            return true;
+        }
+
+        internal static bool TryUpdateProvider(string ownerId, AbilitySlotState state)
+        {
+            if (string.IsNullOrWhiteSpace(ownerId) || !s_providerByOwner.TryGetValue(ownerId, out var provider))
+            {
+                return false;
+            }
+
+            var wasInteractive = provider.State.Visible && provider.State.Available;
+            state.ActivationProgress01 = Mathf.Clamp01(state.ActivationProgress01);
+            provider.State = state;
+            provider.Adapter.icon = state.Icon != null ? state.Icon : provider.Registration.Icon;
+
+            if (provider.InputHeld && wasInteractive && (!state.Visible || !state.Available))
+            {
+                CancelProviderInput(provider);
+            }
+
+            ReconcileProvider(provider);
+            return true;
+        }
+
+        internal static bool TryStartProviderCooldown(string ownerId, float seconds)
+        {
+            if (string.IsNullOrWhiteSpace(ownerId) || !s_providerByOwner.TryGetValue(ownerId, out var provider))
+            {
+                return false;
+            }
+
+            var clamped = Mathf.Max(0f, seconds);
+            var state = provider.State;
+            state.ActivationProgress01 = 0f;
+            provider.State = state;
+            var spot = provider.BoundSpot;
+            if (spot == null || !IsProviderBoundToSpot(provider, spot))
+            {
+                return clamped <= 0f;
+            }
+
+            ApplyProviderVisualState(provider, spot);
+            if (clamped <= 0f)
+            {
+                return true;
+            }
+
+            try
+            {
+                spot.SetCooldown(clamped);
+                return true;
+            }
+            catch
+            {
+                provider.BoundSpot = null;
+                return false;
+            }
+        }
+
+        internal static bool UnregisterProvider(string ownerId)
+        {
+            if (string.IsNullOrWhiteSpace(ownerId) || !s_providerByOwner.TryGetValue(ownerId, out var provider))
+            {
+                return false;
+            }
+
+            CancelProviderInput(provider);
+            AbilityBarVisibilityAnchor.SetExternalDemand(GetProviderDemandId(ownerId), false);
+
+            var spot = provider.BoundSpot;
+            if (spot != null && IsSpotUsable(spot) && ReferenceEquals(spot.CurrentAbility, provider.Adapter))
+            {
                 try
                 {
-                    spot.SetCooldown(clamped);
-                    SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
-                    SlotVisualOverrides.ApplyDirectionEnergyAvailability(
-                        spot,
-                        LastChanceInteropBridge.IsDirectionIndicatorEnergySufficientPreview(),
-                        s_directionActivationProgress);
+                    spot.RemoveAbility();
+                    RestoreProviderVisualState(spot);
                 }
                 catch
                 {
-                    // UI element may be destroyed during scene/menu transitions.
+                    // Scene teardown can invalidate UI references before provider cleanup runs.
+                }
+            }
+
+            provider.BoundSpot = null;
+            s_providerByOwner.Remove(ownerId);
+            s_providerOwnerBySlot.Remove((int)provider.Registration.Slot);
+            RemoveCollisionWarningsForOwner(ownerId);
+            RemoveCallbackWarningsForOwner(ownerId);
+            UnityEngine.Object.Destroy(provider.Adapter);
+            return true;
+        }
+
+        private static bool IsValidRegistration(AbilitySlotRegistration? registration, out int slotIndex)
+        {
+            slotIndex = -1;
+            if (registration == null || string.IsNullOrWhiteSpace(registration.OwnerId) || string.IsNullOrWhiteSpace(registration.AbilityName))
+            {
+                return false;
+            }
+
+            slotIndex = (int)registration.Slot;
+            if (slotIndex != (int)ExtensibleAbilitySlot.Slot2 && slotIndex != (int)ExtensibleAbilitySlot.Slot3)
+            {
+                return false;
+            }
+
+            return registration.OnDown != null &&
+                   registration.OnHold != null &&
+                   registration.OnUp != null &&
+                   registration.OnCancel != null;
+        }
+
+        private static void ReconcileProviderForSpot(AbilitySpot spot)
+        {
+            if (spot == null || s_providerReconcileInProgress)
+            {
+                return;
+            }
+
+            var slotIndex = GetAbilityIndex(spot);
+            if (!TryGetProviderForSlot(slotIndex, out var provider))
+            {
+                return;
+            }
+
+            ReconcileProvider(provider, spot);
+        }
+
+        private static void ReconcileProvider(ProviderRegistrationState provider, AbilitySpot? preferredSpot = null)
+        {
+            if (provider == null || s_providerReconcileInProgress)
+            {
+                return;
+            }
+
+            s_providerReconcileInProgress = true;
+            try
+            {
+                var spot = preferredSpot;
+                if (spot == null || GetAbilityIndex(spot) != (int)provider.Registration.Slot)
+                {
+                    spot = FindTrackedSpot((int)provider.Registration.Slot);
+                }
+
+                if (spot == null || !IsSpotUsable(spot))
+                {
+                    provider.BoundSpot = null;
+                    AbilityBarVisibilityAnchor.SetExternalDemand(GetProviderDemandId(provider.Registration.OwnerId), false);
+                    return;
+                }
+
+                if (!provider.State.Visible)
+                {
+                    if (ReferenceEquals(spot.CurrentAbility, provider.Adapter))
+                    {
+                        spot.RemoveAbility();
+                        RestoreProviderVisualState(spot);
+                    }
+                    provider.BoundSpot = null;
+                    AbilityBarVisibilityAnchor.SetExternalDemand(GetProviderDemandId(provider.Registration.OwnerId), false);
+                    return;
+                }
+
+                if (spot.CurrentAbility == null)
+                {
+                    spot.EquipAbility(provider.Adapter);
+                }
+                else if (!ReferenceEquals(spot.CurrentAbility, provider.Adapter))
+                {
+                    WarnOccupiedSpotOnce(provider, spot);
+                    provider.BoundSpot = null;
+                    AbilityBarVisibilityAnchor.SetExternalDemand(GetProviderDemandId(provider.Registration.OwnerId), false);
+                    return;
+                }
+
+                provider.BoundSpot = spot;
+                AbilityBarVisibilityAnchor.SetExternalDemand(GetProviderDemandId(provider.Registration.OwnerId), true);
+                ApplyProviderVisualState(provider, spot);
+            }
+            catch
+            {
+                provider.BoundSpot = null;
+                AbilityBarVisibilityAnchor.SetExternalDemand(GetProviderDemandId(provider.Registration.OwnerId), false);
+            }
+            finally
+            {
+                s_providerReconcileInProgress = false;
+            }
+        }
+
+        private static AbilitySpot? FindTrackedSpot(int slotIndex)
+        {
+            foreach (var spot in s_trackedSpots)
+            {
+                if (IsSpotUsable(spot) && GetAbilityIndex(spot) == slotIndex)
+                {
+                    return spot;
+                }
+            }
+
+            return null;
+        }
+
+        private static bool TryGetProviderForSlot(int slotIndex, out ProviderRegistrationState provider)
+        {
+            provider = null!;
+            return s_providerOwnerBySlot.TryGetValue(slotIndex, out var ownerId) &&
+                   s_providerByOwner.TryGetValue(ownerId, out provider);
+        }
+
+        private static bool IsProviderBoundToSpot(ProviderRegistrationState provider, AbilitySpot spot)
+        {
+            return provider != null && spot != null && ReferenceEquals(provider.BoundSpot, spot) && ReferenceEquals(spot.CurrentAbility, provider.Adapter);
+        }
+
+        private static void ApplyProviderVisualState(ProviderRegistrationState provider, AbilitySpot spot)
+        {
+            if (provider == null || spot == null)
+            {
+                return;
+            }
+
+            var state = provider.State;
+            var icon = state.Icon != null ? state.Icon : provider.Registration.Icon;
+            if (icon != null)
+            {
+                SlotVisualOverrides.ApplyProviderIcon(spot, icon);
+            }
+            else
+            {
+                SlotVisualOverrides.RestoreDefaultIcon(spot);
+            }
+
+            SlotCostOverrides.SetProviderCostText(spot, state.Label ?? string.Empty);
+            AbilitySpotLabelOverlay.SetProviderLabel(spot, string.Empty);
+            SlotVisualOverrides.ApplyProviderActivationProgress(spot, state.ActivationProgress01);
+            SlotVisualOverrides.ApplyProviderAvailability(spot, state.Available, state.ActivationProgress01);
+            SlotLayoutOverrides.EnsureBasePosition(spot);
+        }
+
+        private static void RestoreProviderVisualState(AbilitySpot spot)
+        {
+            if (spot == null)
+            {
+                return;
+            }
+
+            AbilitySpotLabelOverlay.UpdateLabel(spot);
+            SlotCostOverrides.RestoreDefaultCostText(spot);
+            SlotVisualOverrides.RestoreDefaultIcon(spot);
+            SlotVisualOverrides.ApplyProviderActivationProgress(spot, 0f);
+            SlotLayoutOverrides.RestoreBasePosition(spot);
+        }
+
+        private static void InvokeProviderCallback(ProviderRegistrationState provider, string callbackName, Action callback)
+        {
+            try
+            {
+                callback();
+            }
+            catch (Exception ex)
+            {
+                var key = provider.Registration.OwnerId + ":" + callbackName;
+                if (s_providerCallbackWarnings.Add(key))
+                {
+                    Debug.LogError($"[Fix:Ability] Provider '{provider.Registration.OwnerId}' callback '{callbackName}' failed: {ex.Message}");
                 }
             }
         }
 
-        internal static void SetDirectionSlotActivationProgress(float progress01)
+        private static void CancelProviderInput(ProviderRegistrationState provider)
         {
-            if (InternalDebugFlags.DisableAbilityPatches)
-                return;
-
-            s_directionActivationProgress = Mathf.Clamp01(progress01);
-            if (s_trackedSpots.Count == 0)
-                return;
-
-            foreach (var spot in s_trackedSpots)
+            if (provider == null || !provider.InputHeld)
             {
-                if (!IsSpotUsable(spot))
-                    continue;
-                if (GetAbilityIndex(spot) != DirectionIndicatorSlotIndex)
-                    continue;
-                if (!LastChanceInteropBridge.IsDirectionIndicatorUiVisible())
-                    continue;
+                return;
+            }
 
-                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, s_directionActivationProgress);
-                SlotVisualOverrides.ApplyDirectionEnergyAvailability(
-                    spot,
-                    LastChanceInteropBridge.IsDirectionIndicatorEnergySufficientPreview(),
-                    s_directionActivationProgress);
+            provider.InputHeld = false;
+            InvokeProviderCallback(provider, "Cancel", provider.Registration.OnCancel!);
+        }
+
+        private static string GetProviderDemandId(string ownerId)
+        {
+            return ProviderDemandPrefix + ownerId;
+        }
+
+        private static void WarnProviderCollisionOnce(int slotIndex, string ownerId, string existingOwner)
+        {
+            var key = slotIndex + ":" + ownerId;
+            if (s_providerCollisionWarnings.Add(key))
+            {
+                Debug.LogWarning($"[Fix:Ability] Provider '{ownerId}' cannot reserve slot index {slotIndex}; it is owned by '{existingOwner}'.");
+            }
+        }
+
+        private static void WarnOccupiedSpotOnce(ProviderRegistrationState provider, AbilitySpot spot)
+        {
+            var slotIndex = (int)provider.Registration.Slot;
+            var key = slotIndex + ":" + provider.Registration.OwnerId + ":occupied";
+            if (s_providerCollisionWarnings.Add(key))
+            {
+                var occupiedBy = spot.CurrentAbility?.AbilityName ?? "unknown ability";
+                Debug.LogWarning($"[Fix:Ability] Provider '{provider.Registration.OwnerId}' is registered for slot index {slotIndex}, but the spot is occupied by '{occupiedBy}'. The existing ability is preserved.");
+            }
+        }
+
+        private static void RemoveCollisionWarningsForOwner(string ownerId)
+        {
+            s_providerCollisionWarnings.RemoveWhere(key => key.EndsWith(":" + ownerId, StringComparison.Ordinal));
+        }
+
+        private static void RemoveCallbackWarningsForOwner(string ownerId)
+        {
+            s_providerCallbackWarnings.RemoveWhere(key => key.StartsWith(ownerId + ":", StringComparison.Ordinal));
+        }
+
+        private sealed class ProviderRegistrationState
+        {
+            internal ProviderRegistrationState(AbilitySlotRegistration registration, ProviderAbilityAdapter adapter)
+            {
+                Registration = registration;
+                Adapter = adapter;
+                State = new AbilitySlotState
+                {
+                    Visible = false,
+                    Available = false,
+                    ActivationProgress01 = 0f,
+                    Label = string.Empty,
+                    Icon = null
+                };
+            }
+
+            internal AbilitySlotRegistration Registration { get; }
+            internal ProviderAbilityAdapter Adapter { get; }
+            internal AbilitySlotState State { get; set; }
+            internal AbilitySpot? BoundSpot { get; set; }
+            internal bool InputHeld { get; set; }
+        }
+
+        private sealed class ProviderAbilityAdapter : AbilityBase
+        {
+            private ProviderRegistrationState? _provider;
+
+            internal void Initialize(ProviderRegistrationState provider)
+            {
+                _provider = provider;
+            }
+
+            public override string AbilityName => _provider?.Registration.AbilityName ?? string.Empty;
+            public override float Cooldown => 0f;
+            public override float EnergyCost => 0f;
+            public override int AbilityLevel => 1;
+
+            public override void OnAbilityDown()
+            {
+                var provider = _provider;
+                if (provider == null || !provider.State.Visible || !provider.State.Available || provider.InputHeld)
+                {
+                    return;
+                }
+
+                provider.InputHeld = true;
+                InvokeProviderCallback(provider, "Down", provider.Registration.OnDown!);
+            }
+
+            public override void OnAbilityHold()
+            {
+                var provider = _provider;
+                if (provider == null || !provider.InputHeld || !provider.State.Visible || !provider.State.Available)
+                {
+                    return;
+                }
+
+                InvokeProviderCallback(provider, "Hold", provider.Registration.OnHold!);
+            }
+
+            public override void OnAbilityUp()
+            {
+                var provider = _provider;
+                if (provider == null || !provider.InputHeld)
+                {
+                    return;
+                }
+
+                provider.InputHeld = false;
+                if (!provider.State.Visible || !provider.State.Available)
+                {
+                    return;
+                }
+
+                InvokeProviderCallback(provider, "Up", provider.Registration.OnUp!);
+            }
+
+            public override void OnAbilityCancel()
+            {
+                var provider = _provider;
+                if (provider == null)
+                {
+                    return;
+                }
+
+                CancelProviderInput(provider);
             }
         }
 
@@ -259,136 +665,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
                 SlotVisualOverrides.ApplyChargeActivationProgress(spot, clamped, canReleaseActivate);
             }
-        }
-
-        internal static void RefreshDirectionSlotVisuals()
-        {
-            if (InternalDebugFlags.DisableAbilityPatches)
-                return;
-
-            if (s_trackedSpots.Count == 0)
-                return;
-
-            var staleSpots = new List<AbilitySpot>();
-            foreach (var spot in s_trackedSpots)
-            {
-                if (!IsSpotUsable(spot))
-                {
-                    staleSpots.Add(spot);
-                    continue;
-                }
-
-                if (GetAbilityIndex(spot) != DirectionIndicatorSlotIndex)
-                    continue;
-
-                try
-                {
-                    ApplySlot2DirectionVisual(spot);
-                }
-                catch
-                {
-                    staleSpots.Add(spot);
-                }
-            }
-
-            if (staleSpots.Count > 0)
-            {
-                foreach (var stale in staleSpots)
-                {
-                    s_trackedSpots.Remove(stale);
-                    s_spotBaseLocalPos.Remove(stale);
-                }
-            }
-        }
-
-        private static void ApplySlot2DirectionVisual(AbilitySpot spot)
-        {
-            var slotIndex = GetAbilityIndex(spot);
-            if (slotIndex != DirectionIndicatorSlotIndex)
-                return;
-
-            var visible = LastChanceInteropBridge.IsDirectionIndicatorUiVisible();
-            var previousVisible = s_lastDirectionVisibilityBySpot.TryGetValue(spot, out var prev) ? prev : (bool?)null;
-            s_lastDirectionVisibilityBySpot[spot] = visible;
-            if (!visible)
-            {
-                if (FeatureFlags.DebugLogging && previousVisible != false)
-                {
-                    Debug.Log($"[Fix:Ability] Slot2 hidden. slotIndex={slotIndex} visible={visible} mode={LastChanceInteropBridge.GetLastChanceIndicatorsMode()}");
-                }
-                if (previousVisible == false)
-                {
-                    return;
-                }
-                AbilitySpotLabelOverlay.SetDirectionLabel(spot, string.Empty);
-                SlotCostOverrides.RestoreDefaultCostText(spot);
-                SlotVisualOverrides.RestoreDefaultIcon(spot);
-                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, 0f);
-                SlotLayoutOverrides.RestoreBasePosition(spot);
-                s_lastDirectionCostLabelBySpot.Remove(spot);
-                s_lastDirectionProgressBySpot.Remove(spot);
-                s_lastDirectionEnergySufficientBySpot.Remove(spot);
-                return;
-            }
-
-            if (FeatureFlags.DebugLogging && previousVisible != true)
-            {
-                Debug.Log($"[Fix:Ability] Slot2 apply icon. slotIndex={slotIndex} visible={visible} mode={LastChanceInteropBridge.GetLastChanceIndicatorsMode()}");
-            }
-            var costLabel = GetDirectionCostLabel();
-            var roundedProgress = Mathf.Round(s_directionActivationProgress * 1000f) * 0.001f;
-            var progressChanged = !s_lastDirectionProgressBySpot.TryGetValue(spot, out var lastProgress) ||
-                                  Mathf.Abs(lastProgress - roundedProgress) > 0.0001f;
-            var hasDirectionEnergy = LastChanceInteropBridge.IsDirectionIndicatorEnergySufficientPreview();
-            if (FeatureFlags.DebugLogging &&
-                InternalDebugFlags.DebugDirectionSlotEnergyPreviewLog &&
-                LogLimiter.ShouldLog(DirectionEnergyLogKey, 120))
-            {
-                LastChanceInteropBridge.GetDirectionIndicatorEnergyDebugSnapshot(
-                    out var directionVisible,
-                    out var timerRemaining,
-                    out var penaltyPreview,
-                    out var snapshotHasEnoughEnergy);
-                Debug.Log(
-                    $"[Fix:Ability] Slot2 energy preview visible={directionVisible} timer={timerRemaining:F1}s cost={penaltyPreview:F1}s enough={snapshotHasEnoughEnergy} appliedEnough={hasDirectionEnergy} progress={roundedProgress:F3}");
-            }
-            var energyStateChanged = !s_lastDirectionEnergySufficientBySpot.TryGetValue(spot, out var lastEnergyState) ||
-                                     lastEnergyState != hasDirectionEnergy;
-            var costChanged = !s_lastDirectionCostLabelBySpot.TryGetValue(spot, out var lastCostLabel) ||
-                              !string.Equals(lastCostLabel, costLabel, StringComparison.Ordinal);
-            var becameVisible = previousVisible != true;
-            if (!becameVisible && !progressChanged && !costChanged && !energyStateChanged)
-            {
-                return;
-            }
-
-            AbilitySpotLabelOverlay.SetDirectionLabel(spot, string.Empty);
-            if (becameVisible || costChanged)
-            {
-                SlotCostOverrides.SetDirectionCostText(spot, costLabel);
-                if (LastChanceInteropBridge.TryGetDirectionSlotSprite(out var directionSprite) && directionSprite != null)
-                {
-                    SlotVisualOverrides.ApplyDirectionIcon(spot, directionSprite);
-                }
-                SlotLayoutOverrides.EnsureBasePosition(spot);
-                s_lastDirectionCostLabelBySpot[spot] = costLabel;
-            }
-
-            if (becameVisible || progressChanged)
-            {
-                SlotVisualOverrides.ApplyDirectionActivationProgress(spot, roundedProgress);
-                s_lastDirectionProgressBySpot[spot] = roundedProgress;
-            }
-
-            SlotVisualOverrides.ApplyDirectionEnergyAvailability(spot, hasDirectionEnergy, roundedProgress);
-            s_lastDirectionEnergySufficientBySpot[spot] = hasDirectionEnergy;
-        }
-
-        private static string GetDirectionCostLabel()
-        {
-            var preview = LastChanceInteropBridge.GetDirectionIndicatorPenaltySecondsPreview();
-            var seconds = Mathf.RoundToInt(Mathf.Max(0f, preview));
-            return $"{seconds}s";
         }
 
         private static int GetAbilityIndex(AbilitySpot spot)
@@ -498,7 +774,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 SetLabelText(label, text);
             }
 
-            internal static void SetDirectionLabel(AbilitySpot spot, string text)
+            internal static void SetProviderLabel(AbilitySpot spot, string text)
             {
                 var label = GetLabel(spot);
                 if (label == null)
@@ -580,7 +856,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         private static class SlotCostOverrides
         {
-            internal static void SetDirectionCostText(AbilitySpot spot, string costText)
+            internal static void SetProviderCostText(AbilitySpot spot, string costText)
             {
                 if (spot?.energyCost == null)
                 {
@@ -614,7 +890,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             private static readonly Dictionary<Image, float> s_chargeHoldRestoreFillAmounts = new();
             private static readonly Dictionary<Image, Color> s_chargeHoldRestoreColors = new();
 
-            internal static void ApplyDirectionIcon(AbilitySpot spot, Sprite sprite)
+            internal static void ApplyProviderIcon(AbilitySpot spot, Sprite sprite)
             {
                 if (spot == null || sprite == null)
                     return;
@@ -651,7 +927,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 }
             }
 
-            internal static void ApplyDirectionActivationProgress(AbilitySpot spot, float progress01)
+            internal static void ApplyProviderActivationProgress(AbilitySpot spot, float progress01)
             {
                 if (spot == null)
                     return;
@@ -680,7 +956,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 cooldownImage.enabled = true;
             }
 
-            internal static void ApplyDirectionEnergyAvailability(AbilitySpot spot, bool hasEnoughEnergy, float progress01)
+            internal static void ApplyProviderAvailability(AbilitySpot spot, bool hasEnoughEnergy, float progress01)
             {
                 if (spot == null)
                     return;
@@ -787,4 +1063,3 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
         }
     }
 }
-
