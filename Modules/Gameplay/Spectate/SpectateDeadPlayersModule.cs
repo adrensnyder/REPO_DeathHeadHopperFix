@@ -74,9 +74,30 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return true;
             }
 
-            TryPlayerSwitch(spectate, playerList, next, includeDisabled: true);
-            // If everyone is disabled and feature is enabled, never execute vanilla early-return path.
-            return false;
+            var switched = TryPlayerSwitch(spectate, playerList, next, includeDisabled: true);
+            if (switched)
+            {
+                return false;
+            }
+
+            // Preserve the vanilla early-return behavior when everyone is disabled.
+            // In a mixed lobby, let vanilla recover only when its required references
+            // and at least one vanilla-valid target are present.
+            return allDisabled || !CanSafelyFallbackToVanilla(spectate, playerList) ? false : true;
+        }
+
+        private static bool CanSafelyFallbackToVanilla(SpectateCamera spectate, IList<PlayerAvatar> playerList)
+        {
+            if (spectate.normalTransformPivot == null || spectate.normalTransformDistance == null)
+            {
+                return false;
+            }
+
+            return playerList.Any(player =>
+                player != null &&
+                player != spectate.player &&
+                !player.isDisabled &&
+                player.spectatePoint != null);
         }
 
         private static bool HandleVanillaEquivalentPlayerSwitch(SpectateCamera spectate, IList<PlayerAvatar> playerList, bool next)
