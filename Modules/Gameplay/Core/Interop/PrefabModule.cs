@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using DeathHeadHopper.Abilities;
+using DeathHeadHopper.Abilities.Charge;
 using DeathHeadHopper.Managers;
 using DeathHeadHopper.Items;
 using HarmonyLib;
@@ -25,6 +27,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         private static AssetBundle? _dhhBundle;
         private static ManualLogSource? _log;
         private static readonly HashSet<string> _knownPrefabKeys = new(StringComparer.OrdinalIgnoreCase);
+        private static bool _compatibleAssetLoadAttempted;
+        private static bool _compatibleAssetLoadInProgress;
+        private static bool _compatibleAssetsLoaded;
 
         internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
         {
@@ -32,23 +37,47 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (harmony == null || asm == null)
                 return;
 
-            PatchDhhAssetManagerIfPossible(harmony);
+            if (PatchDhhAssetManagerIfPossible(harmony))
+                RetryCompatibleAssetLoadIfInitialDhhLoadRanBeforePatch();
             PatchRunManagerAwakeIfPossible(harmony);
             PatchMultiplayerPoolIfPossible(harmony);
             PatchPhotonDefaultPoolIfPossible(harmony);
         }
 
-        private static void PatchDhhAssetManagerIfPossible(Harmony harmony)
+        private static bool PatchDhhAssetManagerIfPossible(Harmony harmony)
         {
             var mLoadAssets = AccessTools.Method(typeof(DHHAssetManager), nameof(DHHAssetManager.LoadAssets));
             if (mLoadAssets == null)
-                return;
+                return false;
 
             harmony.Patch(mLoadAssets, prefix: new HarmonyMethod(typeof(PrefabModule), nameof(DHHAssetManager_LoadAssets_Prefix)));
+            return true;
+        }
+
+        private static void RetryCompatibleAssetLoadIfInitialDhhLoadRanBeforePatch()
+        {
+            if (_compatibleAssetLoadAttempted || DHHAssetManager.shopItems == null || DHHAssetManager.shopItems.Count > 0)
+                return;
+
+            _compatibleAssetLoadAttempted = true;
+            _log?.LogWarning("[Fix] DHH asset loading ran before the compatibility patch; retrying with the current Item.prefab API.");
+
+            try
+            {
+                DHHAssetManager.LoadAssets();
+            }
+            catch (Exception ex)
+            {
+                _log?.LogError($"[Fix] Compatible DHH asset-load retry failed: {ex}");
+            }
         }
 
         private static bool DHHAssetManager_LoadAssets_Prefix()
         {
+            if (_compatibleAssetsLoaded || _compatibleAssetLoadInProgress)
+                return false;
+
+            _compatibleAssetLoadInProgress = true;
             try
             {
                 var bundlePath = Path.Combine(BepInEx.Paths.PluginPath, "Cronchy-DeathHeadHopper", "deathheadhopper");
@@ -109,11 +138,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
                 LoadItemsCompatible(bundle);
 
-                DHHAssetManager.LoadAbilities(bundle);
-                DHHAssetManager.LoadChargeAssets(bundle);
+                DHHAbilityManager.abilities ??= new();
+                LoadAbilitiesCompatible(bundle);
+                ChargeEffects.prefab = bundle.LoadAsset<GameObject>("Assets/DeathHeadHopper/Abilities/Charge/Charge Effects.prefab");
 
                 DHHUIManager.abilityUIPrefab = bundle.LoadAsset<GameObject>("Assets/DeathHeadHopper/Ability UI.prefab");
 
+                _compatibleAssetsLoaded = true;
                 _log?.LogInfo("[Fix] LoadAssets compatible flow completed.");
 
             }
@@ -121,8 +152,50 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             {
                 _log?.LogError(ex);
             }
+            finally
+            {
+                _compatibleAssetLoadInProgress = false;
+            }
 
             return false;
+        }
+
+        private static void LoadAbilitiesCompatible(AssetBundle bundle)
+        {
+            var abilityNames = bundle.GetAllAssetNames()
+                .Where(x => x.EndsWith(".asset", StringComparison.OrdinalIgnoreCase) &&
+                            x.IndexOf("/abilities/", StringComparison.OrdinalIgnoreCase) >= 0)
+                .ToList();
+
+            _log?.LogInfo($"[Fix] Found {abilityNames.Count} ability assets in bundle.");
+
+            foreach (var abilityAssetPath in abilityNames)
+            {
+                AbilityBase? ability = null;
+                try
+                {
+                    ability = bundle.LoadAsset<AbilityBase>(abilityAssetPath);
+                }
+                catch (Exception ex)
+                {
+                    _log?.LogError($"[Fix] Exception loading ability asset '{abilityAssetPath}': {ex}");
+                }
+
+                if (ability == null)
+                {
+                    _log?.LogError($"[Fix] Failed to load ability asset: {abilityAssetPath}");
+                    continue;
+                }
+
+                var alreadyLoaded = DHHAbilityManager.abilities.Any(x =>
+                    x == ability ||
+                    (x != null && string.Equals(x.AbilityName, ability.AbilityName, StringComparison.Ordinal)));
+                if (alreadyLoaded)
+                    continue;
+
+                DHHAbilityManager.abilities.Add(ability);
+                _log?.LogInfo($"[Fix] Loaded ability '{ability.AbilityName}' from '{abilityAssetPath}'.");
+            }
         }
 
         private static void LoadItemsCompatible(AssetBundle bundle)
@@ -164,11 +237,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 }
 
                 itemObj.prefab ??= new PrefabRef();
-                itemObj.prefab.SetPrefab(prefab, prefabPath);
+                itemObj.prefab.SetPrefab(bundle, prefabPath);
 
                 var key = itemObj.name;
 
                 CachePrefabEntry(prefabPath, prefab);
+                CachePrefabEntry(itemObj.prefab.ResourcePath, prefab);
 
                 var prefabFileName = Path.GetFileName(prefabPath);
                 if (!string.IsNullOrEmpty(prefabFileName))
