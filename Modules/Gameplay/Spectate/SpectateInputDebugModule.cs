@@ -8,13 +8,42 @@ using UnityEngine;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 {
+    [HarmonyPatch(typeof(SpectateCamera), nameof(SpectateCamera.LateUpdate))]
+    internal static class SpectateRawInputDebugPatch
+    {
+        [HarmonyPrefix]
+        private static void Prefix(SpectateCamera __instance)
+        {
+            if (__instance == null || !FeatureFlags.DebugLogging || !DHHFunc.LocalDeathHeadActive())
+                return;
+
+            var next = SemiFunc.InputDown(InputKey.SpectateNext);
+            var previous = SemiFunc.InputDown(InputKey.SpectatePrevious);
+            if (!next && !previous)
+                return;
+
+            Debug.Log(
+                $"[Fix:SpectateDebug] Raw spectate input detected " +
+                $"next={next}, previous={previous}, state={__instance.currentState}, " +
+                $"player={Describe(__instance.player)}");
+        }
+
+        private static string Describe(PlayerAvatar? avatar)
+        {
+            if (avatar == null)
+                return "null";
+
+            return $"{avatar.name}(disabled={avatar.isDisabled},dead={avatar.deadSet})";
+        }
+    }
+
     [HarmonyPatch(typeof(SpectateCamera), nameof(SpectateCamera.StateHead))]
     internal static class SpectateHeadInputDebugPatch
     {
         [HarmonyPrefix]
         private static void Prefix(SpectateCamera __instance)
         {
-            if (!ShouldLog(__instance))
+            if (__instance == null || !ShouldLog(__instance))
                 return;
 
             var next = SemiFunc.InputDown(InputKey.SpectateNext);
@@ -50,9 +79,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
     internal static class SpectatePlayerSwitchDebugPatch
     {
         [HarmonyPrefix]
-        private static void Prefix(SpectateCamera __instance, bool _next)
+        private static void Prefix(SpectateCamera __instance, bool _next, out PlayerAvatar? __state)
         {
-            if (!ShouldLog(__instance))
+            __state = __instance?.player;
+            if (__instance == null || !ShouldLog(__instance))
                 return;
 
             Debug.Log(
@@ -61,14 +91,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         }
 
         [HarmonyPostfix]
-        private static void Postfix(SpectateCamera __instance, bool _next)
+        private static void Postfix(SpectateCamera __instance, bool _next, PlayerAvatar? __state)
         {
-            if (!ShouldLog(__instance))
+            if (__instance == null || !ShouldLog(__instance))
                 return;
 
+            var target = __instance.player;
+            var activeAlternatives = CountActiveAlternatives(target);
+            var changed = !ReferenceEquals(__state, target);
             Debug.Log(
                 $"[Fix:SpectateDebug] PlayerSwitch exited next={_next}, " +
-                $"state={__instance.currentState}, player={Describe(__instance.player)}");
+                $"state={__instance.currentState}, player={Describe(target)}, " +
+                $"activeAlternatives={activeAlternatives}, " +
+                $"result={(changed ? "target changed successfully" : "target unchanged")}, " +
+                $"reason={(changed ? "none" : GetUnchangedTargetReason(target, activeAlternatives))}");
         }
 
         private static bool ShouldLog(SpectateCamera? spectate)
@@ -84,6 +120,33 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return "null";
 
             return $"{avatar.name}(disabled={avatar.isDisabled},dead={avatar.deadSet})";
+        }
+
+        private static int CountActiveAlternatives(PlayerAvatar? current)
+        {
+            var players = GameDirector.instance?.PlayerList;
+            if (players == null)
+                return 0;
+
+            var count = 0;
+            foreach (var player in players)
+            {
+                if (player != null && !ReferenceEquals(player, current) && !player.isDisabled)
+                    count++;
+            }
+
+            return count;
+        }
+
+        private static string GetUnchangedTargetReason(PlayerAvatar? current, int activeAlternatives)
+        {
+            if (activeAlternatives == 0)
+                return "no active alternative players";
+
+            if (current != null && current.isDisabled)
+                return "active alternatives exist but current disabled target was retained";
+
+            return "target unchanged despite active alternatives";
         }
     }
 }
