@@ -47,7 +47,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return HandleDeadPlayersSpectateSwitch(__instance, playerList, _next);
             }
 
-            return HandleVanillaEquivalentPlayerSwitch(__instance, playerList, _next);
+            // Let DHH's PlayerSwitch transpiler decide which disabled DeathHeads are valid.
+            // The dead-player feature is OFF, so this module must not replace that flow.
+            return true;
         }
 
         private static bool HandleDeadPlayersSpectateSwitch(SpectateCamera spectate, IList<PlayerAvatar> playerList, bool next)
@@ -98,21 +100,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 player != spectate.player &&
                 !player.isDisabled &&
                 player.spectatePoint != null);
-        }
-
-        private static bool HandleVanillaEquivalentPlayerSwitch(SpectateCamera spectate, IList<PlayerAvatar> playerList, bool next)
-        {
-            if (playerList.All(p => p == null || p.isDisabled))
-            {
-                return false;
-            }
-
-            if (TryPlayerSwitch(spectate, playerList, next, includeDisabled: false))
-            {
-                return false;
-            }
-
-            return true;
         }
 
         [HarmonyPatch(typeof(SpectateCamera), "StateNormal")]
