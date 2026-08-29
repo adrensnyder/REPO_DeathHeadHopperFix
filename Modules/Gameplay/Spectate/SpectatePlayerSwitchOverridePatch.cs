@@ -1,5 +1,6 @@
 #nullable enable
 
+using System.Collections.Generic;
 using DeathHeadHopper.Helpers;
 using DeathHeadHopperFix.Modules.Config;
 using HarmonyLib;
@@ -19,13 +20,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return true;
             }
 
-            if (!FeatureFlags.AllowSpectatingDeathHeads)
-            {
-                // Vanilla is sufficient while a living target exists. When all
-                // alternatives are dead, stop the host-only DHH fallback as well.
-                return HasLivingAlternative(__instance) ? true : false;
-            }
-
             var players = GameDirector.instance?.PlayerList;
             if (players == null || players.Count == 0 ||
                 __instance.normalTransformPivot == null || __instance.normalTransformDistance == null)
@@ -34,7 +28,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             }
 
             var current = __instance.player;
-            var index = __instance.currentPlayerListIndex;
+            var index = FindCurrentPlayerIndex(players, current, __instance.currentPlayerListIndex);
             var count = players.Count;
 
             for (var i = 0; i < count; i++)
@@ -82,6 +76,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             return false;
         }
 
+        private static int FindCurrentPlayerIndex(IList<PlayerAvatar> players, PlayerAvatar? current, int fallback)
+        {
+            if (current != null)
+            {
+                for (var i = 0; i < players.Count; i++)
+                {
+                    if (players[i] == current)
+                    {
+                        return i;
+                    }
+                }
+            }
+
+            return fallback >= 0 && fallback < players.Count ? fallback : 0;
+        }
+
         private static bool IsEligibleCandidate(PlayerAvatar? candidate, PlayerAvatar? current)
         {
             if (candidate == null || candidate == current || candidate.spectatePoint == null)
@@ -89,39 +99,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return false;
             }
 
-            if (FeatureFlags.AllowSpectatingDeathHeads)
-            {
-                return true;
-            }
-
             // The local DeathHead must remain reachable so the player can always
             // return to their own spectate target after viewing living players.
-            if (candidate == PlayerAvatar.instance)
+            if (candidate == PlayerAvatar.instance ||
+                (candidate.photonView != null && candidate.photonView.IsMine))
             {
                 return true;
             }
 
-            return !candidate.isDisabled && !candidate.deadSet;
-        }
-
-        private static bool HasLivingAlternative(SpectateCamera spectate)
-        {
-            var players = GameDirector.instance?.PlayerList;
-            if (players == null)
-            {
-                return false;
-            }
-
-            foreach (var player in players)
-            {
-                if (player != null && player != spectate.player &&
-                    !player.isDisabled && !player.deadSet && player.spectatePoint != null)
-                {
-                    return true;
-                }
-            }
-
-            return false;
+            return FeatureFlags.AllowSpectatingDeathHeads ||
+                   (!candidate.isDisabled && !candidate.deadSet);
         }
     }
 }
