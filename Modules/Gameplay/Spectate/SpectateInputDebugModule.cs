@@ -11,10 +11,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
     [HarmonyPatch(typeof(SpectateCamera), nameof(SpectateCamera.LateUpdate))]
     internal static class SpectateRawInputDebugPatch
     {
+        private static SpectateCamera? s_pendingCamera;
+        private static PlayerAvatar? s_pendingPlayer;
+        private static bool s_pendingNext;
+        private static bool s_pendingPrevious;
+        private static int s_pendingFrame = -1;
+
         [HarmonyPrefix]
         private static void Prefix(SpectateCamera __instance)
         {
-            if (__instance == null || !FeatureFlags.DebugLogging || !DHHFunc.LocalDeathHeadActive())
+            ClearPendingInput();
+
+            if (__instance == null || !DHHFunc.LocalDeathHeadActive())
                 return;
 
             var next = SemiFunc.InputDown(InputKey.SpectateNext);
@@ -22,10 +30,62 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             if (!next && !previous)
                 return;
 
-            Debug.Log(
-                $"[Fix:SpectateDebug] Raw spectate input detected " +
-                $"next={next}, previous={previous}, state={__instance.currentState}, " +
-                $"player={Describe(__instance.player)}");
+            s_pendingCamera = __instance;
+            s_pendingPlayer = __instance.player;
+            s_pendingNext = next;
+            s_pendingPrevious = previous;
+            s_pendingFrame = Time.frameCount;
+
+            if (FeatureFlags.DebugLogging)
+            {
+                Debug.Log(
+                    $"[Fix:SpectateDebug] Raw spectate input detected " +
+                    $"next={next}, previous={previous}, state={__instance.currentState}, " +
+                    $"player={Describe(__instance.player)}");
+            }
+        }
+
+        [HarmonyPostfix]
+        private static void Postfix(SpectateCamera __instance)
+        {
+            if (__instance == null || s_pendingCamera != __instance || s_pendingFrame != Time.frameCount)
+                return;
+
+            var originalPlayer = s_pendingPlayer;
+            var next = s_pendingNext;
+            var previous = s_pendingPrevious;
+            ClearPendingInput();
+
+            if (__instance.currentState != SpectateCamera.State.Normal ||
+                MenuManager.instance?.currentMenuPage != null ||
+                !ReferenceEquals(__instance.player, originalPlayer))
+            {
+                return;
+            }
+
+            // Vanilla normally switches inside StateNormal. Retry after LateUpdate only
+            // when that call did not change the target; this removes the dependency on
+            // Debug.Log timing while preserving vanilla's successful switch.
+            if (next)
+                __instance.PlayerSwitch(true);
+            else if (previous)
+                __instance.PlayerSwitch(false);
+
+            if (FeatureFlags.DebugLogging)
+            {
+                Debug.Log(
+                    $"[Fix:SpectateDebug] Deferred PlayerSwitch executed next={next}, " +
+                    $"previous={previous}, player={Describe(__instance.player)}");
+            }
+        }
+
+        private static void ClearPendingInput()
+        {
+            s_pendingCamera = null;
+            s_pendingPlayer = null;
+            s_pendingNext = false;
+            s_pendingPrevious = false;
+            s_pendingFrame = -1;
         }
 
         private static string Describe(PlayerAvatar? avatar)

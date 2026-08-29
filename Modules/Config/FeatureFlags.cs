@@ -11,6 +11,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string ChargeVanilla = "5. Charge (DHH)";
             public const string Shop = "6. Shop";
             public const string Debug = "7. Debug";
+            public const string Camera = "8. Camera";
             
         }
 
@@ -56,6 +57,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string DHHHopMoveDelay = "Delay before the original horizontal hop impulse in seconds.";
             public const string HeadChargerShopPoolMode = "Controls how Item DHH Head Charge enters the vanilla shop item pool. Disabled = never eligible, Default = use vanilla shop stands with balanced copy count, Reduced = minimum shop presence.";
             public const string DHHUpgradesShopPoolMode = "Controls how Item Upgrade DHH Charge and Item Upgrade DHH Power enter the vanilla shop upgrade pool. Disabled = never eligible, Default = use vanilla upgrade stands with balanced copy count, Reduced = minimum shop presence.";
+            public const string AllowSpectatingDeathHeads = "When enabled, DeathHeadHopper spectate can switch to dead DeathHeads. When disabled, spectate only uses living players.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
         }
 
@@ -185,6 +187,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.Shop, Descriptions.DHHUpgradesShopPoolMode, Options = new[] { ShopPoolModes.Disabled, ShopPoolModes.Default, ShopPoolModes.Reduced })]
         public static string DHHUpgradesShopPoolMode = ShopPoolModes.Default;
+
+        [FeatureConfigEntry(Sections.Camera, Descriptions.AllowSpectatingDeathHeads)]
+        public static bool AllowSpectatingDeathHeads = true;
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = false;
