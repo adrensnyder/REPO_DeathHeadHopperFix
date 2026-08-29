@@ -72,9 +72,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                 return;
             }
 
-            // StateNormal can run before this LateUpdate and miss the edge while
-            // DHH owns the same jump input. Retry the captured edge once, after
-            // vanilla has finished its camera update for the frame.
+            // StateNormal can run before this LateUpdate and miss the spectate
+            // edge. Retry it once after vanilla has finished its camera update.
             if (next)
                 __instance.PlayerSwitch(true);
             else if (previous)

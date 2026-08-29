@@ -32,9 +32,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
             if (SemiFunc.InputMovementX() != 0f || SemiFunc.InputMovementY() != 0f)
             {
-                var spectate = SpectateCamera.instance;
-                if (spectate != null && (spectate.player == null || spectate.player == avatar))
-                    spectate.player = avatar;
+                if (SpectateCamera.instance != null)
+                    SpectateCamera.instance.player = avatar;
             }
 
         }
