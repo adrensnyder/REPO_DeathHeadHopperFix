@@ -11,9 +11,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
     [HarmonyPatch(typeof(SpectateCamera), nameof(SpectateCamera.LateUpdate))]
     internal static class SpectateRawInputDebugPatch
     {
+        private static SpectateCamera? s_pendingCamera;
+        private static PlayerAvatar? s_pendingPlayer;
+        private static bool s_pendingNext;
+        private static bool s_pendingPrevious;
+        private static int s_pendingFrame = -1;
+
         [HarmonyPrefix]
         private static void Prefix(SpectateCamera __instance)
         {
+            ClearPendingInput();
+
             if (__instance == null || !DHHFunc.LocalDeathHeadActive())
                 return;
 
@@ -21,6 +29,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             var previous = SemiFunc.InputDown(InputKey.SpectatePrevious);
             if (!next && !previous)
                 return;
+
+            s_pendingCamera = __instance;
+            s_pendingPlayer = __instance.player;
+            s_pendingNext = next;
+            s_pendingPrevious = previous;
+            s_pendingFrame = Time.frameCount;
 
             if (FeatureFlags.DebugLogging)
             {
@@ -38,6 +52,49 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
             var viewId = avatar.photonView != null ? avatar.photonView.ViewID.ToString() : "local";
             return $"{avatar.name}(id={avatar.GetInstanceID()},view={viewId},disabled={avatar.isDisabled},dead={avatar.deadSet})";
+        }
+
+        [HarmonyPostfix]
+        private static void Postfix(SpectateCamera __instance)
+        {
+            if (__instance == null || s_pendingCamera != __instance || s_pendingFrame != Time.frameCount)
+                return;
+
+            var originalPlayer = s_pendingPlayer;
+            var next = s_pendingNext;
+            var previous = s_pendingPrevious;
+            ClearPendingInput();
+
+            if (__instance.currentState != SpectateCamera.State.Normal ||
+                MenuManager.instance?.currentMenuPage != null ||
+                !ReferenceEquals(__instance.player, originalPlayer))
+            {
+                return;
+            }
+
+            // StateNormal can run before this LateUpdate and miss the edge while
+            // DHH owns the same jump input. Retry the captured edge once, after
+            // vanilla has finished its camera update for the frame.
+            if (next)
+                __instance.PlayerSwitch(true);
+            else if (previous)
+                __instance.PlayerSwitch(false);
+
+            if (FeatureFlags.DebugLogging)
+            {
+                Debug.Log(
+                    $"[Fix:SpectateDebug] Deferred PlayerSwitch executed next={next}, " +
+                    $"previous={previous}, player={Describe(__instance.player)}");
+            }
+        }
+
+        private static void ClearPendingInput()
+        {
+            s_pendingCamera = null;
+            s_pendingPlayer = null;
+            s_pendingNext = false;
+            s_pendingPrevious = false;
+            s_pendingFrame = -1;
         }
     }
 
