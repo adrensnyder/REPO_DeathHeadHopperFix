@@ -40,14 +40,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                     continue;
                 }
 
-                // A stale local/remote avatar reference can make the list entry
-                // look different even though it represents the current target.
-                // Stop before changing any camera state in that case.
-                if (IsSamePlayer(candidate, current))
-                {
-                    continue;
-                }
-
                 __instance.playerOverride = null;
                 __instance.currentPlayerListIndex = index;
                 __instance.player = candidate;
@@ -90,7 +82,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
             {
                 for (var i = 0; i < players.Count; i++)
                 {
-                    if (IsSamePlayer(players[i], current))
+                    if (players[i] == current)
                     {
                         return i;
                     }
@@ -102,7 +94,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
 
         private static bool IsEligibleCandidate(PlayerAvatar? candidate, PlayerAvatar? current)
         {
-            if (candidate == null || candidate.spectatePoint == null)
+            if (candidate == null || candidate == current || candidate.spectatePoint == null)
             {
                 return false;
             }
@@ -119,18 +111,5 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
                    (!candidate.isDisabled && !candidate.deadSet);
         }
 
-        private static bool IsSamePlayer(PlayerAvatar? first, PlayerAvatar? second)
-        {
-            if (first == null || second == null)
-                return false;
-
-            if (ReferenceEquals(first, second))
-                return true;
-
-            var firstView = first.photonView;
-            var secondView = second.photonView;
-            return firstView != null && secondView != null &&
-                   firstView.ViewID != 0 && firstView.ViewID == secondView.ViewID;
-        }
     }
 }
