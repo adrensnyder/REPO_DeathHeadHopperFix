@@ -38,11 +38,15 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
+            var migrationDefinition = new ConfigDefinition("Internal", "NativeJumpDefaultsMigrationVersion");
+            var migrationMarkerAlreadyExists = config.ContainsKey(migrationDefinition);
             var migrationMarker = config.Bind(
                 "Internal",
                 "NativeJumpDefaultsMigrationVersion",
-                0,
-                "Internal migration marker; not a gameplay setting.");
+                1,
+                new ConfigDescription(
+                    "Set to 1 to migrate legacy native DHH jump defaults once; it resets to 0 automatically after completion.",
+                    new AcceptableValueRange<int>(0, 1)));
             var lines = File.ReadAllLines(config.ConfigFilePath);
             if (lines.Length == 0)
             {
@@ -96,7 +100,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             if (orphanedLineIndexes.Count == 0)
             {
-                ApplyNativeJumpDefaultMigration(config, migrationMarker, log);
+                ApplyNativeJumpDefaultMigration(config, migrationMarker, migrationMarkerAlreadyExists, log);
                 return;
             }
 
@@ -111,13 +115,23 @@ namespace DeathHeadHopperFix.Modules.Config
 
             File.WriteAllLines(config.ConfigFilePath, cleanedLines.ToArray());
             config.Reload();
-            ApplyNativeJumpDefaultMigration(config, migrationMarker, log);
+            ApplyNativeJumpDefaultMigration(config, migrationMarker, migrationMarkerAlreadyExists, log);
         }
 
-        private static void ApplyNativeJumpDefaultMigration(ConfigFile config, ConfigEntry<int> migrationMarker, ManualLogSource? log)
+        private static void ApplyNativeJumpDefaultMigration(
+            ConfigFile config,
+            ConfigEntry<int> migrationMarker,
+            bool migrationMarkerAlreadyExists,
+            ManualLogSource? log)
         {
-            if (migrationMarker.Value >= 1)
+            if (migrationMarker.Value == 0 || migrationMarkerAlreadyExists)
             {
+                if (migrationMarkerAlreadyExists && migrationMarker.Value != 0)
+                {
+                    migrationMarker.Value = 0;
+                    config.Save();
+                }
+
                 return;
             }
 
@@ -128,7 +142,7 @@ namespace DeathHeadHopperFix.Modules.Config
             MigrateExact(config, section, "DHHHopJumpBaseValue", "2", "3", migrated);
             MigrateExact(config, section, "DHHHopJumpIncreasePerLevel", "0.25", "0.11", migrated);
 
-            migrationMarker.Value = 1;
+            migrationMarker.Value = 0;
             config.Save();
 
             if (migrated.Count > 0)
