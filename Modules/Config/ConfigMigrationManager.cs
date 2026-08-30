@@ -12,6 +12,10 @@ namespace DeathHeadHopperFix.Modules.Config
 {
     internal static class ConfigMigrationManager
     {
+        private const string MigrationSection = "Internal";
+        private const string MigrationKey = "NativeJumpDefaultsMigrationVersion";
+        private const string MigrationVersion = "2.6";
+
         private readonly struct FileEntry
         {
             public FileEntry(int lineIndex, string section, string key, string value)
@@ -38,30 +42,29 @@ namespace DeathHeadHopperFix.Modules.Config
                 return;
             }
 
-            var migrationDefinition = new ConfigDefinition("Internal", "NativeJumpDefaultsMigrationVersion");
-            var migrationMarkerAlreadyExists = config.ContainsKey(migrationDefinition);
-            var migrationMarker = config.Bind(
-                "Internal",
-                "NativeJumpDefaultsMigrationVersion",
-                1,
-                new ConfigDescription(
-                    "Set to 1 to migrate legacy native DHH jump defaults once; it resets to 0 automatically after completion.",
-                    new AcceptableValueRange<int>(0, 1)));
             var lines = File.ReadAllLines(config.ConfigFilePath);
+            var migrationAlreadyApplied = false;
             if (lines.Length == 0)
             {
+                ApplyNativeJumpDefaultMigration(config, migrationAlreadyApplied, log);
                 return;
             }
 
             var entries = ParseEntries(lines);
+            migrationAlreadyApplied = entries.Exists(entry =>
+                string.Equals(entry.Section, MigrationSection, StringComparison.Ordinal) &&
+                string.Equals(entry.Key, MigrationKey, StringComparison.Ordinal) &&
+                string.Equals(entry.Value, MigrationVersion, StringComparison.Ordinal));
             if (entries.Count == 0)
             {
+                ApplyNativeJumpDefaultMigration(config, migrationAlreadyApplied, log);
                 return;
             }
 
             var activeDefinitions = new HashSet<ConfigDefinition>(config.Keys);
             if (activeDefinitions.Count == 0)
             {
+                ApplyNativeJumpDefaultMigration(config, migrationAlreadyApplied, log);
                 return;
             }
 
@@ -100,7 +103,7 @@ namespace DeathHeadHopperFix.Modules.Config
 
             if (orphanedLineIndexes.Count == 0)
             {
-                ApplyNativeJumpDefaultMigration(config, migrationMarker, migrationMarkerAlreadyExists, log);
+                ApplyNativeJumpDefaultMigration(config, migrationAlreadyApplied, log);
                 return;
             }
 
@@ -115,23 +118,16 @@ namespace DeathHeadHopperFix.Modules.Config
 
             File.WriteAllLines(config.ConfigFilePath, cleanedLines.ToArray());
             config.Reload();
-            ApplyNativeJumpDefaultMigration(config, migrationMarker, migrationMarkerAlreadyExists, log);
+            ApplyNativeJumpDefaultMigration(config, migrationAlreadyApplied, log);
         }
 
         private static void ApplyNativeJumpDefaultMigration(
             ConfigFile config,
-            ConfigEntry<int> migrationMarker,
-            bool migrationMarkerAlreadyExists,
+            bool migrationAlreadyApplied,
             ManualLogSource? log)
         {
-            if (migrationMarker.Value == 0 || migrationMarkerAlreadyExists)
+            if (migrationAlreadyApplied)
             {
-                if (migrationMarkerAlreadyExists && migrationMarker.Value != 0)
-                {
-                    migrationMarker.Value = 0;
-                    config.Save();
-                }
-
                 return;
             }
 
@@ -142,7 +138,8 @@ namespace DeathHeadHopperFix.Modules.Config
             MigrateExact(config, section, "DHHHopJumpBaseValue", "2", "3", migrated);
             MigrateExact(config, section, "DHHHopJumpIncreasePerLevel", "0.25", "0.11", migrated);
 
-            migrationMarker.Value = 0;
+            var migrationEntry = config[new ConfigDefinition(MigrationSection, MigrationKey)];
+            migrationEntry?.SetSerializedValue(MigrationVersion);
             config.Save();
 
             if (migrated.Count > 0)

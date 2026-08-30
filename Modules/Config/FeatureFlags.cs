@@ -57,6 +57,7 @@ namespace DeathHeadHopperFix.Modules.Config
             public const string HeadChargerShopPoolMode = "Controls how Item DHH Head Charge enters the vanilla shop item pool. Disabled = never eligible, Default = use vanilla shop stands with balanced copy count, Reduced = minimum shop presence.";
             public const string DHHUpgradesShopPoolMode = "Controls how Item Upgrade DHH Charge and Item Upgrade DHH Power enter the vanilla shop upgrade pool. Disabled = never eligible, Default = use vanilla upgrade stands with balanced copy count, Reduced = minimum shop presence.";
             public const string DebugLogging = "Dump extra log lines that help trace the battery/ability logic.";
+            public const string NativeJumpDefaultsMigrationVersion = "Internal migration state. This is read-only and is not a gameplay setting.";
         }
 
         internal static class ShopPoolModes
@@ -188,6 +189,9 @@ namespace DeathHeadHopperFix.Modules.Config
 
         [FeatureConfigEntry(Sections.Debug, Descriptions.DebugLogging, HostControlled = false)]
         public static bool DebugLogging = false;
+
+        [FeatureConfigEntry("Internal", Descriptions.NativeJumpDefaultsMigrationVersion, HostControlled = false, Options = new[] { "2.6" })]
+        public static string NativeJumpDefaultsMigrationVersion = "2.6";
 
 
     }
