@@ -202,6 +202,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Audio
                 if (sound == null)
                     return;
 
+                // The original method reuses the windup clip during Charging as well.
+                // ChargeHoldRelease owns the launch phase, so the windup loop must end
+                // when the held charge is released instead of following a stalled head.
+                if (handler?.controller?.chargeHandler?.State == ChargeHandler.ChargeState.Charging)
+                {
+                    StopWindupLoopSafe(handler);
+                    return;
+                }
+
                 sound.PlayLoop(true, 3f, 3f, pitch, 1f);
             }
             catch (Exception ex)

@@ -23,6 +23,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private const string ChargePermissiveFallbackLogKey = "Fix:Charge.PermissiveFallback";
         private const float RemoteReleaseCommandTag = -777f;
         private const float RemoteCancelCommandTag = -778f;
+        private const float ChargeRestStopSeconds = 0.35f;
+        private const float ChargeFailsafeSeconds = 10f;
+        private const float ChargeRestVelocitySqrThreshold = 0.01f;
+        private const float ChargeRestAngularVelocitySqrThreshold = 0.04f;
 
         private static ManualLogSource? s_log;
         private static readonly Dictionary<int, ChargeHoldState> s_chargeHoldStates = new();
@@ -35,6 +39,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             public float StartTime;
             public bool IsHolding;
             public float LaunchScale = 1f;
+            public float ChargingStartTime;
+            public float RestingTime;
         }
 
         internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
@@ -137,6 +143,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             if (id == 0)
                 return;
 
+            if (SemiFunc.IsMasterClientOrSingleplayer() && IsChargeState(__instance, "Charging"))
+            {
+                if (!TryStopStalledCharge(__instance, id))
+                    TryStopAtBounceLimit(__instance);
+
+                return;
+            }
+
             if (!IsLocalChargeHandler(__instance))
             {
                 if (!s_chargeHoldStates.TryGetValue(id, out var remoteState))
@@ -226,6 +240,46 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
                 return;
 
             __instance.windupTimer = Mathf.Max(0.01f, __instance.windupTime);
+        }
+
+        private static bool TryStopStalledCharge(ChargeHandler chargeHandler, int id)
+        {
+            var state = GetOrCreateChargeHoldState(id);
+            if (state.ChargingStartTime <= 0f)
+                state.ChargingStartTime = Time.time;
+
+            var controller = chargeHandler.controller;
+            var rigidbody = chargeHandler.rb;
+            var isResting = controller?.collisionHandler?.isColliding == true &&
+                            rigidbody != null &&
+                            rigidbody.velocity.sqrMagnitude <= ChargeRestVelocitySqrThreshold &&
+                            rigidbody.angularVelocity.sqrMagnitude <= ChargeRestAngularVelocitySqrThreshold;
+
+            state.RestingTime = isResting
+                ? state.RestingTime + Time.fixedDeltaTime
+                : 0f;
+
+            var reachedRestStop = state.RestingTime >= ChargeRestStopSeconds;
+            var reachedFailsafe = Time.time - state.ChargingStartTime >= ChargeFailsafeSeconds;
+            if (!reachedRestStop && !reachedFailsafe)
+                return false;
+
+            chargeHandler.EndCharge();
+
+            if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHCharge.StalledStop", 30))
+            {
+                var reason = reachedRestStop ? "stable-rest" : "failsafe-timeout";
+                s_log?.LogDebug($"[Fix:DHHCharge] Ended authoritative Charging state ({reason}).");
+            }
+
+            return true;
+        }
+
+        private static void TryStopAtBounceLimit(ChargeHandler chargeHandler)
+        {
+            var maxBounces = Mathf.Max(0, Mathf.CeilToInt(chargeHandler.maxBounces));
+            if (maxBounces > 0 && chargeHandler.bounceColliders.Count >= maxBounces)
+                chargeHandler.EndCharge();
         }
 
         private static void PatchChargeAbilityHoldReleaseIfPossible(Harmony harmony, Assembly asm)
