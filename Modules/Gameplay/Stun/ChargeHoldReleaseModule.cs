@@ -267,6 +267,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         {
             StopChargeWindupLoop(__instance);
             ClearChargeHoldState(__instance);
+            SynchronizeFinalChargeState(__instance);
         }
 
         private static void ChargeHandler_SyncChargeStateRPC_Prefix(ChargeHandler __instance, ChargeHandler.ChargeState state)
@@ -753,6 +754,42 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         {
             StopChargeWindupLoop(__instance);
             ClearChargeHoldState(__instance);
+            SynchronizeFinalChargeState(__instance);
+        }
+
+        private static void SynchronizeFinalChargeState(ChargeHandler? chargeHandler)
+        {
+            if (chargeHandler == null ||
+                chargeHandler.State != ChargeHandler.ChargeState.None ||
+                chargeHandler.previousState == ChargeHandler.ChargeState.None ||
+                !SemiFunc.IsMultiplayer() ||
+                !SemiFunc.IsMasterClient())
+            {
+                return;
+            }
+
+            try
+            {
+                var photonView = chargeHandler.controller?.photonView;
+                if (photonView == null || photonView.ViewID <= 0)
+                    return;
+
+                photonView.RPC(
+                    nameof(ChargeHandler.SyncChargeStateRPC),
+                    RpcTarget.Others,
+                    new object[] { ChargeHandler.ChargeState.None });
+                chargeHandler.previousState = ChargeHandler.ChargeState.None;
+
+                if (FeatureFlags.DebugLogging)
+                    s_log?.LogDebug($"[Fix:DHHChargeAudio] Synchronized final Charge state immediately for view {photonView.ViewID}.");
+            }
+            catch (Exception ex)
+            {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHChargeAudio.FinalStateSync", 30))
+                {
+                    s_log?.LogDebug($"[Fix:DHHChargeAudio] Immediate final-state sync failed: {ex.GetType().Name}; native Update sync remains available.");
+                }
+            }
         }
 
         private static void StopChargeWindupLoop(ChargeHandler? chargeHandler)

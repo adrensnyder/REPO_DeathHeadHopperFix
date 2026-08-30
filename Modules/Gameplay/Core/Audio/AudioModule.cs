@@ -42,6 +42,19 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Audio
             {
                 harmony.Patch(mChargeEffectsUpdate, transpiler: new HarmonyMethod(chargeEffectsUpdateTranspiler));
             }
+
+            var chargeEffectsUpdatePostfix = typeof(AudioModule).GetMethod(nameof(ChargeEffects_Update_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (mChargeEffectsUpdate != null && chargeEffectsUpdatePostfix != null)
+            {
+                harmony.Patch(mChargeEffectsUpdate, postfix: new HarmonyMethod(chargeEffectsUpdatePostfix));
+            }
+
+            var stateSetter = AccessTools.PropertySetter(typeof(ChargeHandler), nameof(ChargeHandler.State));
+            var stateSetterPostfix = typeof(AudioModule).GetMethod(nameof(ChargeHandler_State_Setter_Postfix), BindingFlags.Static | BindingFlags.NonPublic);
+            if (stateSetter != null && stateSetterPostfix != null)
+            {
+                harmony.Patch(stateSetter, postfix: new HarmonyMethod(stateSetterPostfix));
+            }
         }
 
         private static bool AudioHandler_Awake_Prefix(AudioHandler __instance)
@@ -194,6 +207,48 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Audio
             catch (Exception ex)
             {
                 _log?.LogWarning($"[Fix] Failed to play DHH windup sound via compatibility prefix: {ex.Message}");
+            }
+        }
+
+        private static void ChargeHandler_State_Setter_Postfix(ChargeHandler __instance, ChargeHandler.ChargeState __0)
+        {
+            if (__instance == null || __0 != ChargeHandler.ChargeState.None)
+                return;
+
+            StopWindupLoopSafe(__instance.controller?.audioHandler);
+        }
+
+        private static void ChargeEffects_Update_Postfix(ChargeEffects __instance)
+        {
+            var chargeHandler = __instance != null ? __instance.chargeHandler : null;
+            if (chargeHandler == null || chargeHandler.State != ChargeHandler.ChargeState.None)
+                return;
+
+            StopWindupLoopSafe(chargeHandler.controller?.audioHandler);
+        }
+
+        private static void StopWindupLoopSafe(AudioHandler? handler)
+        {
+            try
+            {
+                var sound = handler?.windupSound;
+                var source = sound?.Source;
+                if (sound == null || source == null || !source.isPlaying)
+                    return;
+
+                source.loop = false;
+                source.Stop();
+                sound.LoopVolumeCurrent = 0f;
+                sound.LoopVolumeFinal = 0f;
+                sound.prevLoopTime = 0f;
+
+                if (FeatureFlags.DebugLogging)
+                    _log?.LogDebug("[Fix:DHHChargeAudio] Stopped a residual Charge loop while state was None.");
+            }
+            catch (Exception ex)
+            {
+                if (FeatureFlags.DebugLogging)
+                    _log?.LogDebug($"[Fix:DHHChargeAudio] Residual loop cleanup failed: {ex.GetType().Name}.");
             }
         }
 
