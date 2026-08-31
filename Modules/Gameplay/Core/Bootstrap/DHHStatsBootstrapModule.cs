@@ -6,8 +6,10 @@ using BepInEx.Logging;
 using DeathHeadHopper.Managers;
 using DeathHeadHopperFix.Modules.Config;
 using DeathHeadHopperFix.Modules.Gameplay.Core.Abilities;
+using DeathHeadHopperFix.Modules.Gameplay.Core.Interop;
+using ExitGames.Client.Photon;
 using HarmonyLib;
-using REPOLib.Modules;
+using Photon.Pun;
 
 namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
 {
@@ -18,9 +20,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
 
         private static ManualLogSource? _log;
 
+        private readonly struct DhhUpdatePatchState
+        {
+            internal DhhUpdatePatchState(int previousLevel, bool managedRepolibTransition)
+            {
+                PreviousLevel = previousLevel;
+                ManagedRepolibTransition = managedRepolibTransition;
+            }
+
+            internal int PreviousLevel { get; }
+            internal bool ManagedRepolibTransition { get; }
+        }
+
         internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
         {
             _log = log;
+            DhhRepolibUpgradeBridge.Initialize(log);
 
             PatchDhhStatsManagerAwakeIfPossible(harmony);
             PatchDhhStatsManagerUpgradeMethodsIfPossible(harmony);
@@ -61,8 +76,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         private static void DHHStatsManager_Awake_Postfix(DHHStatsManager __instance)
         {
             EnsureDhhUpgradeDictionaries();
-            EnsureRepolibUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries("DHHStatsManager.Awake");
             EnsureDhhStatsManagerDisabled();
+            DhhRepolibUpgradeBridge.VerifyDictionaryInvariant("DHHStatsManager.Awake");
 
             if (__instance != null)
                 __instance.enabled = false;
@@ -125,35 +141,89 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             }
         }
 
-        private static bool DHHStatsManager_Upgrade_Prefix(DHHStatsManager __instance, string playerId)
+        private static bool DHHStatsManager_Upgrade_Prefix(DHHStatsManager __instance, string playerId, MethodBase __originalMethod)
         {
+            // Original DHH indexes both dictionaries directly. Keep zero seeding so unknown legacy callers
+            // cannot turn a still-supported public UpgradeHead* entry point into a KeyNotFoundException.
             EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: false);
             EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: true);
+
+            var entry = __originalMethod?.Name ?? "<unknown>";
+            var isChargeUpgrade = string.Equals(entry, nameof(DHHStatsManager.UpgradeHeadCharge), StringComparison.Ordinal);
+            var upgradeId = isChargeUpgrade
+                ? DhhRepolibUpgradeBridge.HeadChargeUpgradeId
+                : DhhRepolibUpgradeBridge.HeadPowerUpgradeId;
+            var dictionary = isChargeUpgrade
+                ? __instance?.playerUpgradeHeadCharge
+                : __instance?.playerUpgradeHeadPower;
+            var currentLevel = 0;
+            dictionary?.TryGetValue(playerId, out currentLevel);
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"legacy-upgrade entry={entry} upgrade={upgradeId} target={playerId} " +
+                $"currentLevel={currentLevel} role={DhhRepolibUpgradeBridge.GetRuntimeRole()} " +
+                "classification=residual-dhh-or-external decision=allow-compatible");
             return true;
         }
 
-        private static bool DHHStatsManager_UpdateHeadChargeStat_Prefix(DHHStatsManager __instance, string playerId, ref int __state)
+        private static bool DHHStatsManager_UpdateHeadChargeStat_Prefix(
+            DHHStatsManager __instance,
+            string playerId,
+            int value,
+            ref DhhUpdatePatchState __state)
         {
             EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: true);
-            __instance.playerUpgradeHeadCharge.TryGetValue(playerId, out __state);
+            __instance.playerUpgradeHeadCharge.TryGetValue(playerId, out var previousLevel);
+
+            var managed = DhhRepolibUpgradeBridge.IsManagedCompatibilityUpdate(
+                DhhRepolibUpgradeBridge.UpgradeKind.HeadCharge,
+                playerId,
+                value);
+            __state = new DhhUpdatePatchState(previousLevel, managed);
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"compat-update upgrade={DhhRepolibUpgradeBridge.HeadChargeUpgradeId} target={playerId} " +
+                $"oldSnapshot={previousLevel} new={value} source={(managed ? "managed-repolib" : "legacy-or-external")}");
             return true;
         }
 
-        private static void DHHStatsManager_UpdateHeadChargeStat_Postfix(string playerId, int value, int __state)
+        private static void DHHStatsManager_UpdateHeadChargeStat_Postfix(
+            string playerId,
+            int value,
+            DhhUpdatePatchState __state)
         {
-            DhhUpgradeOrchestrator.PlayAuthorizedLocalFeedback(playerId, value, __state);
+            if (!__state.ManagedRepolibTransition)
+                DhhUpgradeOrchestrator.PlayAuthorizedLocalFeedback(playerId, value, __state.PreviousLevel);
         }
 
-        private static bool DHHStatsManager_UpdateHeadPowerStat_Prefix(DHHStatsManager __instance, string playerId, ref int __state)
+        private static bool DHHStatsManager_UpdateHeadPowerStat_Prefix(
+            DHHStatsManager __instance,
+            string playerId,
+            int value,
+            ref DhhUpdatePatchState __state)
         {
             EnsureDhhPlayerUpgradeKey(__instance, playerId, isChargeUpgrade: false);
-            __instance.playerUpgradeHeadPower.TryGetValue(playerId, out __state);
+            __instance.playerUpgradeHeadPower.TryGetValue(playerId, out var previousLevel);
+
+            var managed = DhhRepolibUpgradeBridge.IsManagedCompatibilityUpdate(
+                DhhRepolibUpgradeBridge.UpgradeKind.HeadPower,
+                playerId,
+                value);
+            __state = new DhhUpdatePatchState(previousLevel, managed);
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"compat-update upgrade={DhhRepolibUpgradeBridge.HeadPowerUpgradeId} target={playerId} " +
+                $"oldSnapshot={previousLevel} new={value} source={(managed ? "managed-repolib" : "legacy-or-external")}");
             return true;
         }
 
-        private static void DHHStatsManager_UpdateHeadPowerStat_Postfix(string playerId, int value, int __state)
+        private static void DHHStatsManager_UpdateHeadPowerStat_Postfix(
+            string playerId,
+            int value,
+            DhhUpdatePatchState __state)
         {
-            DhhUpgradeOrchestrator.PlayAuthorizedLocalFeedback(playerId, value, __state);
+            if (!__state.ManagedRepolibTransition)
+                DhhUpgradeOrchestrator.PlayAuthorizedLocalFeedback(playerId, value, __state.PreviousLevel);
         }
 
         private static void PatchStatsManagerAwakeIfPossible(Harmony harmony)
@@ -176,8 +246,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         {
             EnsureDhhStatsLabels();
             EnsureDhhUpgradeDictionaries();
-            EnsureRepolibUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries("StatsManager.Awake");
             EnsureDhhStatsManagerDisabled();
+            DhhRepolibUpgradeBridge.VerifyDictionaryInvariant("StatsManager.Awake");
         }
 
         private static void PatchStatsManagerLoadGameIfPossible(Harmony harmony)
@@ -201,16 +272,18 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         {
             EnsureDhhStatsLabels();
             EnsureDhhUpgradeDictionaries();
-            EnsureRepolibUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries("StatsManager.LoadGame.Prefix");
             EnsureDhhStatsManagerDisabled();
+            DhhRepolibUpgradeBridge.VerifyDictionaryInvariant("StatsManager.LoadGame.Prefix");
         }
 
         private static void StatsManager_LoadGame_Postfix()
         {
             EnsureDhhStatsLabels();
             EnsureDhhUpgradeDictionaries();
-            EnsureRepolibUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries("StatsManager.LoadGame.Postfix");
             EnsureDhhStatsManagerDisabled();
+            DhhRepolibUpgradeBridge.VerifyDictionaryInvariant("StatsManager.LoadGame.Postfix");
 
             try
             {
@@ -219,6 +292,96 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             catch (Exception ex)
             {
                 _log?.LogWarning($"[Fix:Stats] Failed to refresh DHH abilities after load: {ex.Message}");
+            }
+        }
+
+        internal static void PrepareForFullDictionarySync(string context)
+        {
+            var dictionariesBefore = StatsManager.instance?.dictionaryOfDictionaries;
+            var headChargeKeyPresentBefore = dictionariesBefore?.ContainsKey(HeadChargeKey) == true;
+            var headPowerKeyPresentBefore = dictionariesBefore?.ContainsKey(HeadPowerKey) == true;
+
+            try
+            {
+                DhhRepolibUpgradeBridge.VerifyDictionaryInvariant($"{context}.PreBind", warnOnMismatch: false);
+                DhhRepolibUpgradeBridge.DebugLog(
+                    $"full-sync context={context} stage=pre-bind " +
+                    $"headChargeKeyPresent={headChargeKeyPresentBefore} " +
+                    $"headPowerKeyPresent={headPowerKeyPresentBefore}");
+            }
+            catch (Exception ex)
+            {
+                DhhRepolibUpgradeBridge.LogWarning(
+                    $"Full-sync pre-bind diagnostics failed for context={context}: {ex.Message}. Binding will continue.");
+            }
+
+            EnsureDhhStatsLabels();
+            EnsureDhhUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries(context);
+            EnsureDhhStatsManagerDisabled();
+
+            var dictionariesAfter = StatsManager.instance?.dictionaryOfDictionaries;
+            try
+            {
+                DhhRepolibUpgradeBridge.VerifyDictionaryInvariant($"{context}.PostBind");
+                DhhRepolibUpgradeBridge.DebugLog(
+                    $"full-sync context={context} stage=post-bind " +
+                    $"headChargeKeyPresent={dictionariesAfter?.ContainsKey(HeadChargeKey) == true} " +
+                    $"headPowerKeyPresent={dictionariesAfter?.ContainsKey(HeadPowerKey) == true}");
+            }
+            catch (Exception ex)
+            {
+                DhhRepolibUpgradeBridge.LogWarning(
+                    $"Full-sync post-bind diagnostics failed for context={context}: {ex.Message}. Binding was preserved.");
+            }
+        }
+
+        internal static void CompleteFullDictionarySyncReceive(Hashtable? data, bool finalChunk)
+        {
+            var containsCharge = data?.ContainsKey(HeadChargeKey) == true;
+            var containsPower = data?.ContainsKey(HeadPowerKey) == true;
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"full-sync context=PunManager.ReceiveSyncData.Postfix stage=received-chunk " +
+                $"containsHeadCharge={containsCharge} containsHeadPower={containsPower} finalChunk={finalChunk} " +
+                "classification=non-purchase");
+
+            if (!finalChunk)
+                return;
+
+            // ReceiveSyncData mutates existing dictionary instances in place. Re-assert and verify ownership
+            // after the final chunk, but never invoke a REPOLib mutation or DHH Power purchase effect here.
+            EnsureDhhUpgradeDictionaries();
+            EnsureRepolibUpgradeDictionaries("PunManager.ReceiveSyncData.Postfix.Final");
+            EnsureDhhStatsManagerDisabled();
+            DhhRepolibUpgradeBridge.VerifyDictionaryInvariant("PunManager.ReceiveSyncData.Postfix.Final");
+            RefreshChargeAfterNonPurchaseSync();
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                "full-sync context=PunManager.ReceiveSyncData.Postfix.Final stage=complete " +
+                "chargeDecision=refresh-current-state powerDecision=level-only " +
+                "powerPurchaseEffect=skipped itemConsumption=skipped");
+        }
+
+        private static void RefreshChargeAfterNonPurchaseSync()
+        {
+            try
+            {
+                var manager = DHHAbilityManager.instance;
+                if (manager == null)
+                {
+                    DhhRepolibUpgradeBridge.DebugLog(
+                        "full-sync charge-refresh decision=deferred reason=ability-manager-unavailable");
+                    return;
+                }
+
+                manager.EquipAbilities();
+                DhhRepolibUpgradeBridge.DebugLog(
+                    $"full-sync charge-refresh decision=refresh-current-state spotsFetched={manager.spotsFeched}");
+            }
+            catch (Exception ex)
+            {
+                _log?.LogWarning($"[Fix:Stats] Failed to refresh DHH Charge state after full sync: {ex.Message}");
             }
         }
 
@@ -250,26 +413,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
                 _log?.LogInfo("[Fix:Stats] Bound DHH upgrade dictionaries into StatsManager.");
         }
 
-        private static void EnsureRepolibUpgradeDictionaries()
+        private static void EnsureRepolibUpgradeDictionaries(string context)
         {
-            var dhhStats = DHHStatsManager.instance;
-            if (dhhStats == null)
-                return;
-
-            BindRepolibUpgrade("HeadCharge", dhhStats.playerUpgradeHeadCharge, "charge");
-            BindRepolibUpgrade("HeadPower", dhhStats.playerUpgradeHeadPower, "power");
-        }
-
-        private static void BindRepolibUpgrade(string upgradeId, System.Collections.Generic.Dictionary<string, int> dictionary, string label)
-        {
-            var upgrade = Upgrades.GetUpgrade(upgradeId);
-            if (upgrade == null)
-                return;
-
-            upgrade.PlayerDictionary = dictionary;
-
-            if (FeatureFlags.DebugLogging)
-                _log?.LogInfo($"[Fix:Stats] Bound REPOLib upgrade '{upgradeId}' to DHH {label} dictionary.");
+            DhhRepolibUpgradeBridge.BindRegisteredUpgrades(DHHStatsManager.instance, context);
         }
 
         private static void EnsureDhhPlayerUpgradeKey(DHHStatsManager? stats, string playerId, bool isChargeUpgrade)
@@ -301,6 +447,64 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
 
             if (FeatureFlags.DebugLogging)
                 _log?.LogInfo($"[Fix:Stats] Added upgrade label '{key}' -> '{displayName}'.");
+        }
+    }
+
+    [HarmonyPatch(typeof(PunManager), nameof(PunManager.SyncAllDictionaries))]
+    internal static class DhhPunManagerSyncAllDictionariesPatch
+    {
+        [HarmonyPrefix]
+        private static void Prefix()
+        {
+            try
+            {
+                DHHStatsBootstrapModule.PrepareForFullDictionarySync("PunManager.SyncAllDictionaries.Prefix");
+            }
+            catch (Exception ex)
+            {
+                DhhRepolibUpgradeBridge.LogWarning(
+                    $"Full-sync sender binding guard failed: {ex.Message}. The original SyncAllDictionaries call will continue.");
+            }
+        }
+    }
+
+    [HarmonyPatch(
+        typeof(PunManager),
+        nameof(PunManager.ReceiveSyncData),
+        typeof(Hashtable),
+        typeof(bool),
+        typeof(PhotonMessageInfo))]
+    internal static class DhhPunManagerReceiveSyncDataPatch
+    {
+        [HarmonyPrefix]
+        private static void Prefix(Hashtable data, bool finalChunk)
+        {
+            try
+            {
+                DHHStatsBootstrapModule.PrepareForFullDictionarySync(
+                    finalChunk
+                        ? "PunManager.ReceiveSyncData.Prefix.Final"
+                        : "PunManager.ReceiveSyncData.Prefix");
+            }
+            catch (Exception ex)
+            {
+                DhhRepolibUpgradeBridge.LogWarning(
+                    $"Full-sync receiver pre-bind guard failed: {ex.Message}. The original ReceiveSyncData call will continue.");
+            }
+        }
+
+        [HarmonyPostfix]
+        private static void Postfix(Hashtable data, bool finalChunk)
+        {
+            try
+            {
+                DHHStatsBootstrapModule.CompleteFullDictionarySyncReceive(data, finalChunk);
+            }
+            catch (Exception ex)
+            {
+                DhhRepolibUpgradeBridge.LogWarning(
+                    $"Full-sync receiver post-bind guard failed: {ex.Message}. The original ReceiveSyncData result was preserved.");
+            }
         }
     }
 }

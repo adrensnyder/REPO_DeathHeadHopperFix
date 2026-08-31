@@ -547,10 +547,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     return;
 
                 if (hasChargeUpgrade)
-                    RegisterOrBindUpgrade("HeadCharge", itemObj, isChargeUpgrade: true);
+                    RegisterOrBindUpgrade(DhhRepolibUpgradeBridge.HeadChargeUpgradeId, itemObj, isChargeUpgrade: true);
 
                 if (hasPowerUpgrade)
-                    RegisterOrBindUpgrade("HeadPower", itemObj, isChargeUpgrade: false);
+                    RegisterOrBindUpgrade(DhhRepolibUpgradeBridge.HeadPowerUpgradeId, itemObj, isChargeUpgrade: false);
             }
             catch (Exception ex)
             {
@@ -561,21 +561,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         private static void RegisterOrBindUpgrade(string upgradeId, Item itemObj, bool isChargeUpgrade)
         {
-            var upgrade = Upgrades.GetUpgrade(upgradeId);
-            if (upgrade == null)
-            {
-                upgrade = Upgrades.RegisterUpgrade(upgradeId, itemObj, null, null);
-                if (upgrade == null)
-                    return;
-            }
-
-            var dhhStats = DHHStatsManager.instance;
-            if (dhhStats == null)
-                return;
-
-            upgrade.PlayerDictionary = isChargeUpgrade
-                ? dhhStats.playerUpgradeHeadCharge
-                : dhhStats.playerUpgradeHeadPower;
+            DhhRepolibUpgradeBridge.Initialize(_log);
+            DhhRepolibUpgradeBridge.RegisterOrBindUpgrade(upgradeId, itemObj, isChargeUpgrade);
         }
 
         private static bool LooksLikeDhhBundle(AssetBundle bundle)

@@ -236,7 +236,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             };
             var provider = new ProviderRegistrationState(registrationSnapshot, adapter);
             adapter.Initialize(provider);
-            adapter.icon = registration.Icon;
+            adapter.icon = registration.Icon!;
             s_providerByOwner.Add(registration.OwnerId, provider);
             s_providerOwnerBySlot.Add(slotIndex, registration.OwnerId);
             ReconcileProvider(provider);
@@ -253,7 +253,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             var wasInteractive = provider.State.Visible && provider.State.Available;
             state.ActivationProgress01 = Mathf.Clamp01(state.ActivationProgress01);
             provider.State = state;
-            provider.Adapter.icon = state.Icon != null ? state.Icon : provider.Registration.Icon;
+            provider.Adapter.icon = (state.Icon ?? provider.Registration.Icon)!;
 
             if (provider.InputHeld && wasInteractive && (!state.Visible || !state.Available))
             {
