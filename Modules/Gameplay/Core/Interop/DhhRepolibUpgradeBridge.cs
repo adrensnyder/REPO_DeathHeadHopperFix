@@ -35,6 +35,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         [ThreadStatic]
         private static List<ApplyTransitionFrame>? _applyTransitionFrames;
 
+        [ThreadStatic]
+        private static List<PhysicalPurchaseFrame>? _physicalPurchaseFrames;
+
+        private static long _nextCorrelationId;
+
         internal enum UpgradeKind
         {
             HeadCharge,
@@ -43,8 +48,25 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         internal enum TransitionOrigin
         {
-            SetLevel,
+            ExternalSetLevel,
+            PhysicalPurchase,
             DirectApplyUpgrade
+        }
+
+        internal sealed class PhysicalPurchaseFrame
+        {
+            internal PhysicalPurchaseFrame(string correlation, string upgradeId, string steamId, int previousLevel)
+            {
+                Correlation = correlation;
+                UpgradeId = upgradeId;
+                SteamId = steamId;
+                PreviousLevel = previousLevel;
+            }
+
+            internal string Correlation { get; }
+            internal string UpgradeId { get; }
+            internal string SteamId { get; }
+            internal int PreviousLevel { get; }
         }
 
         internal sealed class SetLevelFrame
@@ -60,6 +82,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             internal string SteamId { get; }
             internal int PreviousLevel { get; }
             internal bool ApplyCaptured { get; set; }
+            internal string? PhysicalCorrelation { get; set; }
         }
 
         internal sealed class ApplyTransitionFrame
@@ -70,7 +93,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 string steamId,
                 int previousLevel,
                 int newLevel,
-                TransitionOrigin origin)
+                TransitionOrigin origin,
+                string? physicalCorrelation,
+                bool localTarget)
             {
                 Upgrade = upgrade;
                 Kind = kind;
@@ -78,6 +103,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 PreviousLevel = previousLevel;
                 NewLevel = newLevel;
                 Origin = origin;
+                PhysicalCorrelation = physicalCorrelation;
+                LocalTarget = localTarget;
             }
 
             internal PlayerUpgrade Upgrade { get; }
@@ -86,6 +113,46 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             internal int PreviousLevel { get; }
             internal int NewLevel { get; }
             internal TransitionOrigin Origin { get; }
+            internal string? PhysicalCorrelation { get; }
+            internal bool LocalTarget { get; }
+        }
+
+        internal static string NextCorrelationId()
+        {
+            return System.Threading.Interlocked.Increment(ref _nextCorrelationId).ToString();
+        }
+
+        internal static PhysicalPurchaseFrame? BeginPhysicalPurchase(
+            string correlation,
+            string upgradeId,
+            string steamId,
+            int previousLevel)
+        {
+            if (string.IsNullOrWhiteSpace(correlation) ||
+                string.IsNullOrWhiteSpace(upgradeId) ||
+                string.IsNullOrWhiteSpace(steamId))
+                return null;
+
+            var frame = new PhysicalPurchaseFrame(correlation, upgradeId, steamId, previousLevel);
+            (_physicalPurchaseFrames ??= new List<PhysicalPurchaseFrame>()).Add(frame);
+            DebugLog(
+                $"event=dhh-upgrade stage=mutation-context-enter correlation={correlation} " +
+                $"upgrade={upgradeId} target={steamId} old={previousLevel} " +
+                $"origin=physical-purchase role={GetRuntimeRole()}");
+            return frame;
+        }
+
+        internal static void EndPhysicalPurchase(PhysicalPurchaseFrame? frame)
+        {
+            if (frame != null)
+            {
+                DebugLog(
+                    $"event=dhh-upgrade stage=mutation-context-exit correlation={frame.Correlation} " +
+                    $"upgrade={frame.UpgradeId} target={frame.SteamId} " +
+                    $"origin=physical-purchase role={GetRuntimeRole()}");
+            }
+
+            RemoveFrame(_physicalPurchaseFrames, frame, "PhysicalPurchase");
         }
 
         internal static void Initialize(ManualLogSource? log)
@@ -189,6 +256,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             }
 
             upgrade = owned;
+            DebugLog(
+                $"owned-registration upgrade={upgradeId} result=accepted " +
+                $"playerDictionaryEntries={owned.PlayerDictionary.Count}");
             return true;
         }
 
@@ -270,13 +340,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 return null;
 
             var frame = new SetLevelFrame(upgrade, steamId, upgrade.GetLevel(steamId));
+            var physicalPurchase = FindPhysicalPurchaseFrame(upgrade, steamId);
+            frame.PhysicalCorrelation = physicalPurchase?.Correlation;
             (_setLevelFrames ??= new List<SetLevelFrame>()).Add(frame);
 
             if (FeatureFlags.DebugLogging)
             {
                 DebugLog(
-                    $"set-level-capture upgrade={upgrade.UpgradeId} target={steamId} " +
-                    $"old={frame.PreviousLevel} role={GetRuntimeRole()}");
+                    $"event=dhh-upgrade stage=setlevel-enter correlation={frame.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={upgrade.UpgradeId} target={steamId} old={frame.PreviousLevel} " +
+                    $"origin={(frame.PhysicalCorrelation != null ? "physical-purchase" : "external-or-network")} " +
+                    $"role={GetRuntimeRole()}");
             }
 
             return frame;
@@ -284,6 +358,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         internal static void EndSetLevel(SetLevelFrame? frame)
         {
+            if (frame != null)
+            {
+                DebugLog(
+                    $"event=dhh-upgrade stage=setlevel-exit correlation={frame.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={frame.Upgrade.UpgradeId} target={frame.SteamId} old={frame.PreviousLevel} " +
+                    $"applyCaptured={frame.ApplyCaptured} origin={(frame.PhysicalCorrelation != null ? "physical-purchase" : "external-or-network")} " +
+                    $"role={GetRuntimeRole()}");
+            }
+
             RemoveFrame(_setLevelFrames, frame, "SetLevel");
         }
 
@@ -294,18 +377,32 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
             var setLevelFrame = FindMatchingSetLevelFrame(upgrade, steamId);
             var previousLevel = setLevelFrame?.PreviousLevel ?? upgrade.GetLevel(steamId);
-            var origin = setLevelFrame != null ? TransitionOrigin.SetLevel : TransitionOrigin.DirectApplyUpgrade;
+            var physicalCorrelation = setLevelFrame?.PhysicalCorrelation;
+            var origin = setLevelFrame != null
+                ? (physicalCorrelation != null ? TransitionOrigin.PhysicalPurchase : TransitionOrigin.ExternalSetLevel)
+                : TransitionOrigin.DirectApplyUpgrade;
             if (setLevelFrame != null)
                 setLevelFrame.ApplyCaptured = true;
-            var frame = new ApplyTransitionFrame(upgrade, kind, steamId, previousLevel, newLevel, origin);
+            var playerAvatar = TryResolvePlayerAvatar(steamId);
+            var frame = new ApplyTransitionFrame(
+                upgrade,
+                kind,
+                steamId,
+                previousLevel,
+                newLevel,
+                origin,
+                physicalCorrelation,
+                IsLocalTarget(playerAvatar));
             (_applyTransitionFrames ??= new List<ApplyTransitionFrame>()).Add(frame);
 
             if (FeatureFlags.DebugLogging)
             {
                 DebugLog(
-                    $"transition upgrade={upgrade.UpgradeId} target={steamId} old={previousLevel} new={newLevel} " +
-                    $"type={ClassifyTransition(previousLevel, newLevel)} origin={origin} role={GetRuntimeRole()} " +
-                    $"avatarAvailable={TryResolvePlayerAvatar(steamId) != null}");
+                    $"event=dhh-upgrade stage=apply-enter correlation={physicalCorrelation ?? "<none>"} " +
+                    $"upgrade={upgrade.UpgradeId} target={steamId} old={previousLevel} new={newLevel} " +
+                    $"type={ClassifyTransition(previousLevel, newLevel)} origin={FormatOrigin(origin)} " +
+                    $"localTarget={frame.LocalTarget} role={GetRuntimeRole()} " +
+                    $"avatarAvailable={playerAvatar != null}");
             }
 
             return frame;
@@ -313,6 +410,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
 
         internal static void EndApplyUpgrade(ApplyTransitionFrame? frame)
         {
+            if (frame != null)
+            {
+                DebugLog(
+                    $"event=dhh-upgrade stage=apply-exit correlation={frame.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={frame.Upgrade.UpgradeId} target={frame.SteamId} old={frame.PreviousLevel} " +
+                    $"new={frame.NewLevel} origin={FormatOrigin(frame.Origin)} localTarget={frame.LocalTarget} " +
+                    $"role={GetRuntimeRole()}");
+            }
+
             RemoveFrame(_applyTransitionFrames, frame, "ApplyUpgrade");
         }
 
@@ -386,16 +492,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (transition.NewLevel == transition.PreviousLevel)
             {
                 DebugLog(
-                    $"callback upgrade={HeadChargeUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
-                    $"new={transition.NewLevel} decision=skip reason=same-value");
+                    $"event=dhh-upgrade stage=callback correlation={transition.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={HeadChargeUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
+                    $"new={transition.NewLevel} origin={FormatOrigin(transition.Origin)} " +
+                    $"localTarget={transition.LocalTarget} decision=skip reason=same-value");
                 return;
             }
 
             if (!IsLocalTarget(playerAvatar))
             {
                 DebugLog(
-                    $"callback upgrade={HeadChargeUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
-                    $"new={transition.NewLevel} decision=skip-local-event reason=non-local-target");
+                    $"event=dhh-upgrade stage=callback correlation={transition.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={HeadChargeUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
+                    $"new={transition.NewLevel} origin={FormatOrigin(transition.Origin)} " +
+                    $"localTarget={transition.LocalTarget} decision=skip reason=non-local-target");
                 return;
             }
 
@@ -417,8 +527,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     transition.PreviousLevel);
 
                 DebugLog(
-                    $"callback upgrade={HeadChargeUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
-                    $"new={transition.NewLevel} decision=apply-charge-refresh");
+                    $"event=dhh-upgrade stage=callback correlation={transition.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={HeadChargeUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
+                    $"new={transition.NewLevel} origin={FormatOrigin(transition.Origin)} " +
+                    $"localTarget={transition.LocalTarget} decision=apply-charge-refresh");
             }
             catch (Exception ex)
             {
@@ -435,8 +547,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (transition.NewLevel <= transition.PreviousLevel)
             {
                 DebugLog(
-                    $"callback upgrade={HeadPowerUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
-                    $"new={transition.NewLevel} decision=skip-power-purchase-effect " +
+                    $"event=dhh-upgrade stage=callback correlation={transition.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={HeadPowerUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
+                    $"new={transition.NewLevel} origin={FormatOrigin(transition.Origin)} " +
+                    $"localTarget={transition.LocalTarget} decision=skip-power-purchase-effect " +
                     $"reason={(transition.NewLevel == transition.PreviousLevel ? "same-value" : "decrease")}");
                 return;
             }
@@ -444,8 +558,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (!IsLocalTarget(playerAvatar))
             {
                 DebugLog(
-                    $"callback upgrade={HeadPowerUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
-                    $"new={transition.NewLevel} decision=skip-local-power-effect reason=non-local-target");
+                    $"event=dhh-upgrade stage=callback correlation={transition.PhysicalCorrelation ?? "<none>"} " +
+                    $"upgrade={HeadPowerUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
+                    $"new={transition.NewLevel} origin={FormatOrigin(transition.Origin)} " +
+                    $"localTarget={transition.LocalTarget} decision=skip-local-power-effect reason=non-local-target");
                 return;
             }
 
@@ -479,8 +595,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                     var energyHandlerAfter = TryGetEnergyHandler(playerAvatar);
                     var energyAfter = energyHandlerAfter?.Energy;
                     DebugLog(
-                        $"callback upgrade={HeadPowerUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
-                        $"new={transition.NewLevel} decision=apply-power-effect " +
+                        $"event=dhh-upgrade stage=callback correlation={transition.PhysicalCorrelation ?? "<none>"} " +
+                        $"upgrade={HeadPowerUpgradeId} target={transition.SteamId} old={transition.PreviousLevel} " +
+                        $"new={transition.NewLevel} origin={FormatOrigin(transition.Origin)} " +
+                        $"localTarget={transition.LocalTarget} decision=apply-power-effect " +
                         $"energyHandlerBefore={energyHandlerBefore != null} energyBefore={FormatEnergy(energyBefore)} " +
                         $"energyHandlerAfter={energyHandlerAfter != null} energyAfter={FormatEnergy(energyAfter)}");
                 }
@@ -648,6 +766,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             return null;
         }
 
+        private static PhysicalPurchaseFrame? FindPhysicalPurchaseFrame(PlayerUpgrade upgrade, string steamId)
+        {
+            var frames = _physicalPurchaseFrames;
+            if (frames == null)
+                return null;
+
+            for (var index = frames.Count - 1; index >= 0; index--)
+            {
+                var candidate = frames[index];
+                if (string.Equals(candidate.UpgradeId, upgrade.UpgradeId, StringComparison.Ordinal) &&
+                    string.Equals(candidate.SteamId, steamId, StringComparison.Ordinal))
+                    return candidate;
+            }
+
+            return null;
+        }
+
         private static void RemoveFrame<T>(List<T>? frames, T? frame, string operation) where T : class
         {
             if (frames == null || frame == null)
@@ -713,6 +848,17 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
             if (newLevel < previousLevel)
                 return "decrease";
             return "same";
+        }
+
+        private static string FormatOrigin(TransitionOrigin origin)
+        {
+            return origin switch
+            {
+                TransitionOrigin.PhysicalPurchase => "physical-purchase",
+                TransitionOrigin.ExternalSetLevel => "external-or-network",
+                TransitionOrigin.DirectApplyUpgrade => "direct-apply",
+                _ => "unknown"
+            };
         }
 
         internal static string GetRuntimeRole()

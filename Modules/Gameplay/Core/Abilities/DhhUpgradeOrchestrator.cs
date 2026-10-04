@@ -66,9 +66,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             if (toggle == null || !IsDhhUpgrade(toggle.gameObject))
                 return false;
 
-            var correlation = toggle.GetInstanceID().ToString();
+            var correlation = DhhRepolibUpgradeBridge.NextCorrelationId();
             var itemName = TryGetStatsItemName(toggle) ?? "<unknown>";
             var role = GetRuntimeRole();
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"event=dhh-upgrade stage=toggle-enter correlation={correlation} upgrade=<unresolved> " +
+                $"item='{itemName}' requestedPhotonId={player} role={role} " +
+                $"toggleState={toggle.toggleState} disabled={toggle.disabled} origin=physical-purchase");
 
             if (!TryResolvePhysicalUpgrade(toggle, out var upgradeId, out var upgradeKind))
             {
@@ -77,6 +82,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     "DHH upgrade component on the ItemToggle GameObject; the item was left unconsumed.");
                 return true;
             }
+
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"event=dhh-upgrade stage=toggle-resolved correlation={correlation} upgrade={upgradeId} " +
+                $"kind={upgradeKind} item='{itemName}' requestedPhotonId={player} role={role} " +
+                "origin=physical-purchase decision=accept");
 
             if (GameManager.Multiplayer() && !PhotonNetwork.IsMasterClient)
             {
@@ -111,6 +121,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return true;
             }
 
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"event=dhh-upgrade stage=registration-check correlation={correlation} upgrade={upgradeId} " +
+                $"target={playerId} registered=True ownedByDHHFix=True role={role} decision=accept");
+            DhhRepolibUpgradeBridge.VerifyDictionaryInvariant(
+                $"physical-consume:{correlation}",
+                warnOnMismatch: true);
+
             int before;
             try
             {
@@ -135,16 +152,29 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             Exception? mutationException = null;
 
             DhhRepolibUpgradeBridge.DebugLog(
-                $"physical-mutation correlation={correlation} upgrade={upgradeId} target={playerId} before={before} " +
-                "requestedDelta=+1 action=AddLevel begin");
+                $"event=dhh-upgrade stage=mutation-begin correlation={correlation} upgrade={upgradeId} " +
+                $"target={playerId} old={before} new=<pending> api=PlayerUpgrade.AddLevel " +
+                "requestedDelta=+1 origin=physical-purchase decision=begin");
 
+            var physicalPurchase = DhhRepolibUpgradeBridge.BeginPhysicalPurchase(
+                correlation,
+                upgradeId,
+                playerId,
+                before);
             try
             {
-                returnedLevel = playerUpgrade.AddLevel(playerId, 1);
+                try
+                {
+                    returnedLevel = playerUpgrade.AddLevel(playerId, 1);
+                }
+                catch (Exception ex)
+                {
+                    mutationException = ex;
+                }
             }
-            catch (Exception ex)
+            finally
             {
-                mutationException = ex;
+                DhhRepolibUpgradeBridge.EndPhysicalPurchase(physicalPurchase);
             }
 
             int? observedAfter = null;
@@ -190,11 +220,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             var expectedSingleStep = after.Value == before + 1;
 
             DhhRepolibUpgradeBridge.DebugLog(
-                $"physical-mutation correlation={correlation} upgrade={upgradeId} target={playerId} before={before} " +
-                $"requestedDelta=+1 returned={(returnedLevel.HasValue ? returnedLevel.Value.ToString() : "<exception>")} after={after.Value} " +
+                $"event=dhh-upgrade stage=mutation-result correlation={correlation} upgrade={upgradeId} " +
+                $"target={playerId} old={before} new={after.Value} " +
+                $"returned={(returnedLevel.HasValue ? returnedLevel.Value.ToString() : "<exception>")} " +
                 $"mutationSucceeded={mutationSucceeded} expectedSingleStep={expectedSingleStep} " +
                 $"mutationException={(mutationException != null ? mutationException.GetType().Name : "none")} " +
-                $"postReadException={(postMutationReadException != null ? postMutationReadException.GetType().Name : "none")}");
+                $"postReadException={(postMutationReadException != null ? postMutationReadException.GetType().Name : "none")} " +
+                "origin=physical-purchase");
 
             if (!mutationSucceeded)
             {
@@ -228,6 +260,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             PlayUpgradeFx(toggle, player, correlation, upgradeId, playerId);
             RegisterConsumedUpgrade(toggle, itemName, correlation, upgradeId);
             ScheduleDestroyUpgradeItem(toggle, correlation, upgradeId);
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"event=dhh-upgrade stage=consume-commit correlation={correlation} upgrade={upgradeId} " +
+                $"target={playerId} old={before} new={after.Value} itemsPurchasedUpdated=True " +
+                "destroyScheduled=True decision=commit origin=physical-purchase");
+            DhhRepolibUpgradeBridge.DebugLog(
+                $"event=dhh-upgrade stage=toggle-exit correlation={correlation} upgrade={upgradeId} " +
+                $"target={playerId} old={before} new={after.Value} handled=True " +
+                "consumed=True toggleDisabled=True origin=physical-purchase decision=complete");
             return true;
         }
 

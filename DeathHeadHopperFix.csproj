@@ -5,7 +5,7 @@
 		<OutputType>Library</OutputType>
 		<AssemblyName>DeathHeadHopperFix</AssemblyName>
 		<RootNamespace>DeathHeadHopperFix</RootNamespace>
-		<Version>0.2.6</Version>
+		<Version>0.2.7</Version>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<LangVersion>latest</LangVersion>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -15,7 +15,7 @@
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 		<Deterministic>false</Deterministic>
 		<ThunderstoreZipFileName>AdrenSnyder-DeathHeadHopperFix-$(Version).zip</ThunderstoreZipFileName>
-		<AssemblyPublicizerCliPath>$(MSBuildProjectDirectory)\..\..\..\Analyzers\BepInEx.AssemblyPublicizer\BepInEx.AssemblyPublicizer.Cli\bin\Release\net6.0\publish\BepInEx.AssemblyPublicizer.Cli.exe</AssemblyPublicizerCliPath>
+		<AssemblyPublicizerCliPath>$(MSBuildProjectDirectory)\..\..\..\Utility\BepInEx.AssemblyPublicizer\BepInEx.AssemblyPublicizer.Cli\bin\Release\net6.0\publish\BepInEx.AssemblyPublicizer.Cli.exe</AssemblyPublicizerCliPath>
 	</PropertyGroup>
 	<ItemGroup>
 		<Compile Remove="obj\**\*.cs" />

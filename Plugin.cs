@@ -18,7 +18,7 @@ using System.Reflection;
 
 namespace DeathHeadHopperFix
 {
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.6")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.7")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
