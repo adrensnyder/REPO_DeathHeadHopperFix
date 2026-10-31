@@ -209,8 +209,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         private static bool Prepare() => DhhPatchRegistryModule.ShouldProcessBridgePatch;
 
         [HarmonyPrefix]
-        private static void Prefix(SemiIconMaker __instance) =>
+        private static void Prefix(SemiIconMaker __instance)
+        {
+            if (__instance == null || __instance.iconCamera == null)
+                return;
+
             global::DeathHeadHopper.Patches.SemiIconMakerPatch.CreateIconFromRenderTexture_Prefix(__instance);
+        }
     }
 
 }

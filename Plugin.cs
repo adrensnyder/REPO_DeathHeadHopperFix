@@ -23,6 +23,8 @@ namespace DeathHeadHopperFix
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
 
+        internal static Plugin? Instance { get; private set; }
+
         private Harmony? _harmony;
         private bool _patched;
         private bool _patchAttempted;
@@ -31,6 +33,7 @@ namespace DeathHeadHopperFix
 
         private void Awake()
         {
+            Instance = this;
             _log = Logger;
             ConfigManager.Initialize(Config, Logger);
             WarnUnsafeDebugFlagsInRelease();
@@ -66,6 +69,8 @@ namespace DeathHeadHopperFix
         private void OnDestroy()
         {
             AppDomain.CurrentDomain.AssemblyLoad -= OnAssemblyLoad;
+            if (Instance == this)
+                Instance = null;
         }
 
         private void OnAssemblyLoad(object sender, AssemblyLoadEventArgs args)

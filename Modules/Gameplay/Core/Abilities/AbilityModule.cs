@@ -1,6 +1,7 @@
 #nullable enable
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using DeathHeadHopper.Abilities;
 using DeathHeadHopperFix.API.Abilities;
@@ -30,8 +31,15 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
 
         internal static void ApplyAbilitySpotLabelOverlay(Harmony harmony)
         {
+            if (FeatureFlags.DebugLogging)
+                UnityEngine.Debug.Log("[Fix:UIFont] event=patch-registration-begin hooks=AbilitySpot.Start,AbilitySpot.UpdateUI,AbilityEnergyUI.Start");
+
             harmony.CreateClassProcessor(typeof(AbilitySpotStartPatch)).Patch();
             harmony.CreateClassProcessor(typeof(AbilitySpotUpdateUiPatch)).Patch();
+            harmony.CreateClassProcessor(typeof(AbilityEnergyUiStartPatch)).Patch();
+
+            if (FeatureFlags.DebugLogging)
+                UnityEngine.Debug.Log("[Fix:UIFont] event=patch-registration-complete hooks=AbilitySpot.Start,AbilitySpot.UpdateUI,AbilityEnergyUI.Start");
         }
 
         internal static void ApplyAbilityManagerHooks(Harmony harmony)
@@ -59,6 +67,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             }
         }
 
+        [HarmonyPatch(typeof(global::DeathHeadHopper.UI.AbilityEnergyUI), nameof(global::DeathHeadHopper.UI.AbilityEnergyUI.Start))]
+        private static class AbilityEnergyUiStartPatch
+        {
+            [HarmonyPostfix]
+            private static void Postfix(global::DeathHeadHopper.UI.AbilityEnergyUI __instance)
+            {
+                AbilitySpotLabelOverlay.ApplyAbilityEnergyUiFont(__instance);
+            }
+        }
+
         [HarmonyPatch(typeof(DHHAbilityManager), nameof(DHHAbilityManager.OnAbilityUsed), typeof(AbilityBase))]
         private static class DhhAbilityManagerOnAbilityUsedPatch
         {
@@ -79,6 +97,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             s_trackedSpots.Add(__instance);
             s_spotBaseLocalPos[__instance] = __instance.transform.localPosition;
             AbilitySpotLabelOverlay.EnsureLabel(__instance);
+            AbilitySpotLabelOverlay.QueueSpotTextStateLog(__instance);
             ReconcileProviderForSpot(__instance);
             var driver = __instance.GetComponent<AbilitySpotUpdateDriver>() ?? __instance.gameObject.AddComponent<AbilitySpotUpdateDriver>();
             driver.Initialize(__instance);
@@ -93,6 +112,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
 
             AbilitySpotLabelOverlay.UpdateLabel(__instance);
+            AbilitySpotLabelOverlay.QueueSpotTextStateLog(__instance);
             ReconcileProviderForSpot(__instance);
         }
 
@@ -737,6 +757,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
         private static class AbilitySpotLabelOverlay
         {
             private static readonly Dictionary<AbilitySpot, TextMeshProUGUI> Labels = new();
+            private static readonly Dictionary<AbilitySpot, TextMeshProUGUI> SlotNumberLabels = new();
+            private static readonly Dictionary<AbilitySpot, string> LastLoggedSpotTextState = new();
+            private static readonly HashSet<AbilitySpot> PendingSpotTextLogs = new();
 
             internal static void EnsureLabel(AbilitySpot spot)
             {
@@ -744,6 +767,25 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     return;
                 if (Labels.ContainsKey(spot))
                     return;
+
+                var font = ResolveFont(spot, out var fontSource);
+                var previousCostFont = spot.energyCost != null ? spot.energyCost.font : null;
+                var previousLevelFont = spot.level != null ? spot.level.font : null;
+                var previousNoAbilityFont = spot.noAbility != null ? spot.noAbility.font : null;
+                ApplyFont(spot.energyCost, font);
+                ApplyFont(spot.level, font);
+                ApplyFont(spot.noAbility, font);
+                EnsureSlotNumberLabel(spot, font);
+
+                if (FeatureFlags.DebugLogging)
+                {
+                    UnityEngine.Debug.Log(
+                        $"[Fix:UIFont] event=ability-spot-font-assigned slot={spot.abilitySpotIndex} " +
+                        $"source={fontSource} selectedFont={FontName(font)} " +
+                        $"costFontBefore={FontName(previousCostFont)} costFontAfter={FontName(spot.energyCost?.font)} " +
+                        $"levelFontBefore={FontName(previousLevelFont)} levelFontAfter={FontName(spot.level?.font)} " +
+                        $"noAbilityFontBefore={FontName(previousNoAbilityFont)} noAbilityFontAfter={FontName(spot.noAbility?.font)}");
+                }
 
                 var overlay = new GameObject("DHHAbilityLabel", typeof(RectTransform));
                 overlay.transform.SetParent(spot.transform, false);
@@ -757,9 +799,98 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 rect.SetAsLastSibling();
 
                 var label = overlay.AddComponent<TextMeshProUGUI>();
-                SetLabelDefaults(label);
+                SetLabelDefaults(label, font);
                 Labels[spot] = label;
                 UpdateLabel(spot);
+            }
+
+            private static void EnsureSlotNumberLabel(AbilitySpot spot, TMP_FontAsset? font)
+            {
+                if (spot == null || spot.energyCost == null || SlotNumberLabels.ContainsKey(spot))
+                    return;
+
+                TextMeshProUGUI? original = null;
+                foreach (var text in spot.GetComponentsInChildren<TextMeshProUGUI>(true))
+                {
+                    if (text != null && string.Equals(text.name, "Spot Number", StringComparison.Ordinal))
+                    {
+                        original = text;
+                        break;
+                    }
+                }
+
+                if (original == null)
+                    return;
+
+                var slotNumberFont = font != null ? font : original.font;
+                if (slotNumberFont == null)
+                    return;
+
+                GameObject? replacementObject = null;
+                try
+                {
+                    var sourceRect = original.rectTransform;
+                    var parent = sourceRect.parent != null ? sourceRect.parent : spot.transform;
+                    replacementObject = new GameObject("DHHFixSpotNumber", typeof(RectTransform));
+                    replacementObject.transform.SetParent(parent, false);
+
+                    var replacementRect = replacementObject.GetComponent<RectTransform>();
+                    replacementRect.anchorMin = sourceRect.anchorMin;
+                    replacementRect.anchorMax = sourceRect.anchorMax;
+                    replacementRect.pivot = sourceRect.pivot;
+                    replacementRect.anchoredPosition3D = sourceRect.anchoredPosition3D;
+                    replacementRect.sizeDelta = sourceRect.sizeDelta;
+                    replacementRect.localRotation = sourceRect.localRotation;
+                    replacementRect.localScale = sourceRect.localScale;
+
+                    var replacement = replacementObject.AddComponent<TextMeshProUGUI>();
+                    replacement.font = slotNumberFont;
+                    replacement.fontSize = spot.energyCost.fontSize;
+                    replacement.color = original.color;
+                    replacement.alignment = original.alignment;
+                    replacement.margin = original.margin;
+                    replacement.characterSpacing = original.characterSpacing;
+                    replacement.wordSpacing = original.wordSpacing;
+                    replacement.lineSpacing = original.lineSpacing;
+                    replacement.paragraphSpacing = original.paragraphSpacing;
+                    replacement.enableAutoSizing = false;
+                    replacement.textWrappingMode = TextWrappingModes.NoWrap;
+                    replacement.overflowMode = TextOverflowModes.Overflow;
+                    replacement.richText = false;
+                    replacement.maskable = original.maskable;
+                    replacement.raycastTarget = false;
+                    replacement.text = (spot.abilitySpotIndex + 1).ToString();
+                    replacement.enabled = true;
+                    replacementRect.SetAsLastSibling();
+
+                    SlotNumberLabels.Add(spot, replacement);
+                    original.enabled = false;
+
+                    if (FeatureFlags.DebugLogging)
+                    {
+                        UnityEngine.Debug.Log(
+                            $"[Fix:UIFont] event=ability-spot-number-replaced slot={spot.abilitySpotIndex} " +
+                            $"original='{original.name}' originalDisabled={!original.enabled} " +
+                            $"replacement='{replacement.name}' text='{replacement.text}' " +
+                            $"font='{FontName(replacement.font)}' fontSize={replacement.fontSize:0.##} " +
+                            $"rect={replacementRect.rect.width:0.##}x{replacementRect.rect.height:0.##}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    SlotNumberLabels.Remove(spot);
+                    if (original != null)
+                        original.enabled = true;
+                    if (replacementObject != null)
+                        UnityEngine.Object.Destroy(replacementObject);
+
+                    if (FeatureFlags.DebugLogging)
+                    {
+                        UnityEngine.Debug.LogWarning(
+                            $"[Fix:UIFont] event=ability-spot-number-replace-failed slot={spot.abilitySpotIndex} " +
+                            $"error={ex.GetType().Name}: {ex.Message}");
+                    }
+                }
             }
 
             internal static void UpdateLabel(AbilitySpot spot)
@@ -790,7 +921,76 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     return;
 
                 Labels.Remove(spot);
+                if (SlotNumberLabels.TryGetValue(spot, out var slotNumberLabel))
+                {
+                    SlotNumberLabels.Remove(spot);
+                    if (slotNumberLabel != null)
+                        UnityEngine.Object.Destroy(slotNumberLabel.gameObject);
+                }
+                LastLoggedSpotTextState.Remove(spot);
+                PendingSpotTextLogs.Remove(spot);
                 UnityEngine.Object.Destroy(label.gameObject);
+            }
+
+            internal static void QueueSpotTextStateLog(AbilitySpot spot)
+            {
+                if (!FeatureFlags.DebugLogging || spot == null || PendingSpotTextLogs.Contains(spot))
+                    return;
+                var label = GetLabel(spot);
+                if (label == null)
+                    return;
+
+                var coroutineHost = Plugin.Instance;
+                if (coroutineHost == null || !coroutineHost.isActiveAndEnabled || !coroutineHost.gameObject.activeInHierarchy)
+                {
+                    LogSpotTextState(spot);
+                    return;
+                }
+
+                PendingSpotTextLogs.Add(spot);
+                coroutineHost.StartCoroutine(LogSpotTextStateAfterRender(spot));
+            }
+
+            private static IEnumerator LogSpotTextStateAfterRender(AbilitySpot spot)
+            {
+                yield return new WaitForEndOfFrame();
+                PendingSpotTextLogs.Remove(spot);
+                if (!FeatureFlags.DebugLogging || spot == null || !Labels.ContainsKey(spot))
+                    yield break;
+
+                LogSpotTextState(spot);
+            }
+
+            private static void LogSpotTextState(AbilitySpot spot)
+            {
+                if (!FeatureFlags.DebugLogging || spot == null)
+                    return;
+
+                var ability = spot.CurrentAbility;
+                var textComponents = DescribeSpotTextComponents(spot);
+                var state = $"slot={spot.abilitySpotIndex} currentAbility='{ability?.AbilityName ?? "<none>"}' " +
+                            $"textComponents=[{textComponents}]";
+                if (LastLoggedSpotTextState.TryGetValue(spot, out var previousState) && previousState == state)
+                    return;
+
+                LastLoggedSpotTextState[spot] = state;
+                UnityEngine.Debug.Log($"[Fix:UIFont] event=ability-spot-render-state {state}");
+            }
+
+            private static string DescribeSpotTextComponents(AbilitySpot spot)
+            {
+                var components = spot.GetComponentsInChildren<TextMeshProUGUI>(true);
+                if (components == null || components.Length == 0)
+                    return "<none>";
+
+                var descriptions = new string[components.Length];
+                for (var i = 0; i < components.Length; i++)
+                {
+                    var component = components[i];
+                    descriptions[i] = $"name='{component.name}' ({DescribeText(component, component.text)})";
+                }
+
+                return string.Join(";", descriptions);
             }
 
             private static TextMeshProUGUI? GetLabel(AbilitySpot spot)
@@ -803,15 +1003,192 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return string.Empty;
             }
 
-            private static void SetLabelDefaults(TextMeshProUGUI label)
+            private static TMP_FontAsset? ResolveFont(AbilitySpot spot, out string source)
+            {
+                var vanillaText = ResolveVanillaStaminaText(out source);
+                if (vanillaText != null && vanillaText.font != null)
+                    return vanillaText.font;
+
+                foreach (var existingLabel in spot.GetComponentsInChildren<TextMeshProUGUI>(true))
+                {
+                    if (existingLabel != null && existingLabel.font != null)
+                    {
+                        source = $"AbilitySpot descendant '{existingLabel.name}'";
+                        return existingLabel.font;
+                    }
+                }
+
+                source = "TMP_Settings.defaultFontAsset";
+                return TMP_Settings.defaultFontAsset;
+            }
+
+            internal static void ApplyAbilityEnergyUiFont(global::DeathHeadHopper.UI.AbilityEnergyUI? energyUi)
+            {
+                if (energyUi == null)
+                    return;
+
+                var sourceText = ResolveVanillaStaminaText(out var fontSource);
+                var font = sourceText != null && sourceText.font != null
+                    ? sourceText.font
+                    : TMP_Settings.defaultFontAsset;
+                var previousCurrentFont = energyUi.textCurrent != null ? energyUi.textCurrent.font : null;
+                var previousMaxFont = energyUi.textMax != null ? energyUi.textMax.font : null;
+                ApplyFont(energyUi.textCurrent, font);
+                ApplyFont(energyUi.textMax, font);
+
+                if (!FeatureFlags.DebugLogging)
+                    return;
+
+                UnityEngine.Debug.Log(
+                    $"[Fix:UIFont] event=ability-energy-font-assigned source={fontSource} " +
+                    $"sourceObject={(sourceText != null ? sourceText.name : "<none>")} selectedFont={FontName(font)} " +
+                    $"currentFontBefore={FontName(previousCurrentFont)} currentFontAfter={FontName(energyUi.textCurrent?.font)} " +
+                    $"maxFontBefore={FontName(previousMaxFont)} maxFontAfter={FontName(energyUi.textMax?.font)}");
+
+                var coroutineHost = Plugin.Instance;
+                if (coroutineHost != null && coroutineHost.isActiveAndEnabled && coroutineHost.gameObject.activeInHierarchy)
+                    coroutineHost.StartCoroutine(LogAbilityEnergyTextAfterFirstUpdate(energyUi));
+                else
+                    LogAbilityEnergyText(energyUi);
+            }
+
+            private static IEnumerator LogAbilityEnergyTextAfterFirstUpdate(
+                global::DeathHeadHopper.UI.AbilityEnergyUI energyUi)
+            {
+                yield return new WaitForEndOfFrame();
+                if (energyUi == null || !FeatureFlags.DebugLogging)
+                    yield break;
+
+                LogAbilityEnergyText(energyUi);
+            }
+
+            private static void LogAbilityEnergyText(global::DeathHeadHopper.UI.AbilityEnergyUI energyUi)
+            {
+                if (energyUi == null || !FeatureFlags.DebugLogging)
+                    return;
+
+                UnityEngine.Debug.Log(
+                    $"[Fix:UIFont] event=ability-energy-text-ready " +
+                    $"current=({DescribeText(energyUi.textCurrent, "0123456789")}) " +
+                    $"max=({DescribeText(energyUi.textMax, "0123456789/")})");
+            }
+
+            private static TextMeshProUGUI? ResolveVanillaStaminaText(out string source)
+            {
+                source = "EnergyUI.instance";
+                var energyUi = global::EnergyUI.instance;
+                if (energyUi == null)
+                {
+                    var energyRoot = DHHUIManager.instance?.gameHUD?.transform.Find("Energy");
+                    if (energyRoot != null)
+                    {
+                        energyUi = energyRoot.GetComponent<global::EnergyUI>();
+                        source = "gameHUD/Energy EnergyUI component";
+                    }
+                }
+
+                var currentEnergyText = energyUi != null
+                    ? energyUi.GetComponent<TextMeshProUGUI>()
+                    : null;
+                if (currentEnergyText != null && currentEnergyText.font != null)
+                {
+                    source += ".currentText";
+                    return currentEnergyText;
+                }
+
+                var maxEnergyText = energyUi != null
+                    ? energyUi.transform.Find("EnergyMax")?.GetComponent<TextMeshProUGUI>()
+                    : null;
+                if (maxEnergyText != null && maxEnergyText.font != null)
+                {
+                    source += ".EnergyMax";
+                    return maxEnergyText;
+                }
+
+                source = "<stamina-font-unavailable>";
+                return null;
+            }
+
+            private static string FontName(TMP_FontAsset? font)
+            {
+                return font != null ? font.name : "<null>";
+            }
+
+            private static string DescribeText(TextMeshProUGUI? text, string? expectedCharacters)
+            {
+                if (text == null)
+                    return "object=<null>";
+
+                var font = text.font;
+                var value = (text.text ?? string.Empty).Replace("\r", "\\r").Replace("\n", "\\n");
+                var rect = text.rectTransform;
+                var bounds = rect != null ? rect.rect : default;
+                var scale = rect != null ? rect.lossyScale : Vector3.zero;
+                var materialName = text.fontMaterial != null ? text.fontMaterial.name : "<null>";
+                var textInfo = text.textInfo;
+                var characterMetrics = DescribeCharacterMetrics(textInfo);
+                return $"object='{text.name}' text='{value}' enabled={text.enabled} active={text.gameObject.activeInHierarchy} " +
+                       $"font='{FontName(font)}' material='{materialName}' fontSize={text.fontSize:0.##} " +
+                       $"rect={bounds.width:0.##}x{bounds.height:0.##} scale={scale.x:0.###},{scale.y:0.###} " +
+                       $"overflow={text.overflowMode} wrapping={text.textWrappingMode} autoSize={text.enableAutoSizing} " +
+                       $"color={ColorUtility.ToHtmlStringRGBA(text.color)} rendered={text.renderedWidth:0.##}x{text.renderedHeight:0.##} " +
+                       $"expected='{expectedCharacters ?? "<none>"}' supportsExpected={CheckCharacterCoverage(font, expectedCharacters)} " +
+                       $"glyphs=[{characterMetrics}]";
+            }
+
+            private static string DescribeCharacterMetrics(TMP_TextInfo? textInfo)
+            {
+                if (textInfo == null || textInfo.characterInfo == null || textInfo.characterCount <= 0)
+                    return "<not-generated>";
+
+                var count = Math.Min(textInfo.characterCount, 8);
+                var values = new string[count];
+                for (var i = 0; i < count; i++)
+                {
+                    var character = textInfo.characterInfo[i];
+                    var codePoint = (int)character.character;
+                    var bottomLeft = character.bottomLeft;
+                    var topRight = character.topRight;
+                    values[i] = $"U+{codePoint:X4}:visible={character.isVisible}:bounds=" +
+                                $"({bottomLeft.x:0.##},{bottomLeft.y:0.##})..({topRight.x:0.##},{topRight.y:0.##})";
+                }
+
+                return string.Join(";", values);
+            }
+
+            private static string CheckCharacterCoverage(TMP_FontAsset? font, string? expectedCharacters)
+            {
+                if (font == null)
+                    return "<no-font>";
+                if (string.IsNullOrEmpty(expectedCharacters))
+                    return "<not-checked>";
+
+                try
+                {
+                    return font.HasCharacters(expectedCharacters).ToString();
+                }
+                catch (Exception ex)
+                {
+                    return $"<check-failed:{ex.GetType().Name}>";
+                }
+            }
+
+            private static void ApplyFont(TextMeshProUGUI? text, TMP_FontAsset? font)
+            {
+                if (text != null && font != null)
+                    text.font = font;
+            }
+
+            private static void SetLabelDefaults(TextMeshProUGUI label, TMP_FontAsset? font)
             {
                 if (label == null)
                     return;
 
+                label.font = font;
                 label.color = Color.white;
                 label.fontSize = 11f;
                 label.enableAutoSizing = false;
-                label.enableWordWrapping = false;
+                label.textWrappingMode = TextWrappingModes.NoWrap;
                 label.richText = false;
                 label.alignment = TextAlignmentOptions.Center;
 

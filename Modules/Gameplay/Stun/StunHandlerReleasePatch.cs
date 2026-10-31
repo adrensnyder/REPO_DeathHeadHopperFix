@@ -66,11 +66,11 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
                     if (!SemiFunc.IsMultiplayer())
                     {
-                        playerGrabber.ReleaseObjectRPC(true, 2f, ReleaseObjectViewId);
+                        playerGrabber.ReleaseObject(ReleaseObjectViewId, 2f);
                     }
                     else
                     {
-                        playerGrabber.photonView.RPC("ReleaseObjectRPC", RpcTarget.All, false, 1f, ReleaseObjectViewId);
+                        playerGrabber.OverrideGrabRelease(ReleaseObjectViewId, 1f);
                     }
                 }
             }

@@ -252,7 +252,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             var rigidbody = chargeHandler.rb;
             var isResting = controller?.collisionHandler?.isColliding == true &&
                             rigidbody != null &&
-                            rigidbody.velocity.sqrMagnitude <= ChargeRestVelocitySqrThreshold &&
+                            rigidbody.linearVelocity.sqrMagnitude <= ChargeRestVelocitySqrThreshold &&
                             rigidbody.angularVelocity.sqrMagnitude <= ChargeRestAngularVelocitySqrThreshold;
 
             state.RestingTime = isResting

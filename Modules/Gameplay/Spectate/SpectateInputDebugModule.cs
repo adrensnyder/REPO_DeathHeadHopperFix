@@ -139,12 +139,33 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
     [HarmonyPatch(typeof(SpectateCamera), "PlayerSwitch")]
     internal static class SpectatePlayerSwitchDebugPatch
     {
-        [HarmonyPrefix]
-        private static void Prefix(SpectateCamera __instance, bool _next, out PlayerAvatar? __state)
+        private const int DetailedCallsPerWindow = 3;
+        private const int LogWindowFrames = 600;
+        private static SpectateCamera? s_logWindowCamera;
+        private static int s_logWindowStartFrame = -1;
+        private static int s_detailedCallsInWindow;
+        private static int s_suppressedCallsInWindow;
+
+        private struct PlayerSwitchLogState
         {
-            __state = __instance?.player;
+            internal PlayerAvatar? PreviousPlayer;
+            internal bool EmitDetails;
+        }
+
+        [HarmonyPrefix]
+        private static void Prefix(SpectateCamera __instance, bool _next, out PlayerSwitchLogState __state)
+        {
+            __state = new PlayerSwitchLogState
+            {
+                PreviousPlayer = __instance?.player,
+                EmitDetails = false
+            };
             if (__instance == null || !ShouldLog(__instance))
                 return;
+            if (!TryAcquireDetailedLogSlot(__instance))
+                return;
+
+            __state.EmitDetails = true;
 
             Debug.Log(
                 $"[Fix:SpectateDebug] PlayerSwitch entered next={_next}, " +
@@ -152,20 +173,51 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Spectate
         }
 
         [HarmonyPostfix]
-        private static void Postfix(SpectateCamera __instance, bool _next, PlayerAvatar? __state)
+        private static void Postfix(SpectateCamera __instance, bool _next, PlayerSwitchLogState __state)
         {
-            if (__instance == null || !ShouldLog(__instance))
+            if (__instance == null || !__state.EmitDetails)
                 return;
 
             var target = __instance.player;
             var activeAlternatives = CountActiveAlternatives(target);
-            var changed = !ReferenceEquals(__state, target);
+            var changed = !ReferenceEquals(__state.PreviousPlayer, target);
             Debug.Log(
                 $"[Fix:SpectateDebug] PlayerSwitch exited next={_next}, " +
                 $"state={__instance.currentState}, player={Describe(target)}, " +
                 $"activeAlternatives={activeAlternatives}, " +
                 $"result={(changed ? "target changed successfully" : "target unchanged")}, " +
                 $"reason={(changed ? "none" : GetUnchangedTargetReason(target, activeAlternatives))}");
+        }
+
+        private static bool TryAcquireDetailedLogSlot(SpectateCamera spectate)
+        {
+            var frame = Time.frameCount;
+            var newWindow = !ReferenceEquals(s_logWindowCamera, spectate) ||
+                            s_logWindowStartFrame < 0 ||
+                            frame - s_logWindowStartFrame >= LogWindowFrames;
+            if (newWindow)
+            {
+                if (s_suppressedCallsInWindow > 0)
+                {
+                    Debug.Log(
+                        $"[Fix:SpectateDebug] PlayerSwitch diagnostics suppressed " +
+                        $"calls={s_suppressedCallsInWindow} windowFrames={LogWindowFrames}.");
+                }
+
+                s_logWindowCamera = spectate;
+                s_logWindowStartFrame = frame;
+                s_detailedCallsInWindow = 0;
+                s_suppressedCallsInWindow = 0;
+            }
+
+            if (s_detailedCallsInWindow >= DetailedCallsPerWindow)
+            {
+                s_suppressedCallsInWindow++;
+                return false;
+            }
+
+            s_detailedCallsInWindow++;
+            return true;
         }
 
         private static bool ShouldLog(SpectateCamera? spectate)

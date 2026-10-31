@@ -54,7 +54,7 @@ namespace DeathHeadHopperFix.Modules.Stamina
 
         private bool IsHeadStationary()
         {
-            return _rb == null || _rb.velocity.sqrMagnitude < FeatureFlags.HeadStationaryVelocitySqrThreshold;
+            return _rb == null || _rb.linearVelocity.sqrMagnitude < FeatureFlags.HeadStationaryVelocitySqrThreshold;
         }
     }
 }

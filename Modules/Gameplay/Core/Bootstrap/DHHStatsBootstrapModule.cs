@@ -456,7 +456,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         [HarmonyPrefix]
         private static void Prefix(bool __0)
         {
-            var syncPath = __0 ? "Full" : "Delta";
+            var syncPath = __0 ? "RequestedFull" : "RequestedDelta";
             try
             {
                 DHHStatsBootstrapModule.PrepareForDictionarySync(

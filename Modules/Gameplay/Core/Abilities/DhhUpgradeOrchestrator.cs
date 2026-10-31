@@ -523,11 +523,10 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     continue;
                 }
 
-                var grabberView = grabber.photonView;
-                if (grabberView == null)
+                if (grabber.photonView == null)
                     continue;
 
-                grabberView.RPC("ReleaseObjectRPC", RpcTarget.All, false, UpgradeReleaseDisableSeconds, viewId);
+                grabber.OverrideGrabRelease(viewId, UpgradeReleaseDisableSeconds);
                 released++;
             }
 

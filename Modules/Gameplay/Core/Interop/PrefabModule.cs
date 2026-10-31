@@ -60,7 +60,9 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 return;
 
             _compatibleAssetLoadAttempted = true;
-            _log?.LogWarning("[Fix] DHH asset loading ran before the compatibility patch; retrying with the current Item.prefab API.");
+            _log?.LogWarning(
+                "[Fix] DHH shop item registry is empty during Fix bootstrap; invoking the compatible asset loader once. " +
+                "An empty registry does not establish when the original loader ran.");
 
             try
             {
@@ -524,7 +526,20 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
                 if (itemAttributes.item == null)
                     itemAttributes.item = itemObj;
 
-                Items.RegisterItem(itemAttributes);
+                var prefabRef = Items.RegisterItem(itemAttributes);
+                if (prefabRef == null)
+                {
+                    if (LogLimiter.ShouldLog($"Fix:REPOLib.RegisterItem.Null:{itemObj.name}", 600))
+                    {
+                        _log?.LogWarning(
+                            $"[Fix] REPOLib RegisterItem returned null for '{itemObj.name}'; registration is unconfirmed. " +
+                            "Check REPOLib's log for duplicate or conflicting prefab details.");
+                    }
+                }
+                else if (FeatureFlags.DebugLogging)
+                {
+                    _log?.LogInfo($"[Fix:REPOLib] RegisterItem returned a PrefabRef for '{itemObj.name}'.");
+                }
             }
             catch (Exception ex)
             {
