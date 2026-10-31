@@ -295,7 +295,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             }
         }
 
-        internal static void PrepareForFullDictionarySync(string context)
+        internal static void PrepareForDictionarySync(string context)
         {
             var dictionariesBefore = StatsManager.instance?.dictionaryOfDictionaries;
             var headChargeKeyPresentBefore = dictionariesBefore?.ContainsKey(HeadChargeKey) == true;
@@ -305,14 +305,14 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             {
                 DhhRepolibUpgradeBridge.VerifyDictionaryInvariant($"{context}.PreBind", warnOnMismatch: false);
                 DhhRepolibUpgradeBridge.DebugLog(
-                    $"full-sync context={context} stage=pre-bind " +
+                    $"dictionary-sync context={context} stage=pre-bind " +
                     $"headChargeKeyPresent={headChargeKeyPresentBefore} " +
                     $"headPowerKeyPresent={headPowerKeyPresentBefore}");
             }
             catch (Exception ex)
             {
                 DhhRepolibUpgradeBridge.LogWarning(
-                    $"Full-sync pre-bind diagnostics failed for context={context}: {ex.Message}. Binding will continue.");
+                    $"Dictionary-sync pre-bind diagnostics failed for context={context}: {ex.Message}. Binding will continue.");
             }
 
             EnsureDhhStatsLabels();
@@ -325,24 +325,24 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             {
                 DhhRepolibUpgradeBridge.VerifyDictionaryInvariant($"{context}.PostBind");
                 DhhRepolibUpgradeBridge.DebugLog(
-                    $"full-sync context={context} stage=post-bind " +
+                    $"dictionary-sync context={context} stage=post-bind " +
                     $"headChargeKeyPresent={dictionariesAfter?.ContainsKey(HeadChargeKey) == true} " +
                     $"headPowerKeyPresent={dictionariesAfter?.ContainsKey(HeadPowerKey) == true}");
             }
             catch (Exception ex)
             {
                 DhhRepolibUpgradeBridge.LogWarning(
-                    $"Full-sync post-bind diagnostics failed for context={context}: {ex.Message}. Binding was preserved.");
+                    $"Dictionary-sync post-bind diagnostics failed for context={context}: {ex.Message}. Binding was preserved.");
             }
         }
 
-        internal static void CompleteFullDictionarySyncReceive(Hashtable? data, bool finalChunk)
+        internal static void CompleteDictionarySyncReceive(Hashtable? data, bool finalChunk)
         {
             var containsCharge = data?.ContainsKey(HeadChargeKey) == true;
             var containsPower = data?.ContainsKey(HeadPowerKey) == true;
 
             DhhRepolibUpgradeBridge.DebugLog(
-                $"full-sync context=PunManager.ReceiveSyncData.Postfix stage=received-chunk " +
+                $"dictionary-sync context=PunManager.ReceiveSyncData.Postfix stage=received-chunk " +
                 $"containsHeadCharge={containsCharge} containsHeadPower={containsPower} finalChunk={finalChunk} " +
                 "classification=non-purchase");
 
@@ -358,7 +358,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             RefreshChargeAfterNonPurchaseSync();
 
             DhhRepolibUpgradeBridge.DebugLog(
-                "full-sync context=PunManager.ReceiveSyncData.Postfix.Final stage=complete " +
+                "dictionary-sync context=PunManager.ReceiveSyncData.Postfix.Final stage=complete " +
                 "chargeDecision=refresh-current-state powerDecision=level-only " +
                 "powerPurchaseEffect=skipped itemConsumption=skipped");
         }
@@ -371,13 +371,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
                 if (manager == null)
                 {
                     DhhRepolibUpgradeBridge.DebugLog(
-                        "full-sync charge-refresh decision=deferred reason=ability-manager-unavailable");
+                        "dictionary-sync charge-refresh decision=deferred reason=ability-manager-unavailable");
                     return;
                 }
 
                 manager.EquipAbilities();
                 DhhRepolibUpgradeBridge.DebugLog(
-                    $"full-sync charge-refresh decision=refresh-current-state spotsFetched={manager.spotsFeched}");
+                    $"dictionary-sync charge-refresh decision=refresh-current-state spotsFetched={manager.spotsFeched}");
             }
             catch (Exception ex)
             {
@@ -450,20 +450,23 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         }
     }
 
-    [HarmonyPatch(typeof(PunManager), nameof(PunManager.SyncAllDictionaries))]
+    [HarmonyPatch(typeof(PunManager), nameof(PunManager.SyncAllDictionaries), typeof(bool))]
     internal static class DhhPunManagerSyncAllDictionariesPatch
     {
         [HarmonyPrefix]
-        private static void Prefix()
+        private static void Prefix(bool __0)
         {
+            var syncPath = __0 ? "Full" : "Delta";
             try
             {
-                DHHStatsBootstrapModule.PrepareForFullDictionarySync("PunManager.SyncAllDictionaries.Prefix");
+                DHHStatsBootstrapModule.PrepareForDictionarySync(
+                    $"PunManager.SyncAllDictionaries.{syncPath}");
             }
             catch (Exception ex)
             {
                 DhhRepolibUpgradeBridge.LogWarning(
-                    $"Full-sync sender binding guard failed: {ex.Message}. The original SyncAllDictionaries call will continue.");
+                    $"Dictionary-sync sender binding guard failed (forceFull={__0}): {ex.Message}. " +
+                    "The original SyncAllDictionaries call will continue.");
             }
         }
     }
@@ -481,7 +484,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         {
             try
             {
-                DHHStatsBootstrapModule.PrepareForFullDictionarySync(
+                DHHStatsBootstrapModule.PrepareForDictionarySync(
                     finalChunk
                         ? "PunManager.ReceiveSyncData.Prefix.Final"
                         : "PunManager.ReceiveSyncData.Prefix");
@@ -489,7 +492,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
             catch (Exception ex)
             {
                 DhhRepolibUpgradeBridge.LogWarning(
-                    $"Full-sync receiver pre-bind guard failed: {ex.Message}. The original ReceiveSyncData call will continue.");
+                    $"Dictionary-sync receiver pre-bind guard failed: {ex.Message}. The original ReceiveSyncData call will continue.");
             }
         }
 
@@ -498,12 +501,12 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Bootstrap
         {
             try
             {
-                DHHStatsBootstrapModule.CompleteFullDictionarySyncReceive(data, finalChunk);
+                DHHStatsBootstrapModule.CompleteDictionarySyncReceive(data, finalChunk);
             }
             catch (Exception ex)
             {
                 DhhRepolibUpgradeBridge.LogWarning(
-                    $"Full-sync receiver post-bind guard failed: {ex.Message}. The original ReceiveSyncData result was preserved.");
+                    $"Dictionary-sync receiver post-bind guard failed: {ex.Message}. The original ReceiveSyncData result was preserved.");
             }
         }
     }

@@ -5,7 +5,7 @@
 		<OutputType>Library</OutputType>
 		<AssemblyName>DeathHeadHopperFix</AssemblyName>
 		<RootNamespace>DeathHeadHopperFix</RootNamespace>
-		<Version>0.2.7</Version>
+		<Version>0.2.8</Version>
 		<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 		<LangVersion>latest</LangVersion>
 		<AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
@@ -44,7 +44,7 @@
 			<Private>false</Private>
 		</Reference>
 		<Reference Include="REPOLib">
-			<HintPath>..\00Libs\OriginalMod\REPOLib.dll</HintPath>
+			<HintPath>..\00Libs\REPOLib\REPOLib.dll</HintPath>
 			<Private>false</Private>
 		</Reference>
 

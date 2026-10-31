@@ -18,7 +18,7 @@ using System.Reflection;
 
 namespace DeathHeadHopperFix
 {
-    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.7")]
+    [BepInPlugin("AdrenSnyder.DeathHeadHopperFix", "Death Head Hopper - Fix", "0.2.8")]
     public sealed class Plugin : BaseUnityPlugin
     {
         private const string TargetAssemblyName = "DeathHeadHopper";
@@ -35,8 +35,24 @@ namespace DeathHeadHopperFix
             ConfigManager.Initialize(Config, Logger);
             WarnUnsafeDebugFlagsInRelease();
             _harmony = new Harmony("AdrenSnyder.DeathHeadHopperFix");
+            DhhPatchRegistryModule.Initialize(Logger);
 
-            _harmony.PatchAll(typeof(Plugin).Assembly);
+            if (FeatureFlags.DebugLogging)
+                Logger.LogInfo("[Fix:StartupDiag] Fix Harmony.PatchAll begin.");
+
+            try
+            {
+                _harmony.PatchAll(typeof(Plugin).Assembly);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("[Fix:StartupDiag] Fix Harmony.PatchAll failed.");
+                Logger.LogError(ex);
+                throw;
+            }
+
+            if (FeatureFlags.DebugLogging)
+                Logger.LogInfo("[Fix:StartupDiag] Fix Harmony.PatchAll complete.");
 
             DHHApiGuardModule.DetectGameApiChanges();
             ApplyEarlyPatches();
@@ -87,7 +103,7 @@ namespace DeathHeadHopperFix
                 DHHStatsBootstrapModule.Apply(harmony, asm, _log);
                 PrefabModule.Apply(harmony, asm, _log);
                 AudioModule.Apply(harmony, asm, _log);
-                DHHShopVanillaPoolModule.Apply(harmony, asm, _log);
+                var shopHooksApplied = DHHShopVanillaPoolModule.Apply(harmony, asm, _log);
                 _targetAssembly = asm;
                 DHHApiGuardModule.Apply(harmony, asm);
                 BatteryJumpPatchModule.Apply(harmony, _log);
@@ -101,7 +117,10 @@ namespace DeathHeadHopperFix
                 AbilityModule.ApplyAbilityManagerHooks(harmony);
 
                 _patched = true;
-                _log?.LogInfo("Patches applied successfully.");
+                if (shopHooksApplied)
+                    _log?.LogInfo("Patches applied successfully.");
+                else
+                    _log?.LogWarning("DHH patch setup completed with incomplete shop hook registration; see [Fix:Shop] messages.");
             }
             catch (Exception ex)
             {

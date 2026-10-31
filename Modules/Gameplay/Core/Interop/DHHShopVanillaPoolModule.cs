@@ -16,95 +16,216 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
     internal static class DHHShopVanillaPoolModule
     {
         private static bool _hooksApplied;
+        private static bool _registeringShopInitializePatch;
         private static ManualLogSource? _log;
         private static readonly HashSet<string> LoggedWarnings = new(StringComparer.OrdinalIgnoreCase);
 
-        internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
+        internal static bool Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
         {
             _log = log;
-            if (harmony == null || _hooksApplied)
+            if (harmony == null)
+            {
+                LogShopWarning("Shop hook registration could not start because the Harmony instance is unavailable.");
+                return false;
+            }
+
+            if (_hooksApplied)
+                return true;
+
+            var currentStage = "initialization";
+            var allHooksApplied = true;
+
+            try
+            {
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "DHHPunManager.LoadShopAtticShelves",
+                    () => AccessTools.Method(typeof(DHHPunManager), nameof(DHHPunManager.LoadShopAtticShelves)),
+                    nameof(BlockOriginalShopMethod_Prefix),
+                    isPrefix: true);
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "DHHPunManager.LoadShopAtticShelvesRPC",
+                    () => AccessTools.Method(typeof(DHHPunManager), nameof(DHHPunManager.LoadShopAtticShelvesRPC)),
+                    nameof(BlockOriginalShopMethod_Prefix),
+                    isPrefix: true);
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "DHHShopManager.LoadShopAtticShelves",
+                    () => AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.LoadShopAtticShelves)),
+                    nameof(BlockOriginalShopMethod_Prefix),
+                    isPrefix: true);
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "DHHShopManager.LoadItems",
+                    () => AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.LoadItems)),
+                    nameof(BlockOriginalShopMethod_Prefix),
+                    isPrefix: true);
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "ItemManager.GetPurchasedItems",
+                    () => AccessTools.Method(typeof(ItemManager), nameof(ItemManager.GetPurchasedItems)),
+                    nameof(ItemManager_GetPurchasedItems_Prefix),
+                    isPrefix: true);
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "LevelGenerator.ItemSetup",
+                    () => AccessTools.Method(typeof(LevelGenerator), nameof(LevelGenerator.ItemSetup)),
+                    nameof(LevelGenerator_ItemSetup_Postfix),
+                    isPrefix: false);
+                allHooksApplied &= PatchTypedShopInitializeHook(
+                    harmony,
+                    ref currentStage,
+                    "ShopManager.ShopInitialize(List<PunManager.ItemSpawn>)");
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "ShopManager.GetAllItemsFromStatsManager",
+                    () => AccessTools.Method(typeof(ShopManager), nameof(ShopManager.GetAllItemsFromStatsManager)),
+                    nameof(ShopManager_GetAllItemsFromStatsManager_Postfix),
+                    isPrefix: false);
+                allHooksApplied &= PatchHook(
+                    harmony,
+                    ref currentStage,
+                    "UpgradeStand.GetWeightedUpgradeExcluding",
+                    () => AccessTools.Method(typeof(UpgradeStand), nameof(UpgradeStand.GetWeightedUpgradeExcluding)),
+                    nameof(UpgradeStand_GetWeightedUpgradeExcluding_Prefix),
+                    isPrefix: true);
+
+                if (!allHooksApplied)
+                {
+                    LogShopWarning("Shop hook registration is incomplete because one or more expected targets were unavailable.");
+                    return false;
+                }
+
+                _hooksApplied = true;
+                LogShopInfo("Fix-owned vanilla item pool hooks installed; the DHH legacy shop registry is excluded by the selective DHH patch registry.");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogShopWarning(
+                    $"Shop hook registration stopped at stage '{currentStage}': " +
+                    $"{ex.GetType().Name}: {ex.Message}. Remaining shop hooks were not attempted.");
+
+                if (FeatureFlags.DebugLogging)
+                    LogShopException(ex);
+
+                return false;
+            }
+        }
+
+        private static bool PatchHook(
+            Harmony harmony,
+            ref string currentStage,
+            string hookName,
+            Func<MethodInfo?> resolveTarget,
+            string patchMethodName,
+            bool isPrefix)
+        {
+            currentStage = $"{hookName}.ResolveTarget";
+            LogHookProgress(hookName, "resolve-target.begin");
+            var original = resolveTarget();
+            if (original == null)
+            {
+                currentStage = $"{hookName}.TargetUnavailable";
+                LogHookProgress(hookName, "target-unavailable");
+                LogShopWarning($"Expected hook target was not found; registration skipped: {hookName}.");
+                return false;
+            }
+
+            LogHookProgress(hookName, "target-resolved");
+            var patchKind = isPrefix ? "Prefix" : "Postfix";
+            currentStage = $"{hookName}.Harmony{patchKind}";
+            LogHookProgress(hookName, $"{patchKind.ToLowerInvariant()}-install.begin");
+
+            var patch = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), patchMethodName);
+            if (isPrefix)
+                harmony.Patch(original, prefix: patch);
+            else
+                harmony.Patch(original, postfix: patch);
+
+            currentStage = $"{hookName}.Installed";
+            LogHookProgress(hookName, "installed");
+            return true;
+        }
+
+        private static bool PatchTypedShopInitializeHook(Harmony harmony, ref string currentStage, string hookName)
+        {
+            currentStage = $"{hookName}.HarmonyPrefix";
+            LogHookProgress(hookName, "prefix-install.begin");
+
+            try
+            {
+                _registeringShopInitializePatch = true;
+                harmony.CreateClassProcessor(typeof(ShopInitializePatch)).Patch();
+            }
+            finally
+            {
+                _registeringShopInitializePatch = false;
+            }
+
+            currentStage = $"{hookName}.Installed";
+            LogHookProgress(hookName, "installed");
+            return true;
+        }
+
+        private static void LogHookProgress(string hookName, string stage)
+        {
+            if (!FeatureFlags.DebugLogging)
                 return;
 
             try
             {
-                Patch(harmony, AccessTools.Method(typeof(DHHPunManager), nameof(DHHPunManager.LoadShopAtticShelves)));
-                Patch(harmony, AccessTools.Method(typeof(DHHPunManager), nameof(DHHPunManager.LoadShopAtticShelvesRPC)));
-                Patch(harmony, AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.LoadShopAtticShelves)));
-                Patch(harmony, AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.LoadItems)));
-                Patch(harmony, AccessTools.Method(typeof(DHHShopManager), nameof(DHHShopManager.ShopPopulateItemVolumes), new[] { typeof(PunManager) }));
-                PatchItemManagerGetPurchasedItems(harmony);
-                PatchLevelGeneratorItemSetup(harmony);
-                PatchShopInitialize(harmony);
-                PatchShopItemsCollection(harmony);
-                PatchUpgradeStandSelection(harmony);
-
-                _hooksApplied = true;
-                _log?.LogInfo("[Fix:Shop] Original DeathHeadHopper custom shop flow disabled; vanilla shop pool orchestrator enabled.");
+                _log?.LogInfo($"[Fix:ShopDiag] hook={hookName} stage={stage}");
             }
-            catch (Exception ex)
+            catch
             {
-                _log?.LogWarning($"[Fix:Shop] Failed to disable original DeathHeadHopper custom shop flow: {ex.Message}");
+                // Diagnostic logging must not change shop patch registration.
             }
         }
 
-        private static void Patch(Harmony harmony, MethodInfo? original)
+        private static void LogShopWarning(string message)
         {
-            if (original == null)
-                return;
-
-            var prefix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(BlockOriginalShopMethod_Prefix));
-            harmony.Patch(original, prefix: prefix);
+            try
+            {
+                _log?.LogWarning($"[Fix:Shop] {message}");
+            }
+            catch
+            {
+                // Diagnostic logging must not change shop patch registration.
+            }
         }
 
-        private static void PatchShopInitialize(Harmony harmony)
+        private static void LogShopInfo(string message)
         {
-            var original = AccessTools.Method(typeof(ShopManager), nameof(ShopManager.ShopInitialize));
-            if (original == null)
-                return;
-
-            var prefix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(ShopManager_ShopInitialize_Prefix));
-            harmony.Patch(original, prefix: prefix);
+            try
+            {
+                _log?.LogInfo($"[Fix:Shop] {message}");
+            }
+            catch
+            {
+                // Diagnostic logging must not change shop patch registration.
+            }
         }
 
-        private static void PatchShopItemsCollection(Harmony harmony)
+        private static void LogShopException(Exception exception)
         {
-            var original = AccessTools.Method(typeof(ShopManager), nameof(ShopManager.GetAllItemsFromStatsManager));
-            if (original == null)
-                return;
-
-            var postfix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(ShopManager_GetAllItemsFromStatsManager_Postfix));
-            harmony.Patch(original, postfix: postfix);
-        }
-
-        private static void PatchUpgradeStandSelection(Harmony harmony)
-        {
-            var original = AccessTools.Method(typeof(UpgradeStand), nameof(UpgradeStand.GetWeightedUpgradeExcluding));
-
-            if (original == null)
-                return;
-
-            var prefix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(UpgradeStand_GetWeightedUpgradeExcluding_Prefix));
-            harmony.Patch(original, prefix: prefix);
-        }
-
-        private static void PatchLevelGeneratorItemSetup(Harmony harmony)
-        {
-            var original = AccessTools.Method(typeof(LevelGenerator), nameof(LevelGenerator.ItemSetup));
-            if (original == null)
-                return;
-
-            var postfix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(LevelGenerator_ItemSetup_Postfix));
-            harmony.Patch(original, postfix: postfix);
-        }
-
-        private static void PatchItemManagerGetPurchasedItems(Harmony harmony)
-        {
-            var original = AccessTools.Method(typeof(ItemManager), nameof(ItemManager.GetPurchasedItems));
-            if (original == null)
-                return;
-
-            var prefix = new HarmonyMethod(typeof(DHHShopVanillaPoolModule), nameof(ItemManager_GetPurchasedItems_Prefix));
-            harmony.Patch(original, prefix: prefix);
+            try
+            {
+                _log?.LogError($"[Fix:ShopDiag] Full exception for the failed hook stage follows.");
+                _log?.LogError(exception);
+            }
+            catch
+            {
+                // Diagnostic logging must not change shop patch registration.
+            }
         }
 
         private static bool BlockOriginalShopMethod_Prefix()
@@ -514,6 +635,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Interop
         private static bool ShouldLogShopDebug()
         {
             return FeatureFlags.DebugLogging;
+        }
+
+        [HarmonyPatch(typeof(ShopManager), nameof(ShopManager.ShopInitialize), typeof(List<PunManager.ItemSpawn>))]
+        private static class ShopInitializePatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare()
+            {
+                return _registeringShopInitializePatch;
+            }
+
+            [HarmonyPrefix]
+            private static void Prefix()
+            {
+                ShopManager_ShopInitialize_Prefix();
+            }
         }
     }
 }
