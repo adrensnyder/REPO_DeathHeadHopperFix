@@ -97,7 +97,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
             s_trackedSpots.Add(__instance);
             s_spotBaseLocalPos[__instance] = __instance.transform.localPosition;
             AbilitySpotLabelOverlay.EnsureLabel(__instance);
-            AbilitySpotLabelOverlay.QueueSpotTextStateLog(__instance);
             ReconcileProviderForSpot(__instance);
             var driver = __instance.GetComponent<AbilitySpotUpdateDriver>() ?? __instance.gameObject.AddComponent<AbilitySpotUpdateDriver>();
             driver.Initialize(__instance);
@@ -112,7 +111,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                 return;
 
             AbilitySpotLabelOverlay.UpdateLabel(__instance);
-            AbilitySpotLabelOverlay.QueueSpotTextStateLog(__instance);
             ReconcileProviderForSpot(__instance);
         }
 
@@ -758,8 +756,6 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
         {
             private static readonly Dictionary<AbilitySpot, TextMeshProUGUI> Labels = new();
             private static readonly Dictionary<AbilitySpot, TextMeshProUGUI> SlotNumberLabels = new();
-            private static readonly Dictionary<AbilitySpot, string> LastLoggedSpotTextState = new();
-            private static readonly HashSet<AbilitySpot> PendingSpotTextLogs = new();
 
             internal static void EnsureLabel(AbilitySpot spot)
             {
@@ -927,70 +923,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Core.Abilities
                     if (slotNumberLabel != null)
                         UnityEngine.Object.Destroy(slotNumberLabel.gameObject);
                 }
-                LastLoggedSpotTextState.Remove(spot);
-                PendingSpotTextLogs.Remove(spot);
                 UnityEngine.Object.Destroy(label.gameObject);
-            }
-
-            internal static void QueueSpotTextStateLog(AbilitySpot spot)
-            {
-                if (!FeatureFlags.DebugLogging || spot == null || PendingSpotTextLogs.Contains(spot))
-                    return;
-                var label = GetLabel(spot);
-                if (label == null)
-                    return;
-
-                var coroutineHost = Plugin.Instance;
-                if (coroutineHost == null || !coroutineHost.isActiveAndEnabled || !coroutineHost.gameObject.activeInHierarchy)
-                {
-                    LogSpotTextState(spot);
-                    return;
-                }
-
-                PendingSpotTextLogs.Add(spot);
-                coroutineHost.StartCoroutine(LogSpotTextStateAfterRender(spot));
-            }
-
-            private static IEnumerator LogSpotTextStateAfterRender(AbilitySpot spot)
-            {
-                yield return new WaitForEndOfFrame();
-                PendingSpotTextLogs.Remove(spot);
-                if (!FeatureFlags.DebugLogging || spot == null || !Labels.ContainsKey(spot))
-                    yield break;
-
-                LogSpotTextState(spot);
-            }
-
-            private static void LogSpotTextState(AbilitySpot spot)
-            {
-                if (!FeatureFlags.DebugLogging || spot == null)
-                    return;
-
-                var ability = spot.CurrentAbility;
-                var textComponents = DescribeSpotTextComponents(spot);
-                var state = $"slot={spot.abilitySpotIndex} currentAbility='{ability?.AbilityName ?? "<none>"}' " +
-                            $"textComponents=[{textComponents}]";
-                if (LastLoggedSpotTextState.TryGetValue(spot, out var previousState) && previousState == state)
-                    return;
-
-                LastLoggedSpotTextState[spot] = state;
-                UnityEngine.Debug.Log($"[Fix:UIFont] event=ability-spot-render-state {state}");
-            }
-
-            private static string DescribeSpotTextComponents(AbilitySpot spot)
-            {
-                var components = spot.GetComponentsInChildren<TextMeshProUGUI>(true);
-                if (components == null || components.Length == 0)
-                    return "<none>";
-
-                var descriptions = new string[components.Length];
-                for (var i = 0; i < components.Length; i++)
-                {
-                    var component = components[i];
-                    descriptions[i] = $"name='{component.name}' ({DescribeText(component, component.text)})";
-                }
-
-                return string.Join(";", descriptions);
             }
 
             private static TextMeshProUGUI? GetLabel(AbilitySpot spot)

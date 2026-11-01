@@ -27,9 +27,22 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private const float ChargeFailsafeSeconds = 10f;
         private const float ChargeRestVelocitySqrThreshold = 0.01f;
         private const float ChargeRestAngularVelocitySqrThreshold = 0.04f;
+        private const float GroundContactProbeStartOffset = 0.02f;
+        private const float GroundContactProbeDistance = 0.04f;
+        private const float GroundContactMinimumNormalY = 0.5f;
+        private const float ChargeMotionDiagnosticSampleInterval = 0.5f;
+        private const int ChargeMotionDiagnosticMaxSamples = 24;
+        private const float PositionCommandDiagnosticInterval = 0.15f;
+        private const int PositionCommandDiagnosticMaxSamplesPerApi = 12;
 
         private static ManualLogSource? s_log;
+        private static bool s_chargeGroundPatchReady;
+        private static bool s_chargeMotionDiagnosticPatchReady;
         private static readonly Dictionary<int, ChargeHoldState> s_chargeHoldStates = new();
+        private static readonly Dictionary<int, ChargeMotionDiagnosticTrace> s_chargeMotionDiagnosticTraces = new();
+        private static readonly Dictionary<int, ChargeMotionDiagnosticTrace> s_chargeMotionDiagnosticPhysGrabTraces = new();
+        private static readonly Dictionary<int, ChargeMotionDiagnosticTrace> s_chargeMotionDiagnosticRigidbodyTraces = new();
+        private static readonly Dictionary<int, ChargeMotionDiagnosticTrace> s_chargeMotionDiagnosticTransformTraces = new();
         private static float s_lastLocalHoldInputStartTime;
         private static bool s_localHoldUiActive;
         private static bool s_localHoldInputPending;
@@ -43,12 +56,990 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             public float RestingTime;
         }
 
+        private sealed class ChargeMotionDiagnosticTrace
+        {
+            public float LastSampleTime = float.NegativeInfinity;
+            public int SampleCount;
+            public bool SampleLimitLogged;
+            public bool HasPreviousSamplePosition;
+            public Vector3 PreviousHeadSamplePosition;
+            public Vector3 PreviousTumbleSamplePosition;
+            public ChargeHandler? ChargeHandler;
+            public PhysGrabObject? PhysGrabObject;
+            public int PhysGrabSampleCount;
+            public float LastPhysGrabSampleTime = float.NegativeInfinity;
+            public bool PhysGrabSampleLimitLogged;
+            public int MovePositionLogCount;
+            public float LastMovePositionLogTime = float.NegativeInfinity;
+            public bool MovePositionLimitLogged;
+            public int RigidbodyPositionLogCount;
+            public float LastRigidbodyPositionLogTime = float.NegativeInfinity;
+            public bool RigidbodyPositionLimitLogged;
+            public int TransformPositionLogCount;
+            public float LastTransformPositionLogTime = float.NegativeInfinity;
+            public bool TransformPositionLimitLogged;
+        }
+
+        private struct ChargeMotionSnapshot
+        {
+            public bool Enabled;
+            public int HandlerId;
+            public int SampleNumber;
+            public ChargeHandler.ChargeState State;
+            public int HeadRigidbodyId;
+            public Vector3 HeadPosition;
+            public Vector3 HeadDeltaSincePreviousSample;
+            public Vector3 HeadVelocity;
+            public bool HeadIsKinematic;
+            public Vector3 TargetStartOffset;
+            public Vector3 CurrentStartOffset;
+            public Vector3 StartVelocity;
+            public Vector3 ChargeDirection;
+            public float ChargeStrength;
+            public float WindupTimer;
+            public float ChargeTimer;
+            public int BounceCount;
+            public int EnemiesHit;
+            public bool IsColliding;
+            public bool IsGrabbed;
+            public bool IsFrozen;
+            public int TumbleRigidbodyId;
+            public Vector3 TumblePosition;
+            public Vector3 TumbleDeltaSincePreviousSample;
+            public Vector3 TumbleVelocity;
+            public bool TumbleIsKinematic;
+        }
+
+        private struct PhysGrabMotionSnapshot
+        {
+            public bool Enabled;
+            public ChargeHandler? ChargeHandler;
+            public int HandlerId;
+            public int SampleNumber;
+            public ChargeHandler.ChargeState ChargeState;
+            public int PhysGrabObjectId;
+            public int RigidbodyId;
+            public Vector3 TransformPosition;
+            public Vector3 RigidbodyPosition;
+            public Vector3 LinearVelocity;
+            public bool IsKinematic;
+            public bool Frozen;
+            public float FrozenTimer;
+            public Vector3 FrozenPosition;
+            public Vector3 FrozenVelocity;
+            public bool Grabbed;
+            public int PlayerGrabberCount;
+        }
+
         internal static void Apply(Harmony harmony, Assembly asm, ManualLogSource? log)
         {
             s_log = log;
+            s_chargeGroundPatchReady = true;
+            harmony.CreateClassProcessor(typeof(ChargeHandlerStartWindupPatch)).Patch();
+            if (FeatureFlags.DebugLogging)
+            {
+                s_chargeMotionDiagnosticPatchReady = true;
+                harmony.CreateClassProcessor(typeof(ChargeHandlerMotionDiagnosticPatch)).Patch();
+                harmony.CreateClassProcessor(typeof(PhysGrabObjectMotionDiagnosticPatch)).Patch();
+                harmony.CreateClassProcessor(typeof(ChargeHandlerStartChargeDiagnosticPatch)).Patch();
+                harmony.CreateClassProcessor(typeof(ChargeHandlerEndChargeDiagnosticPatch)).Patch();
+                TryInstallChargePositionCommandDiagnosticPatch(
+                    harmony,
+                    typeof(RigidbodyMovePositionDiagnosticPatch),
+                    "Rigidbody.MovePosition");
+                TryInstallChargePositionCommandDiagnosticPatch(
+                    harmony,
+                    typeof(RigidbodyPositionSetterDiagnosticPatch),
+                    "Rigidbody.position setter");
+                TryInstallChargePositionCommandDiagnosticPatch(
+                    harmony,
+                    typeof(TransformPositionSetterDiagnosticPatch),
+                    "Transform.position setter");
+            }
             PatchChargeHandlerDamageModeIfPossible(harmony, asm);
             PatchChargeAbilityHoldReleaseIfPossible(harmony, asm);
             PatchStunHandlerHoldScalingIfPossible(harmony, asm);
+        }
+
+        private static void TryInstallChargePositionCommandDiagnosticPatch(
+            Harmony harmony,
+            Type patchType,
+            string targetDescription)
+        {
+            try
+            {
+                harmony.CreateClassProcessor(patchType).Patch();
+            }
+            catch (Exception ex)
+            {
+                s_log?.LogWarning(
+                    $"[Fix:ChargeMotion] Could not install the {targetDescription} observer; " +
+                    $"other charge diagnostics remain active. error={ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        [HarmonyPatch(typeof(ChargeHandler), nameof(ChargeHandler.StartWindup))]
+        private static class ChargeHandlerStartWindupPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeGroundPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(ChargeHandler __instance, out bool __state)
+            {
+                __state = __instance != null && __instance.State == ChargeHandler.ChargeState.None;
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(ChargeHandler __instance, bool __state)
+            {
+                if (!__state || __instance == null || __instance.State != ChargeHandler.ChargeState.Windup)
+                    return;
+
+                ApplyGroundOffsetGuard(__instance);
+            }
+        }
+
+        [HarmonyPatch(typeof(ChargeHandler), nameof(ChargeHandler.FixedUpdate))]
+        private static class ChargeHandlerMotionDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(ChargeHandler __instance, out ChargeMotionSnapshot __state)
+            {
+                __state = default;
+                try
+                {
+                    __state = BeginChargeMotionDiagnosticSample(__instance);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("FixedUpdate prefix", ex);
+                }
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(ChargeHandler __instance, ChargeMotionSnapshot __state)
+            {
+                if (!__state.Enabled || __instance == null)
+                    return;
+
+                try
+                {
+                    var after = CaptureChargeMotionSnapshot(__instance, __state.HandlerId);
+                    LogChargeMotionSample(__state, after);
+                    CompleteChargeMotionDiagnosticSample(after);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("FixedUpdate postfix", ex);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(PhysGrabObject), "FixedUpdate")]
+        private static class PhysGrabObjectMotionDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(PhysGrabObject __instance, out PhysGrabMotionSnapshot __state)
+            {
+                __state = default;
+                try
+                {
+                    __state = BeginPhysGrabMotionDiagnosticSample(__instance);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("PhysGrabObject.FixedUpdate prefix", ex);
+                }
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(PhysGrabObject __instance, PhysGrabMotionSnapshot __state)
+            {
+                if (!__state.Enabled || __instance == null)
+                    return;
+
+                try
+                {
+                    var after = CapturePhysGrabMotionSnapshot(
+                        __instance,
+                        __state.ChargeHandler,
+                        __state.HandlerId,
+                        __state.SampleNumber);
+                    LogPhysGrabMotionSample(__state, after);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("PhysGrabObject.FixedUpdate postfix", ex);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(Rigidbody), nameof(Rigidbody.MovePosition))]
+        private static class RigidbodyMovePositionDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(Rigidbody __instance, [HarmonyArgument(0)] Vector3 requestedPosition)
+            {
+                try
+                {
+                    LogChargeRigidbodyPositionCommand(__instance, requestedPosition, "Rigidbody.MovePosition");
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("Rigidbody.MovePosition observer", ex);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(Rigidbody), "set_position")]
+        private static class RigidbodyPositionSetterDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(Rigidbody __instance, [HarmonyArgument(0)] Vector3 requestedPosition)
+            {
+                try
+                {
+                    LogChargeRigidbodyPositionCommand(__instance, requestedPosition, "Rigidbody.position");
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("Rigidbody.position observer", ex);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(Transform), "set_position")]
+        private static class TransformPositionSetterDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(Transform __instance, [HarmonyArgument(0)] Vector3 requestedPosition)
+            {
+                try
+                {
+                    LogChargeTransformPositionCommand(__instance, requestedPosition);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("Transform.position observer", ex);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(ChargeHandler), nameof(ChargeHandler.StartCharge))]
+        private static class ChargeHandlerStartChargeDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(ChargeHandler __instance, out ChargeMotionSnapshot __state)
+            {
+                __state = default;
+                try
+                {
+                    __state = FeatureFlags.DebugLogging
+                        ? CaptureChargeMotionSnapshot(__instance, GetUnityObjectInstanceId(__instance))
+                        : default;
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("StartCharge prefix", ex);
+                }
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(ChargeHandler __instance, ChargeMotionSnapshot __state)
+            {
+                if (!__state.Enabled || __instance == null)
+                    return;
+
+                try
+                {
+                    var after = CaptureChargeMotionSnapshot(__instance, __state.HandlerId);
+                    LogChargeMotionEvent("start-charge", __state, after);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("StartCharge postfix", ex);
+                }
+            }
+        }
+
+        [HarmonyPatch(typeof(ChargeHandler), nameof(ChargeHandler.EndCharge))]
+        private static class ChargeHandlerEndChargeDiagnosticPatch
+        {
+            [HarmonyPrepare]
+            private static bool Prepare() => s_chargeMotionDiagnosticPatchReady;
+
+            [HarmonyPrefix]
+            private static void Prefix(ChargeHandler __instance, out ChargeMotionSnapshot __state)
+            {
+                __state = default;
+                try
+                {
+                    __state = FeatureFlags.DebugLogging
+                        ? CaptureChargeMotionSnapshot(__instance, GetUnityObjectInstanceId(__instance))
+                        : default;
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("EndCharge prefix", ex);
+                }
+            }
+
+            [HarmonyPostfix]
+            private static void Postfix(ChargeHandler __instance, ChargeMotionSnapshot __state)
+            {
+                if (!__state.Enabled || __instance == null)
+                    return;
+
+                try
+                {
+                    var after = CaptureChargeMotionSnapshot(__instance, __state.HandlerId);
+                    LogChargeMotionEvent("end-charge", __state, after);
+                    RemoveChargeMotionDiagnosticTrace(__instance);
+                }
+                catch (Exception ex)
+                {
+                    LogChargeMotionDiagnosticFailure("EndCharge postfix", ex);
+                }
+            }
+        }
+
+        private static void ApplyGroundOffsetGuard(ChargeHandler chargeHandler)
+        {
+            var vanillaOffset = chargeHandler.targetStartOffset;
+            var groundPointAvailable = false;
+            var groundDistance = 0f;
+            bool? groundContact = null;
+
+            try
+            {
+                var groundPoint = chargeHandler.controller?.collisionHandler?.GetGroundPointDown();
+                groundPointAvailable = groundPoint.HasValue;
+                if (groundPoint.HasValue)
+                    groundDistance = Vector3.Distance(groundPoint.Value, chargeHandler.transform.position);
+
+                groundContact = HasTightGroundContact(chargeHandler);
+                if ((!groundPointAvailable || Mathf.Approximately(groundDistance, 0f)) && groundContact == false)
+                    chargeHandler.targetStartOffset = Vector3.zero;
+            }
+            catch (Exception ex)
+            {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:ChargeGround.ProbeFailure", 600))
+                {
+                    s_log?.LogWarning(
+                        $"[Fix:ChargeGround] Ground probe failed; preserving vanilla offset. " +
+                        $"error={ex.GetType().Name}: {ex.Message}");
+                }
+            }
+
+            if (FeatureFlags.DebugLogging)
+            {
+                s_log?.LogInfo(
+                    $"[Fix:ChargeGround] start-windup groundPointAvailable={groundPointAvailable} " +
+                    $"groundDistance={groundDistance:F3} groundContact={groundContact?.ToString() ?? "unknown"} " +
+                    $"vanillaOffset={FormatVector(vanillaOffset)} " +
+                    $"finalOffset={FormatVector(chargeHandler.targetStartOffset)}");
+            }
+        }
+
+        private static bool? HasTightGroundContact(ChargeHandler chargeHandler)
+        {
+            var head = chargeHandler.controller?.deathHead;
+            if (head == null)
+                return null;
+
+            var colliders = head.GetComponentsInChildren<Collider>(true);
+            Collider? lowestCollider = null;
+            var lowestY = float.PositiveInfinity;
+            foreach (var collider in colliders)
+            {
+                if (collider == null || !collider.enabled || !collider.gameObject.activeInHierarchy || collider.isTrigger)
+                    continue;
+
+                var bottomY = collider.bounds.min.y;
+                if (bottomY >= lowestY)
+                    continue;
+
+                lowestCollider = collider;
+                lowestY = bottomY;
+            }
+
+            if (lowestCollider == null)
+                return null;
+
+            var bounds = lowestCollider.bounds;
+            var origin = new Vector3(
+                bounds.center.x,
+                bounds.min.y + GroundContactProbeStartOffset,
+                bounds.center.z);
+            var groundMask = LayerMask.GetMask("Default");
+            var hits = Physics.RaycastAll(
+                origin,
+                Vector3.down,
+                GroundContactProbeDistance,
+                groundMask,
+                QueryTriggerInteraction.Ignore);
+            var headPhysGrabObject = head.GetComponent<PhysGrabObject>();
+
+            foreach (var hit in hits)
+            {
+                var hitCollider = hit.collider;
+                if (hitCollider == null || hit.normal.y < GroundContactMinimumNormalY)
+                    continue;
+
+                if (hitCollider.transform == head.transform || hitCollider.transform.IsChildOf(head.transform))
+                    continue;
+
+                if (headPhysGrabObject != null && hitCollider.GetComponentInParent<PhysGrabObject>() == headPhysGrabObject)
+                    continue;
+
+                return true;
+            }
+
+            return false;
+        }
+
+        private static string FormatVector(Vector3 value)
+        {
+            return $"({value.x:F3},{value.y:F3},{value.z:F3})";
+        }
+
+        private static void BeginChargeMotionDiagnosticTrace(ChargeHandler chargeHandler)
+        {
+            var handlerId = GetUnityObjectInstanceId(chargeHandler);
+            if (!FeatureFlags.DebugLogging || handlerId == 0)
+                return;
+
+            if (!s_chargeMotionDiagnosticTraces.TryGetValue(handlerId, out var trace))
+            {
+                trace = new ChargeMotionDiagnosticTrace();
+                s_chargeMotionDiagnosticTraces[handlerId] = trace;
+            }
+
+            trace.ChargeHandler = chargeHandler;
+            RegisterPhysGrabMotionDiagnosticTarget(trace, handlerId);
+        }
+
+        private static void RemoveChargeMotionDiagnosticTrace(ChargeHandler? chargeHandler)
+        {
+            if (chargeHandler == null)
+                return;
+
+            var handlerId = GetUnityObjectInstanceId(chargeHandler);
+            if (handlerId != 0)
+            {
+                if (s_chargeMotionDiagnosticTraces.TryGetValue(handlerId, out var trace) && trace.PhysGrabObject != null)
+                {
+                    var physGrabObjectId = GetUnityObjectInstanceId(trace.PhysGrabObject);
+                    RemoveDiagnosticTraceMapping(s_chargeMotionDiagnosticPhysGrabTraces, physGrabObjectId, trace);
+                    RemoveDiagnosticTraceMapping(
+                        s_chargeMotionDiagnosticRigidbodyTraces,
+                        GetUnityObjectInstanceId(trace.PhysGrabObject.rb),
+                        trace);
+                    RemoveDiagnosticTraceMapping(
+                        s_chargeMotionDiagnosticTransformTraces,
+                        GetUnityObjectInstanceId(trace.PhysGrabObject.transform),
+                        trace);
+                }
+
+                s_chargeMotionDiagnosticTraces.Remove(handlerId);
+            }
+        }
+
+        private static void RemoveDiagnosticTraceMapping(
+            Dictionary<int, ChargeMotionDiagnosticTrace> mappings,
+            int instanceId,
+            ChargeMotionDiagnosticTrace trace)
+        {
+            if (instanceId != 0 && mappings.TryGetValue(instanceId, out var registeredTrace) &&
+                ReferenceEquals(trace, registeredTrace))
+            {
+                mappings.Remove(instanceId);
+            }
+        }
+
+        private static void RegisterPhysGrabMotionDiagnosticTarget(ChargeMotionDiagnosticTrace trace, int handlerId)
+        {
+            var chargeHandler = trace.ChargeHandler;
+            if (chargeHandler == null || handlerId == 0)
+                return;
+
+            var physGrabObject = chargeHandler.impactDetector != null
+                ? chargeHandler.impactDetector.physGrabObject
+                : null;
+            if (physGrabObject == null)
+                return;
+
+            trace.PhysGrabObject = physGrabObject;
+            var physGrabObjectId = GetUnityObjectInstanceId(physGrabObject);
+            if (physGrabObjectId != 0)
+                s_chargeMotionDiagnosticPhysGrabTraces[physGrabObjectId] = trace;
+
+            var rigidbodyId = GetUnityObjectInstanceId(physGrabObject.rb);
+            if (rigidbodyId != 0)
+                s_chargeMotionDiagnosticRigidbodyTraces[rigidbodyId] = trace;
+
+            var transformId = GetUnityObjectInstanceId(physGrabObject.transform);
+            if (transformId != 0)
+                s_chargeMotionDiagnosticTransformTraces[transformId] = trace;
+        }
+
+        private static ChargeMotionSnapshot BeginChargeMotionDiagnosticSample(ChargeHandler? chargeHandler)
+        {
+            if (!FeatureFlags.DebugLogging || chargeHandler == null)
+                return default;
+
+            var handlerId = GetUnityObjectInstanceId(chargeHandler);
+            if (handlerId == 0 || chargeHandler.State == ChargeHandler.ChargeState.None)
+            {
+                return default;
+            }
+
+            if (!s_chargeMotionDiagnosticTraces.TryGetValue(handlerId, out var trace))
+            {
+                trace = new ChargeMotionDiagnosticTrace();
+                trace.ChargeHandler = chargeHandler;
+                s_chargeMotionDiagnosticTraces[handlerId] = trace;
+                RegisterPhysGrabMotionDiagnosticTarget(trace, handlerId);
+            }
+
+            var now = Time.time;
+            if (trace.SampleCount >= ChargeMotionDiagnosticMaxSamples)
+            {
+                if (!trace.SampleLimitLogged)
+                {
+                    trace.SampleLimitLogged = true;
+                    s_log?.LogDebug(
+                        $"[Fix:ChargeMotion] sampling-limit reached handler={handlerId} " +
+                        $"samples={trace.SampleCount} interval={ChargeMotionDiagnosticSampleInterval:F1}s");
+                }
+                return default;
+            }
+
+            if (now - trace.LastSampleTime < ChargeMotionDiagnosticSampleInterval)
+                return default;
+
+            trace.LastSampleTime = now;
+            trace.SampleCount++;
+            var snapshot = CaptureChargeMotionSnapshot(chargeHandler, handlerId);
+            snapshot.SampleNumber = trace.SampleCount;
+            if (trace.HasPreviousSamplePosition)
+            {
+                snapshot.HeadDeltaSincePreviousSample = snapshot.HeadPosition - trace.PreviousHeadSamplePosition;
+                snapshot.TumbleDeltaSincePreviousSample = snapshot.TumblePosition - trace.PreviousTumbleSamplePosition;
+            }
+            return snapshot;
+        }
+
+        private static void CompleteChargeMotionDiagnosticSample(ChargeMotionSnapshot snapshot)
+        {
+            if (!snapshot.Enabled || !s_chargeMotionDiagnosticTraces.TryGetValue(snapshot.HandlerId, out var trace))
+                return;
+
+            trace.PreviousHeadSamplePosition = snapshot.HeadPosition;
+            trace.PreviousTumbleSamplePosition = snapshot.TumblePosition;
+            trace.HasPreviousSamplePosition = true;
+        }
+
+        private static PhysGrabMotionSnapshot BeginPhysGrabMotionDiagnosticSample(PhysGrabObject? physGrabObject)
+        {
+            if (!FeatureFlags.DebugLogging || physGrabObject == null)
+                return default;
+
+            var physGrabObjectId = GetUnityObjectInstanceId(physGrabObject);
+            if (physGrabObjectId == 0 ||
+                !s_chargeMotionDiagnosticPhysGrabTraces.TryGetValue(physGrabObjectId, out var trace) ||
+                trace.ChargeHandler == null || trace.ChargeHandler.State == ChargeHandler.ChargeState.None)
+            {
+                return default;
+            }
+
+            var now = Time.time;
+            if (trace.PhysGrabSampleCount >= ChargeMotionDiagnosticMaxSamples)
+            {
+                if (!trace.PhysGrabSampleLimitLogged)
+                {
+                    trace.PhysGrabSampleLimitLogged = true;
+                    s_log?.LogDebug(
+                        $"[Fix:ChargeMotion] PhysGrabObject sampling-limit reached handler={GetUnityObjectInstanceId(trace.ChargeHandler)} " +
+                        $"samples={trace.PhysGrabSampleCount} interval={ChargeMotionDiagnosticSampleInterval:F1}s");
+                }
+                return default;
+            }
+
+            if (now - trace.LastPhysGrabSampleTime < ChargeMotionDiagnosticSampleInterval)
+                return default;
+
+            trace.LastPhysGrabSampleTime = now;
+            trace.PhysGrabSampleCount++;
+            return CapturePhysGrabMotionSnapshot(
+                physGrabObject,
+                trace.ChargeHandler,
+                GetUnityObjectInstanceId(trace.ChargeHandler),
+                trace.PhysGrabSampleCount);
+        }
+
+        private static PhysGrabMotionSnapshot CapturePhysGrabMotionSnapshot(
+            PhysGrabObject? physGrabObject,
+            ChargeHandler? chargeHandler,
+            int handlerId,
+            int sampleNumber)
+        {
+            if (!FeatureFlags.DebugLogging || physGrabObject == null || chargeHandler == null ||
+                handlerId == 0 || physGrabObject.rb == null)
+                return default;
+
+            return new PhysGrabMotionSnapshot
+            {
+                Enabled = true,
+                ChargeHandler = chargeHandler,
+                HandlerId = handlerId,
+                SampleNumber = sampleNumber,
+                ChargeState = chargeHandler.State,
+                PhysGrabObjectId = GetUnityObjectInstanceId(physGrabObject),
+                RigidbodyId = GetUnityObjectInstanceId(physGrabObject.rb),
+                TransformPosition = physGrabObject.transform.position,
+                RigidbodyPosition = physGrabObject.rb.position,
+                LinearVelocity = physGrabObject.rb.linearVelocity,
+                IsKinematic = physGrabObject.rb.isKinematic,
+                Frozen = physGrabObject.frozen,
+                FrozenTimer = physGrabObject.frozenTimer,
+                FrozenPosition = physGrabObject.frozenPosition,
+                FrozenVelocity = physGrabObject.frozenVelocity,
+                Grabbed = physGrabObject.grabbed,
+                PlayerGrabberCount = physGrabObject.playerGrabbing != null ? physGrabObject.playerGrabbing.Count : 0
+            };
+        }
+
+        private static void LogPhysGrabMotionSample(PhysGrabMotionSnapshot before, PhysGrabMotionSnapshot after)
+        {
+            if (!before.Enabled || !after.Enabled)
+                return;
+
+            s_log?.LogDebug(
+                $"[Fix:ChargeMotion] physgrab-sample={before.SampleNumber} handler={before.HandlerId} " +
+                $"state={before.ChargeState}->{after.ChargeState} physGrab={before.PhysGrabObjectId} rb={before.RigidbodyId} " +
+                $"transformPos={FormatVector(before.TransformPosition)}->{FormatVector(after.TransformPosition)} " +
+                $"rbPos={FormatVector(before.RigidbodyPosition)}->{FormatVector(after.RigidbodyPosition)} " +
+                $"fixedTransformDelta={FormatVector(after.TransformPosition - before.TransformPosition)} " +
+                $"fixedRbDelta={FormatVector(after.RigidbodyPosition - before.RigidbodyPosition)} " +
+                $"velocity={FormatVector(before.LinearVelocity)}->{FormatVector(after.LinearVelocity)} " +
+                $"kinematic={before.IsKinematic}->{after.IsKinematic} frozen={before.Frozen}->{after.Frozen} " +
+                $"frozenTimer={before.FrozenTimer:F2}->{after.FrozenTimer:F2} " +
+                $"frozenPosition={FormatVector(before.FrozenPosition)}->{FormatVector(after.FrozenPosition)} " +
+                $"frozenVelocity={FormatVector(before.FrozenVelocity)}->{FormatVector(after.FrozenVelocity)} " +
+                $"grabbed={before.Grabbed}->{after.Grabbed} playerGrabbers={before.PlayerGrabberCount}->{after.PlayerGrabberCount}");
+        }
+
+        private static void LogChargeRigidbodyPositionCommand(
+            Rigidbody? rigidbody,
+            Vector3 requestedPosition,
+            string api)
+        {
+            if (!FeatureFlags.DebugLogging || rigidbody == null)
+                return;
+
+            var rigidbodyId = GetUnityObjectInstanceId(rigidbody);
+            if (rigidbodyId == 0 ||
+                !s_chargeMotionDiagnosticRigidbodyTraces.TryGetValue(rigidbodyId, out var trace) ||
+                trace.ChargeHandler == null || trace.ChargeHandler.State == ChargeHandler.ChargeState.None)
+            {
+                return;
+            }
+
+            var currentPosition = rigidbody.position;
+            if ((requestedPosition - currentPosition).sqrMagnitude < 0.0001f ||
+                !TryAcquirePositionCommandLog(trace, api))
+            {
+                return;
+            }
+
+            LogChargePositionCommand(trace, api, rigidbodyId, currentPosition, requestedPosition, rigidbody);
+        }
+
+        private static void LogChargeTransformPositionCommand(Transform? transform, Vector3 requestedPosition)
+        {
+            if (!FeatureFlags.DebugLogging || transform == null)
+                return;
+
+            var transformId = GetUnityObjectInstanceId(transform);
+            if (transformId == 0 ||
+                !s_chargeMotionDiagnosticTransformTraces.TryGetValue(transformId, out var trace) ||
+                trace.ChargeHandler == null || trace.ChargeHandler.State == ChargeHandler.ChargeState.None)
+            {
+                return;
+            }
+
+            var currentPosition = transform.position;
+            if ((requestedPosition - currentPosition).sqrMagnitude < 0.0001f ||
+                !TryAcquirePositionCommandLog(trace, "Transform.position"))
+            {
+                return;
+            }
+
+            var physGrabObject = trace.PhysGrabObject;
+            var rigidbody = physGrabObject != null ? physGrabObject.rb : null;
+            LogChargePositionCommand(
+                trace,
+                "Transform.position",
+                rigidbody != null ? GetUnityObjectInstanceId(rigidbody) : 0,
+                currentPosition,
+                requestedPosition,
+                rigidbody);
+        }
+
+        private static bool TryAcquirePositionCommandLog(ChargeMotionDiagnosticTrace trace, string api)
+        {
+            var now = Time.time;
+            if (api == "Rigidbody.MovePosition")
+            {
+                if (trace.MovePositionLogCount >= PositionCommandDiagnosticMaxSamplesPerApi)
+                {
+                    if (!trace.MovePositionLimitLogged)
+                    {
+                        trace.MovePositionLimitLogged = true;
+                        s_log?.LogDebug(
+                            $"[Fix:ChargeMotion] position-command sampling-limit reached api={api} " +
+                            $"handler={GetUnityObjectInstanceId(trace.ChargeHandler)}");
+                    }
+                    return false;
+                }
+
+                if (now - trace.LastMovePositionLogTime < PositionCommandDiagnosticInterval)
+                    return false;
+
+                trace.LastMovePositionLogTime = now;
+                trace.MovePositionLogCount++;
+                return true;
+            }
+
+            if (api == "Rigidbody.position")
+            {
+                if (trace.RigidbodyPositionLogCount >= PositionCommandDiagnosticMaxSamplesPerApi)
+                {
+                    if (!trace.RigidbodyPositionLimitLogged)
+                    {
+                        trace.RigidbodyPositionLimitLogged = true;
+                        s_log?.LogDebug(
+                            $"[Fix:ChargeMotion] position-command sampling-limit reached api={api} " +
+                            $"handler={GetUnityObjectInstanceId(trace.ChargeHandler)}");
+                    }
+                    return false;
+                }
+
+                if (now - trace.LastRigidbodyPositionLogTime < PositionCommandDiagnosticInterval)
+                    return false;
+
+                trace.LastRigidbodyPositionLogTime = now;
+                trace.RigidbodyPositionLogCount++;
+                return true;
+            }
+
+            if (trace.TransformPositionLogCount >= PositionCommandDiagnosticMaxSamplesPerApi)
+            {
+                if (!trace.TransformPositionLimitLogged)
+                {
+                    trace.TransformPositionLimitLogged = true;
+                    s_log?.LogDebug(
+                        $"[Fix:ChargeMotion] position-command sampling-limit reached api={api} " +
+                        $"handler={GetUnityObjectInstanceId(trace.ChargeHandler)}");
+                }
+                return false;
+            }
+
+            if (now - trace.LastTransformPositionLogTime < PositionCommandDiagnosticInterval)
+                return false;
+
+            trace.LastTransformPositionLogTime = now;
+            trace.TransformPositionLogCount++;
+            return true;
+        }
+
+        private static void LogChargePositionCommand(
+            ChargeMotionDiagnosticTrace trace,
+            string api,
+            int rigidbodyId,
+            Vector3 currentPosition,
+            Vector3 requestedPosition,
+            Rigidbody? rigidbody)
+        {
+            var chargeHandler = trace.ChargeHandler;
+            if (chargeHandler == null)
+                return;
+
+            var physGrabObject = trace.PhysGrabObject;
+            s_log?.LogDebug(
+                $"[Fix:ChargeMotion] position-command api={api} handler={GetUnityObjectInstanceId(chargeHandler)} " +
+                $"state={chargeHandler.State} physGrab={(physGrabObject != null ? GetUnityObjectInstanceId(physGrabObject) : 0)} " +
+                $"rb={rigidbodyId} requested={FormatVector(requestedPosition)} " +
+                $"current={FormatVector(currentPosition)} delta={FormatVector(requestedPosition - currentPosition)} " +
+                $"velocity={FormatVector(rigidbody != null ? rigidbody.linearVelocity : Vector3.zero)} " +
+                $"kinematic={rigidbody != null && rigidbody.isKinematic} " +
+                $"frozen={physGrabObject != null && physGrabObject.frozen} " +
+                $"grabbed={physGrabObject != null && physGrabObject.grabbed}");
+        }
+
+        private static ChargeMotionSnapshot CaptureChargeMotionSnapshot(ChargeHandler? chargeHandler, int handlerId)
+        {
+            if (!FeatureFlags.DebugLogging || chargeHandler == null || handlerId == 0)
+                return default;
+
+            var headRigidbody = chargeHandler.rb;
+            var controller = chargeHandler.controller;
+            var tumbleRigidbody = controller?.deathHead?.playerAvatar?.tumble?.rb;
+            var physGrabObject = chargeHandler.impactDetector != null
+                ? chargeHandler.impactDetector.physGrabObject
+                : null;
+
+            return new ChargeMotionSnapshot
+            {
+                Enabled = true,
+                HandlerId = handlerId,
+                State = chargeHandler.State,
+                HeadRigidbodyId = GetUnityObjectInstanceId(headRigidbody),
+                HeadPosition = headRigidbody != null ? headRigidbody.position : chargeHandler.transform.position,
+                HeadVelocity = headRigidbody != null ? headRigidbody.linearVelocity : Vector3.zero,
+                HeadIsKinematic = headRigidbody != null && headRigidbody.isKinematic,
+                TargetStartOffset = chargeHandler.targetStartOffset,
+                CurrentStartOffset = chargeHandler.currentStartOffset,
+                StartVelocity = chargeHandler.startVelocity,
+                ChargeDirection = chargeHandler.chargeDirection,
+                ChargeStrength = chargeHandler.chargeStrength,
+                WindupTimer = chargeHandler.windupTimer,
+                ChargeTimer = chargeHandler.chargeTimer,
+                BounceCount = chargeHandler.bounceColliders != null ? chargeHandler.bounceColliders.Count : 0,
+                EnemiesHit = chargeHandler.enemiesHit,
+                IsColliding = controller?.collisionHandler?.isColliding ?? false,
+                IsGrabbed = physGrabObject != null && physGrabObject.grabbed,
+                IsFrozen = physGrabObject != null && physGrabObject.frozen,
+                TumbleRigidbodyId = tumbleRigidbody != null ? GetUnityObjectInstanceId(tumbleRigidbody) : 0,
+                TumblePosition = tumbleRigidbody != null ? tumbleRigidbody.position : Vector3.zero,
+                TumbleVelocity = tumbleRigidbody != null ? tumbleRigidbody.linearVelocity : Vector3.zero,
+                TumbleIsKinematic = tumbleRigidbody != null && tumbleRigidbody.isKinematic
+            };
+        }
+
+        private static void LogChargeMotionSample(ChargeMotionSnapshot before, ChargeMotionSnapshot after)
+        {
+            if (!before.Enabled || !after.Enabled)
+                return;
+
+            var isHolding = s_chargeHoldStates.TryGetValue(before.HandlerId, out var holdState) && holdState.IsHolding;
+            var message =
+                $"[Fix:ChargeMotion] sample={before.SampleNumber} handler={before.HandlerId} " +
+                $"held={isHolding} state={before.State}->{after.State} " +
+                $"headRB={before.HeadRigidbodyId} pos={FormatVector(before.HeadPosition)}->{FormatVector(after.HeadPosition)} " +
+                $"fixedDelta={FormatVector(after.HeadPosition - before.HeadPosition)} " +
+                $"sinceSampleDelta={FormatVector(before.HeadDeltaSincePreviousSample)} " +
+                $"vel={FormatVector(before.HeadVelocity)}->{FormatVector(after.HeadVelocity)} " +
+                $"kinematic={before.HeadIsKinematic}->{after.HeadIsKinematic} " +
+                $"targetOffset={FormatVector(before.TargetStartOffset)}->{FormatVector(after.TargetStartOffset)} " +
+                $"currentOffset={FormatVector(before.CurrentStartOffset)}->{FormatVector(after.CurrentStartOffset)} " +
+                $"startVelocity={FormatVector(before.StartVelocity)}->{FormatVector(after.StartVelocity)} " +
+                $"chargeDirection={FormatVector(before.ChargeDirection)}->{FormatVector(after.ChargeDirection)} " +
+                $"strength={before.ChargeStrength:F2}->{after.ChargeStrength:F2} " +
+                $"windupTimer={before.WindupTimer:F2}->{after.WindupTimer:F2} " +
+                $"chargeTimer={before.ChargeTimer:F2}->{after.ChargeTimer:F2} " +
+                $"bounces={before.BounceCount}->{after.BounceCount} enemiesHit={before.EnemiesHit}->{after.EnemiesHit} " +
+                $"colliding={before.IsColliding}->{after.IsColliding} grabbed={before.IsGrabbed}->{after.IsGrabbed} " +
+                $"frozen={before.IsFrozen}->{after.IsFrozen} " +
+                $"tumbleRB={before.TumbleRigidbodyId}->{after.TumbleRigidbodyId} " +
+                $"tumblePos={FormatVector(before.TumblePosition)}->{FormatVector(after.TumblePosition)} " +
+                $"tumbleSinceSampleDelta={FormatVector(before.TumbleDeltaSincePreviousSample)} " +
+                $"tumbleVel={FormatVector(before.TumbleVelocity)}->{FormatVector(after.TumbleVelocity)} " +
+                $"tumbleKinematic={before.TumbleIsKinematic}->{after.TumbleIsKinematic}";
+            s_log?.LogDebug(message);
+        }
+
+        private static void LogChargeMotionEvent(string eventName, ChargeHandler? chargeHandler)
+        {
+            if (!FeatureFlags.DebugLogging)
+                return;
+
+            try
+            {
+                var handlerId = chargeHandler != null ? GetUnityObjectInstanceId(chargeHandler) : 0;
+                var snapshot = CaptureChargeMotionSnapshot(chargeHandler, handlerId);
+                if (!snapshot.Enabled)
+                {
+                    s_log?.LogDebug($"[Fix:ChargeMotion] event={eventName} handler=unavailable");
+                    return;
+                }
+
+                var isHolding = s_chargeHoldStates.TryGetValue(handlerId, out var holdState) && holdState.IsHolding;
+                LogChargeMotionEvent(eventName, snapshot, snapshot, isHolding);
+            }
+            catch (Exception ex)
+            {
+                LogChargeMotionDiagnosticFailure($"event {eventName}", ex);
+            }
+        }
+
+        private static void LogChargeMotionEvent(
+            string eventName,
+            ChargeMotionSnapshot before,
+            ChargeMotionSnapshot after)
+        {
+            var isHolding = s_chargeHoldStates.TryGetValue(before.HandlerId, out var holdState) && holdState.IsHolding;
+            LogChargeMotionEvent(eventName, before, after, isHolding);
+        }
+
+        private static void LogChargeMotionEvent(
+            string eventName,
+            ChargeMotionSnapshot before,
+            ChargeMotionSnapshot after,
+            bool isHolding)
+        {
+            if (!FeatureFlags.DebugLogging || !before.Enabled || !after.Enabled)
+                return;
+
+            s_log?.LogDebug(
+                $"[Fix:ChargeMotion] event={eventName} handler={before.HandlerId} held={isHolding} " +
+                $"state={before.State}->{after.State} headRB={before.HeadRigidbodyId} " +
+                $"pos={FormatVector(before.HeadPosition)}->{FormatVector(after.HeadPosition)} " +
+                $"vel={FormatVector(before.HeadVelocity)}->{FormatVector(after.HeadVelocity)} " +
+                $"kinematic={before.HeadIsKinematic}->{after.HeadIsKinematic} " +
+                $"targetOffset={FormatVector(before.TargetStartOffset)}->{FormatVector(after.TargetStartOffset)} " +
+                $"currentOffset={FormatVector(before.CurrentStartOffset)}->{FormatVector(after.CurrentStartOffset)} " +
+                $"startVelocity={FormatVector(before.StartVelocity)}->{FormatVector(after.StartVelocity)} " +
+                $"chargeDirection={FormatVector(before.ChargeDirection)}->{FormatVector(after.ChargeDirection)} " +
+                $"strength={before.ChargeStrength:F2}->{after.ChargeStrength:F2} " +
+                $"windupTimer={before.WindupTimer:F2}->{after.WindupTimer:F2} " +
+                $"chargeTimer={before.ChargeTimer:F2}->{after.ChargeTimer:F2} " +
+                $"bounces={before.BounceCount}->{after.BounceCount} enemiesHit={before.EnemiesHit}->{after.EnemiesHit} " +
+                $"colliding={before.IsColliding}->{after.IsColliding} grabbed={before.IsGrabbed}->{after.IsGrabbed} " +
+                $"frozen={before.IsFrozen}->{after.IsFrozen} tumbleRB={before.TumbleRigidbodyId}->{after.TumbleRigidbodyId} " +
+                $"tumblePos={FormatVector(before.TumblePosition)}->{FormatVector(after.TumblePosition)} " +
+                $"tumbleVel={FormatVector(before.TumbleVelocity)}->{FormatVector(after.TumbleVelocity)} " +
+                $"tumbleKinematic={before.TumbleIsKinematic}->{after.TumbleIsKinematic}");
+        }
+
+        private static void LogChargeMotionDiagnosticFailure(string phase, Exception exception)
+        {
+            if (!FeatureFlags.DebugLogging || !LogLimiter.ShouldLog("Fix:ChargeMotion.DiagnosticFailure", 120))
+                return;
+
+            s_log?.LogWarning(
+                $"[Fix:ChargeMotion] Diagnostic failed during {phase}; gameplay continues. " +
+                $"error={exception.GetType().Name}: {exception.Message}");
         }
 
         private static void PatchChargeHandlerDamageModeIfPossible(Harmony harmony, Assembly asm)
@@ -130,6 +1121,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             state.StartTime = Time.time;
             state.IsHolding = true;
             state.LaunchScale = 1f;
+            BeginChargeMotionDiagnosticTrace(__instance);
+            LogChargeMotionEvent("windup-start", __instance);
             s_localHoldUiActive = true;
             AbilityModule.SetChargeSlotActivationProgress(0f);
         }
@@ -279,7 +1272,16 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         {
             var maxBounces = Mathf.Max(0, Mathf.CeilToInt(chargeHandler.maxBounces));
             if (maxBounces > 0 && chargeHandler.bounceColliders.Count >= maxBounces)
+            {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHCharge.BounceLimit", 5))
+                {
+                    s_log?.LogDebug(
+                        $"[Fix:DHHCharge] Ending charge at bounce limit: " +
+                        $"bounces={chargeHandler.bounceColliders.Count} maxBounces={maxBounces} " +
+                        $"chargeTimer={chargeHandler.chargeTimer:F2}.");
+                }
                 chargeHandler.EndCharge();
+            }
         }
 
         private static void PatchChargeAbilityHoldReleaseIfPossible(Harmony harmony, Assembly asm)
@@ -319,6 +1321,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
 
         private static void ChargeHandler_CancelCharge_Postfix(ChargeHandler __instance)
         {
+            LogChargeMotionEvent("cancel-charge", __instance);
+            RemoveChargeMotionDiagnosticTrace(__instance);
             StopChargeWindupLoop(__instance);
             ClearChargeHoldState(__instance);
             SynchronizeFinalChargeState(__instance);
@@ -332,6 +1336,8 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             if (state == ChargeHandler.ChargeState.Windup || state == ChargeHandler.ChargeState.Charging)
                 return;
 
+            LogChargeMotionEvent("sync-state-stop", __instance);
+            RemoveChargeMotionDiagnosticTrace(__instance);
             StopChargeWindupLoop(__instance);
             ClearChargeHoldState(__instance);
         }
@@ -364,6 +1370,13 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             var scaledMax = Mathf.Max(1, Mathf.RoundToInt(vanillaMax * Mathf.Clamp01(holdState.LaunchScale)));
             if (__instance.enemiesHit >= scaledMax)
             {
+                if (FeatureFlags.DebugLogging && LogLimiter.ShouldLog("Fix:DHHCharge.EnemyHitLimit", 5))
+                {
+                    s_log?.LogDebug(
+                        $"[Fix:DHHCharge] Ending charge at enemy-hit limit: " +
+                        $"enemiesHit={__instance.enemiesHit} maxEnemies={scaledMax} " +
+                        $"bounces={__instance.bounceColliders.Count} chargeTimer={__instance.chargeTimer:F2}.");
+                }
                 __instance.EndCharge();
             }
 
@@ -401,6 +1414,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             AbilityModule.SetChargeSlotActivationProgress(0f);
 
             var chargeHandler = GetLocalChargeHandler();
+            LogChargeMotionEvent("input-down", chargeHandler);
             if (chargeHandler != null && !IsChargeState(chargeHandler, "Windup"))
             {
                 ClearChargeHoldState(chargeHandler);
@@ -414,6 +1428,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             AbilityModule.SetChargeSlotActivationProgress(0f);
 
             var chargeHandler = GetLocalChargeHandler();
+            LogChargeMotionEvent("input-cancel", chargeHandler);
             if (chargeHandler == null)
                 return;
 
@@ -423,6 +1438,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
         private static bool TryReleaseHeldCharge()
         {
             var chargeHandler = GetLocalChargeHandler();
+            LogChargeMotionEvent("input-release", chargeHandler);
             if (chargeHandler == null)
             {
                 s_localHoldInputPending = false;
@@ -538,6 +1554,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             if (Mathf.Abs(chargeDirection.x - RemoteReleaseCommandTag) > 0.001f)
                 return true;
 
+            LogChargeMotionEvent("remote-release-received", __instance);
             var id = GetUnityObjectInstanceId(__instance);
             if (id == 0 || !s_chargeHoldStates.TryGetValue(id, out var state))
                 return false;
@@ -730,7 +1747,7 @@ namespace DeathHeadHopperFix.Modules.Gameplay.Stun
             return physGrabObject.grabbed;
         }
 
-        private static int GetUnityObjectInstanceId(UnityEngine.Object obj)
+        private static int GetUnityObjectInstanceId(UnityEngine.Object? obj)
         {
             return obj != null ? obj.GetInstanceID() : 0;
         }
